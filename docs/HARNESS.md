@@ -29,12 +29,13 @@ update this section.
 
 | | Host GPU | Passthrough GPU |
 |---|---|---|
-| Device | Cezanne iGPU `1002:1638` | Radeon HD 7570 |
-| Address | `0000:30:00.0` | **not enumerated** |
-| Driver | `amdgpu` | — |
-| `boot_vga` | 1 | — |
-| IOMMU group | 11 (alone) | — |
-| BARs | 256M + 2M 64-bit pref, I/O `e000`, 512K 32-bit | — |
+| Device | Cezanne iGPU `1002:1638` | Radeon HD 7570 `1002:675d` + audio `1002:aa90` |
+| Address | `0000:30:00.0` | `0000:10:00.0`, `0000:10:00.1` (root port `00:01.1`) |
+| Driver at boot | `amdgpu` | `radeon` (auto-loads ~60 s after boot), `snd_hda_intel` |
+| `boot_vga` | 1 | 0 |
+| IOMMU group | 11 (alone) | 10 (the two functions, nothing else) |
+| BARs | 256M + 2M 64-bit pref, I/O `e000`, 512K 32-bit | 256M 64-bit pref, 128K 64-bit, I/O `f000`, ROM 128K |
+| Reset | — | `bus` |
 
 The host GPU is never touched: no unbind, no module unload, no reset.
 
@@ -74,6 +75,10 @@ auto-bind and initialise the card. That is acceptable for milestone 0 (it is
 the reference driver) and must be undone by the script before passthrough.
 
 ## Returning the card to the un-POSTed state (PLANNED, unverified)
+
+Known so far (2026-10-04): the host firmware does not POST the card (iGPU is
+primary, the ROM has no EFI image), so after a host boot it stays un-POSTed
+until `radeon` binds and posts it.
 
 Required by milestone 2. Candidates, to be tested in this order:
 

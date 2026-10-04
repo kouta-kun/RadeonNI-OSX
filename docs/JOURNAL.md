@@ -78,3 +78,48 @@ checked with no device: cross-architecture VFIO is compiled in and the trace
 mechanism is there. Whether a device actually attaches, and what OpenBIOS
 does with its BARs, is still open. `scripts/tiger.sh` wraps the guest
 lifecycle; only its plumbing has been exercised.
+
+## 2026-10-04 — Card installed: Turks PRO confirmed, memory is GDDR5, VBIOS dumped
+
+**Tried.** After the user installed the card and rebooted: `lspci -nnvv`,
+radeon's dmesg, a read-only mmap of BAR2 to read `MC_SEQ_MISC0` and
+`CONFIG_MEMSIZE`, and a VBIOS dump through the sysfs `rom` node.
+
+**Observed.**
+
+- `0000:10:00.0` `1002:675d` Turks PRO, subsystem Dell `1028:2b20`, with audio
+  function `10:00.1` `1002:aa90`. Behind root port `00:01.1`. The two
+  functions are alone in IOMMU group 10. `reset_method` is `bus`.
+- The iGPU is still `boot_vga=1` on `amdgpu`; the 7570 is `boot_vga=0`.
+- `radeon` auto-loaded about 60 s into boot and bound; `snd_hda_intel` took
+  the audio function.
+- radeon: "GPU not posted. posting now...". The firmware left the card
+  un-POSTed. The ROM holds a single legacy x86 image, no EFI image.
+- Memory is GDDR5: the VBIOS board string says `GDDR5 64Mx32`, and
+  `MC_SEQ_MISC0` = `0x500026a9` (type nibble 5, the value
+  `ni_mc_load_microcode()` tests for). 1024 MB.
+- radeon's "RAM width 128bits DDR" line does not distinguish memory types;
+  it prints "DDR" for everything.
+- Connectors: one DisplayPort, one DVI-I. Both report `disconnected`, no
+  EDID.
+- Link trained at 2.5 GT/s x4 although card and slot are capable of more.
+- VBIOS: 65536 bytes, SHA-256 `591e5d5d…9bf1fb`, part `113-C3340200-101`.
+  Details in HARDWARE.md.
+
+**Concluded.**
+
+- The card is Turks, not Redwood: the DCE5 plan stands.
+- The brief's assumption of DDR3 is wrong. This is the configuration where
+  Linux loads `TURKS_mc.bin`. Whether the memory works after `asic_init`
+  without it is now the main open question for milestone 2; Haiku loads no
+  microcode on these IDs, so it is not settled either way. The blob cannot be
+  in the repository; if it turns out to be required it has to be loaded from
+  a file the user supplies.
+- A host reboot leaves the card un-POSTed until `radeon` binds. Preventing
+  that bind would give a clean cold state, but needs a boot-time change
+  (approval required). A secondary bus reset is available and still has to
+  be tested as the no-reboot alternative.
+- No monitor is detected, so EDID and the modeset part of the reference
+  trace are waiting on the user.
+- The x4 / 2.5 GT/s link does not matter for modesetting. Noted in case it
+  points at a seating or slot problem.

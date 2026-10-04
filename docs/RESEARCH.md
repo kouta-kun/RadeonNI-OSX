@@ -21,6 +21,7 @@ Markers: **[V]** verified in the linked source. **[I]** inference or memory, unc
   - Linux aborts without MC ("MC ucode required for NI+"), but `ni_mc_load_microcode()` only loads it if the memory is GDDR5 and the sequencer is not running.
   - Haiku `radeon_hd` loads no microcode and supports these IDs.
   - **[I]** A DDR3 card should do modesetting with no blobs.
+  - **Correction (2026-10-04):** this card is GDDR5 (VBIOS string and `MC_SEQ_MISC0`), so it is the case where Linux does load `TURKS_mc.bin`. Whether modesetting works without it is untested.
   - The blobs are big-endian (`be32_to_cpup`) and their licence only allows binary redistribution: [LICENSE.radeon](https://github.com/cernekee/linux-firmware/blob/master/LICENSE.radeon).
 - **Power [I]:** 45–60 W, no auxiliary connector.
 
@@ -190,7 +191,8 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 
 ## 11. Still to verify
 
-- PCI ID and memory type of this specific card. **Blocked (2026-10-04):** the card does not enumerate on the host; see JOURNAL.
+- ~~PCI ID and memory type of this specific card.~~ `1002:675d` Turks PRO, GDDR5 (2026-10-04).
+- Whether GDDR5 VRAM is usable after `asic_init` without the MC microcode.
 - The report of an HD 6570 under Linux on a G5 Quad, first-hand.
 - Whether OpenBIOS assigns the 7570's BARs under `mac99`.
 - Whether the G5's Open Firmware assigns large BARs to a card with no FCode.

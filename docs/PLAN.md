@@ -8,7 +8,7 @@ wherever its criterion involves video output.
 
 | # | Milestone | State |
 |---|---|---|
-| 0 | Know the card, capture ground truth | **Blocked**: card not on the PCI bus |
+| 0 | Know the card, capture ground truth | In progress: ID, memory type and VBIOS done; EDID and register trace pending |
 | 1 | Tiger in QEMU with the card passed through | QEMU built and guest scripts ready; waiting for install media and the card |
 | 2 | Cold POST and modeset from Linux userspace | Not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
@@ -17,9 +17,9 @@ wherever its criterion involves video output.
 
 | What | For | Status |
 |---|---|---|
-| Card seated in the CPU x16 slot (`PCI_E1`), host powered back on | M0 | **open** |
-| BIOS: primary display left on the integrated GPU (IGD) | M0 | to check while installing |
-| Monitor connected to the 7570 | M0 (EDID, modeset trace) | open |
+| Card seated in the CPU x16 slot (`PCI_E1`), host powered back on | M0 | done 2026-10-04 |
+| BIOS: primary display left on the integrated GPU (IGD) | M0 | done (iGPU is `boot_vga`) |
+| Monitor connected to the 7570 (DisplayPort or DVI-I) and powered on | M0 (EDID, modeset trace) | **open**: none detected |
 | Approval of the M0 host actions listed below | M0 | open |
 | Mac OS X 10.4 PowerPC install DVD image (retail, ideally 10.4.6 or later) | M1 | open |
 | Mac OS X 10.4.11 Combo Update (PPC) `.dmg`, if the DVD is older | M1 | open |
@@ -34,15 +34,12 @@ trace of init and of a modeset saved and documented.
 
 Steps:
 
-1. **Card enumerates.** `scripts/host-inventory.sh`; record address, IDs,
-   BARs, IOMMU group in HARDWARE.md and HARNESS.md.
-   - Stop if the ID is not Turks (`6759`/`675d`). Redwood changes the plan.
-   - Stop if the card shares an IOMMU group with anything but its own audio
-     function.
-2. **What Linux says.** `radeon` will have bound at boot. From dmesg: chip
-   family, VRAM size and type, connectors, whether MC microcode was loaded.
-   From sysfs: EDID of the attached monitor.
-3. **VBIOS dump.** `echo 1 > rom; cat rom > private/vbios.rom; echo 0 > rom`
+1. ~~**Card enumerates.**~~ Done: `0000:10:00.0`, `1002:675d` Turks PRO, own
+   IOMMU group (10, with its audio function).
+2. **What Linux says.** Done except EDID: family TURKS, 1024 MB **GDDR5**
+   (not DDR3 as assumed), DisplayPort + DVI-I, firmware leaves the card
+   un-POSTed. EDID waits for a monitor.
+3. **VBIOS dump.** Done; hashes in HARDWARE.md. `echo 1 > rom; cat rom > private/vbios.rom; echo 0 > rom`
    on the sysfs node. Read-only; nothing is written to the card. Record size,
    SHA-256 and MD5 in HARDWARE.md. Cross-check the memory type against the
    VBIOS tables.
@@ -89,6 +86,11 @@ Success: from an un-POSTed card, the program shows a test pattern at the
 monitor's native resolution (user confirms).
 
 1. Find and document a reliable way back to the un-POSTed state.
+   - Open question raised by milestone 0: the card is GDDR5, the case where
+     Linux loads `TURKS_mc.bin`. Test early whether VRAM works after
+     `asic_init` alone. If not, the MC microcode loader comes into scope
+     (blob loaded from a user-supplied file, never committed), which touches
+     the "no microcode in this phase" decision and needs the user's say.
 2. Hardware library behind a small OS layer (MMIO, config space, delay,
    memory, log). No Linux or IOKit dependencies inside it.
 3. VBIOS reader, AtomBIOS interpreter, `asic_init`, DDC/EDID, DCE5 modeset.

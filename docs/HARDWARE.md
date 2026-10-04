@@ -1,30 +1,71 @@
 # The card
 
-Everything we learn about this specific Radeon HD 7570. Facts only; mark the
-source of each one (lspci, VBIOS table, dmesg, register read).
+Everything we learn about this specific Radeon HD 7570. Facts only, each with
+its source.
 
-## Status: not yet seen on the bus
-
-As of 2026-10-04 the card does not enumerate on the host (see JOURNAL). Nothing
-below is confirmed.
-
-## To fill in during milestone 0
+## Identity (2026-10-04)
 
 | Item | Value | Source |
 |---|---|---|
-| PCI ID (VGA function) | ? expected `1002:6759` or `1002:675d` | `lspci -nn` |
-| PCI ID (HDMI audio function) | ? expected `1002:aa90` | `lspci -nn` |
-| Subsystem ID / board vendor | ? | `lspci -nnvv` |
-| Revision | ? | `lspci -nn` |
-| Family | ? Turks (NI, DCE5) vs Redwood (Evergreen, DCE4) | PCI ID vs `drm_pciids.h` |
-| Memory type | ? DDR3/GDDR3 vs GDDR5 | VBIOS + radeon dmesg + `MC_SEQ_MISC0` |
-| VRAM size | ? | radeon dmesg, `CONFIG_MEMSIZE` |
-| BAR0 (framebuffer aperture) | ? expected 64-bit prefetchable, 256 MB | `lspci -vv` |
-| BAR2 (registers) | ? expected 64-bit, 128 KB | `lspci -vv` |
-| BAR4 (I/O) | ? expected 256 ports | `lspci -vv` |
-| Expansion ROM size | ? expected 128 KB | `lspci -vv` |
-| VBIOS part number / date | ? | ATOM header strings |
-| VBIOS SHA-256 / MD5 | ? | `sha256sum` of the dump |
-| Connectors | ? | VBIOS object table, radeon dmesg |
-| Reference clock, default engine/memory clock | ? | FirmwareInfo table |
-| Monitor EDID (native mode) | ? | `/sys/class/drm/*/edid` |
+| PCI ID (VGA function) | `1002:675d`, Turks PRO, revision 00 | `lspci -nn` |
+| PCI ID (HDMI audio function) | `1002:aa90` | `lspci -nn` |
+| Subsystem | `1028:2b20` (Dell OEM); audio `1028:aa90` | `lspci -nnvv` |
+| Family | `CHIP_TURKS`, Northern Islands, DCE5 | radeon dmesg: `TURKS 0x1002:0x675D 0x1028:0x2B20 0x00` |
+| Memory type | **GDDR5**, 64Mx32 | VBIOS string; `MC_SEQ_MISC0` (0x2a00) = `0x500026a9`, top nibble 5 |
+| VRAM size | 1024 MB | radeon dmesg; `CONFIG_MEMSIZE` (0x5428) |
+| PCIe | Legacy Endpoint, capable of 5 GT/s x16; trained at 2.5 GT/s x4 on this host | `lspci -vv` |
+| Reset methods | `bus` (VGA function); no FLR | sysfs `reset_method`, `DevCap FLReset-` |
+
+## BARs (as assigned by the x86 host)
+
+| BAR | Type | Size | Use |
+|---|---|---|---|
+| 0 | 64-bit, prefetchable | 256 MB | Framebuffer aperture |
+| 2 | 64-bit, non-prefetchable | 128 KB | Registers |
+| 4 | I/O | 256 ports | Legacy I/O register access |
+| ROM | | 128 KB decoded | Expansion ROM (64 KB of content) |
+
+Audio function: BAR0 64-bit, 16 KB.
+
+## VBIOS
+
+Dump: `private/vbios.rom` (git-ignored), read from the sysfs `rom` node.
+
+| Item | Value |
+|---|---|
+| Size | 65536 bytes, one image, legacy x86 code type 0, last-image flag set |
+| SHA-256 | `591e5d5d9b35d8c6cc3092f9404e14263ae2fa2b9079cf1dc753bde9139bf1fb` |
+| MD5 | `9e1e08facfbedf0cad46866e949a7c49` |
+| Signature / checksum | `55 AA`, image checksum 0 (valid) |
+| ATOM header | offset `0x1b2`, magic `ATOM` |
+| Part number | `113-C3340200-101` |
+| Build date | 09/05/11 05:06 |
+| Version string | `ATOMBIOSBK-ATI VER013.012.000.032.041591` |
+| Board string | `TURKS ProL C33402 GDDR5 64Mx32` |
+| PCIR | `1002:675d` |
+
+There is no EFI (GOP) image and no FCode image in the ROM.
+
+## Connectors (radeon dmesg)
+
+| # | Connector | HPD | DDC registers | Encoders |
+|---|---|---|---|---|
+| 0 | DisplayPort (`DP-2`) | HPD4 | `0x6450`–`0x645c` | DFP1: `INTERNAL_UNIPHY2` |
+| 1 | DVI-I (`DVI-I-1`) | HPD1 | `0x6460`–`0x646c` | DFP2: `INTERNAL_UNIPHY`; CRT1: `INTERNAL_KLDSCP_DAC1` |
+
+## Behaviour observed
+
+- The host firmware does not POST the card. With the iGPU as primary display
+  and no EFI image in the ROM, Linux found it un-POSTed ("GPU not posted.
+  posting now...") and brought it up through AtomBIOS `asic_init`.
+- radeon logs "ACPI VFCT table present but broken" and then gets the VBIOS
+  from another source (the PCI ROM).
+- With GDDR5, `ni_mc_load_microcode()` loads `TURKS_mc.bin` when the memory
+  sequencer is not running. After radeon's init `MC_SEQ_SUP_CNTL` (0x28c8)
+  reads `0xb1800001` (run bit set).
+
+## Still unknown
+
+- Monitor EDID and native mode: no monitor was detected on either connector.
+- Reference clock and default engine/memory clocks (FirmwareInfo table).
+- Whether VRAM is usable after `asic_init` alone, without the MC microcode.

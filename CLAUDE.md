@@ -13,11 +13,14 @@ for this phase. `PROMPT.md` is the user's original brief.
 
 ## Current state
 
-No driver code exists yet. Milestone 0 is blocked: the HD 7570 does not
-enumerate on the host's PCI bus (2026-10-04). QEMU is built and the guest
-scripts exist, but no Tiger image has been installed (the user supplies the
-media). `docs/PLAN.md` has the milestone
-states and the list of things needed from the user; check it first.
+No driver code exists yet. Milestone 0 is in progress: the card is confirmed
+as Turks PRO `1002:675d` at `0000:10:00.0` (audio at `10:00.1`), its memory is
+GDDR5 (not DDR3 as the brief assumed), and the VBIOS is dumped to
+`private/vbios.rom`. Still pending: a monitor on the card, EDID, and the
+reference register trace. QEMU is built and the guest scripts exist, but no
+Tiger image has been installed (the user supplies the media).
+`docs/PLAN.md` has the milestone states and the list of things needed from
+the user; check it first.
 
 ## Documents
 
