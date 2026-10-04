@@ -15,6 +15,8 @@
 #
 # Guest screen: VNC on 127.0.0.1:5901 (tunnel with ssh -L 5901:127.0.0.1:5901).
 # Guest ssh:    127.0.0.1:2222.  QEMU monitor: build/qemu-mon.sock.
+# QMP for scripts/guest-ctl.py: build/qemu-qmp.sock. A USB tablet gives the
+# guest an absolute pointer so clicks can be scripted.
 # Environment:  TIGER_MEM (MB, default 1024), TIGER_DISK, TIGER_USER.
 
 set -euo pipefail
@@ -34,6 +36,8 @@ base_args() {
         -device sungem,netdev=n0
         -vnc 127.0.0.1:1
         -monitor "unix:$root/build/qemu-mon.sock,server,nowait"
+        -qmp "unix:$root/build/qemu-qmp.sock,server,nowait"
+        -device usb-tablet
         -serial "file:$root/build/guest-serial.log"
     )
 }

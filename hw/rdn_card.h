@@ -1,7 +1,7 @@
 /*
  * The card: state shared by all parts of the hardware library.
  *
- * Copyright (c) 2026 the osx-gpu contributors
+ * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
  */
 

@@ -268,3 +268,35 @@ sysfs front end, run against the driverless card:
 - The reset method for milestone 2 is settled: `scripts/card-reset.sh`.
 - After these runs the card is left posted and driverless, with nothing on
   screen. Next is DDC/EDID and the DCE5 modeset.
+
+## 2026-10-04 — Tiger install media; installer driven through QMP
+
+**Tried.** The user supplied `/srv/files/tiger/MacOSX.4.iso` (SHA-256
+`d537b2b9…bf54f8`) and `xcode_2.5_8m2558_developerdvd.dmg` (SHA-256
+`c59d5a5c…d9ab2e`). Booted the DVD with `scripts/tiger.sh install` and drove
+the installer with `scripts/guest-ctl.py` (QMP screenshots, absolute pointer
+through `usb-tablet`, key events).
+
+**Observed.**
+
+- The ISO carries an Apple Partition Map and boots on `mac99,via=pmu -cpu
+  G4` to the language chooser in about a minute. Build strings found in the
+  image: `8I128` and `8E5`; the exact 10.4.x version is to be read from the
+  installed system.
+- `qemu-img` cannot open the Xcode `.dmg` ("sector count ... larger than
+  max"). `7z x -tdmg` extracts its pieces; concatenating them in order
+  (`0.ddm`, partition map, ATAPI driver, `3.hfs`, `4.free`) gives a raw
+  image with a partition map, `images/xcode25.img`.
+- `usb-tablet` works as an absolute pointer in the Tiger installer, so
+  clicks can be scripted at screenshot coordinates.
+- Partitioned from the installer's Terminal:
+  `diskutil partitionDisk disk0 1 APMFormat "Journaled HFS+" Tiger 31G`.
+- Accepted the licence prompt and started an Easy Install on `Tiger`.
+
+**Concluded.** The whole installation can be driven without a VNC client.
+No 10.4.11 Combo Update was supplied; whether it is needed depends on the
+version this DVD installs and on what Xcode 2.5 requires.
+
+**Licence check.** `r600.c`, `r600_reg.h`, `radeon.h` and `nid.h`, which the
+bring-up port drew on, carry the same MIT permission notice as the files
+checked earlier and no GPL text.

@@ -2,7 +2,7 @@
  * Glue between the OS layer and the AtomBIOS interpreter: register access
  * callbacks and interpreter setup.
  *
- * Copyright (c) 2026 the osx-gpu contributors
+ * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
  */
 

@@ -3,7 +3,7 @@
  * build against the OS layer in rdn_os.h instead of the Linux kernel. It
  * exists to keep the ported files close to upstream.
  *
- * Copyright (c) 2026 the osx-gpu contributors
+ * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
  */
 

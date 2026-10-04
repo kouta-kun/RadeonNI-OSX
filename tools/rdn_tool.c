@@ -16,7 +16,7 @@
  * Must run as root. Refuses to run while a kernel driver owns the card
  * (use scripts/card-bind.sh none).
  *
- * Copyright (c) 2026 the osx-gpu contributors
+ * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
  */
 

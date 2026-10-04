@@ -9,7 +9,7 @@ wherever its criterion involves video output.
 | # | Milestone | State |
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
-| 1 | Tiger in QEMU with the card passed through | QEMU built and guest scripts ready; waiting for install media and the card |
+| 1 | Tiger in QEMU with the card passed through | In progress: Tiger installation running in the guest |
 | 2 | Cold POST and modeset from Linux userspace | In progress: cold POST works on the real card and VRAM is usable without microcode; EDID and modeset not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
 
@@ -21,10 +21,10 @@ wherever its criterion involves video output.
 | BIOS: primary display left on the integrated GPU (IGD) | M0 | done (iGPU is `boot_vga`) |
 | Monitor connected to the 7570 | M0 (EDID, modeset trace) | done: DVI-I via DVI-to-HDMI adapter |
 | Approval of the M0 host actions listed below | M0 | given 2026-10-04 (rebinding, module load/unload; trace in an x86 guest, no mmiotrace) |
-| Which resolution is the panel's real native one: 1366x768 (EDID preferred) or 1920x1080 | M2, M3 | **open** |
-| Mac OS X 10.4 PowerPC install DVD image (retail, ideally 10.4.6 or later) | M1 | open |
-| Mac OS X 10.4.11 Combo Update (PPC) `.dmg`, if the DVD is older | M1 | open |
-| Xcode 2.5 Developer DVD `.dmg` | M1 | open |
+| Which resolution counts as native | M2, M3 | decided: the EDID's preferred timing, 1366x768@59.79 |
+| Mac OS X 10.4 PowerPC install DVD image | M1 | done: `media/tiger-install.iso` |
+| Mac OS X 10.4.11 Combo Update (PPC) `.dmg`, if the DVD is older | M1 | not supplied; need to be decided once the installed version is known |
+| Xcode 2.5 Developer DVD `.dmg` | M1 | done: converted to `media/xcode25.img` |
 
 Media goes in `media/` (git-ignored). Guest disk: 32 GB qcow2 (sparse).
 

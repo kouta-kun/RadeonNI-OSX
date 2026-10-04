@@ -147,19 +147,30 @@ Only the script plumbing has been run (QEMU starts and reaches OpenBIOS with
 an empty disk). Booting Tiger, the install procedure and passthrough are
 untested until the media and the card are available.
 
-### Installing Tiger (PLANNED, needs the user at the VNC console)
+### Installing Tiger
 
-1. `scripts/tiger.sh install media/<dvd>.iso`. In the installer: Disk Utility,
-   partition the 32 GB disk as Apple Partition Map with one HFS+ Journaled
-   volume, then install. Deselect printer drivers and extra languages.
-2. First boot: create the user `tiger` (the scripts assume it; override with
-   `TIGER_USER`). System Preferences, Sharing, enable Remote Login. Energy
-   Saver: never sleep.
-3. Shut down. `scripts/tiger.sh cdrom media/<combo-update>.dmg` to reach
-   10.4.11, then the same with the Xcode 2.5 image.
-4. Shut down. `scripts/tiger.sh snapshot clean-install`.
+Media (git-ignored): `media/tiger-install.iso` is a link to the user's DVD
+image. The Xcode 2.5 `.dmg` has to be converted, because QEMU cannot read it:
 
-The steps after 2 can be driven over ssh once Remote Login is on.
+    7z x -tdmg -oimages/x xcode_2.5_8m2558_developerdvd.dmg
+    (cd images/x && cat 0.ddm 1.Apple_partition_map 2.Apple_Driver_ATAPI 3.hfs 4.free) > images/xcode25.img
+
+The installer is driven without a VNC client:
+
+    scripts/tiger.sh create
+    scripts/tiger.sh install media/tiger-install.iso &
+    scripts/guest-wait.sh             # until the screen stops changing
+    scripts/guest-ctl.py shot         # build/shot.png, then look at it
+    scripts/guest-ctl.py click X Y    # screenshot coordinates
+    scripts/guest-ctl.py type '...' ; scripts/guest-ctl.py key ret
+
+Steps taken (2026-10-04): choose English; Utilities > Terminal;
+`diskutil partitionDisk disk0 1 APMFormat "Journaled HFS+" Tiger 31G`;
+quit Terminal; Continue; Agree; destination `Tiger`; Install (Easy Install).
+
+Still to do after the copy finishes: first-boot assistant with user `tiger`,
+Remote Login, Energy Saver set to never sleep, ssh key, Xcode 2.5, then the
+`clean-install` snapshot.
 
 ## Guest recovery (PLANNED)
 

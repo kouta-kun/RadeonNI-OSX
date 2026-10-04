@@ -7,7 +7,7 @@
  *
  * The library is not thread-safe: the caller serialises all entry.
  *
- * Copyright (c) 2026 the osx-gpu contributors
+ * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
  */
 

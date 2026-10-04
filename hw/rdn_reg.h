@@ -5,7 +5,7 @@
  *
  * Copyright 2010 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.
- * Copyright (c) 2026 the osx-gpu contributors
+ * Copyright (c) 2026 kouta-kun and Claude
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),

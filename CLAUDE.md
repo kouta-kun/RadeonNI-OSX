@@ -22,7 +22,8 @@ monitor is on the DVI-I connector; its EDID prefers 1366x768.
 Milestone 2 is in progress: our library cold-POSTs the real card (same
 register sequence as Linux, with or without the I/O BAR) and the video
 memory works without the MC microcode. EDID over DDC and the DCE5 modeset
-are next. Milestone 1 waits for the Tiger install media from the user.
+are next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
+is in progress: Tiger is being installed in the guest from the user's media.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -69,6 +70,9 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/build-qemu.sh`: builds QEMU 11.1.1 (`qemu-system-ppc`, `qemu-ppc`)
   into `third_party/qemu/`, applying `patches/qemu/*.patch`. The host has no
   packaged PowerPC QEMU; always use this build.
+- `scripts/guest-ctl.py {shot|click|key|type}` and `scripts/guest-wait.sh`:
+  operate the guest's GUI through QMP (screenshots to `build/shot.png`,
+  clicks at screenshot coordinates). Look at the screenshot before clicking.
 - `scripts/tiger.sh {create|install|cdrom|run|passthru|snapshot|restore|ssh}`:
   Tiger guest lifecycle. Screen on VNC `127.0.0.1:5901`, ssh on port 2222.
   `passthru <addr>` attaches the card with `x-no-mmap=on` and writes the
@@ -143,6 +147,8 @@ MIT. Code may be ported from the MIT-headed files of Linux `radeon` and from
 Haiku `radeon_hd`, keeping their copyright notices. Do not copy GPL code
 (QemuMacDrivers, GPL parts of Linux), APSL code, or anything derived from
 decompiled Apple binaries; reading them to understand an interface is fine.
+
+Copyright holder for new files: "kouta-kun and Claude".
 
 Never commit VBIOS dumps, microcode, disk images, Apple media or raw traces.
 They live in git-ignored directories: `private/`, `firmware/`, `images/`,
