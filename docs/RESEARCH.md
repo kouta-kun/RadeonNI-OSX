@@ -144,7 +144,7 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 - **[V]** A PCI Rage 128 passed to `qemu-system-ppc` on a Ryzen host; 10.4.11 worked; it needed a patched OpenBIOS and loading the ROM/NDRV by hand: [MacRumors](https://forums.macrumors.com/threads/qemu-system-ppc-vga-passthrough.2229861/).
 - **[V]** With 2D/3D acceleration the screen corrupts; DMA is suspected: [qemu-ppc](https://lists.gnu.org/archive/html/qemu-ppc/2020-03/msg00520.html).
 - **[V]** An aarch64 TCG guest on an x86 host fails with 4 GB RAM because of overlap with reserved IOVA regions: [bug 1869006](https://bugs.launchpad.net/qemu/+bug/1869006).
-- **[V]** Trace events `vfio_region_read`, `vfio_region_write`, `vfio_pci_read_config`, `vfio_pci_write_config`, and the `x-no-mmap` property. **[I]** With `x-no-mmap=on` you get a complete register trace.
+- **[V]** Trace events `vfio_region_read`, `vfio_region_write`, `vfio_pci_read_config`, `vfio_pci_write_config`, and the `x-no-mmap` property. With `x-no-mmap=on` you get a complete register trace, including config space, the I/O BAR and every framebuffer write [V, 2026-10-04, x86 guest].
 
 | Aspect | Status |
 |---|---|
@@ -154,7 +154,7 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 | ROM | Without FCode, OpenBIOS does not initialise it [I]; it can be supplied with `romfile=` |
 | `x-vga` | Designed for PCs; do not use [I] |
 | Host IOMMU grouping | On the development host the whole X370 chipset is one group including the NIC; only the CPU x16 slot is usable for passthrough [V, 2026-10-04] |
-| Reset after a panic | The GPU is left in an arbitrary state; secondary bus reset from the host, or re-POST [I] |
+| Reset after a panic | QEMU's reset of the `vfio-pci` device at guest start returns this card to the un-POSTed state [V, 2026-10-04] |
 | DMA | Known failure area; not needed for modesetting [I] |
 
 ### Mac OS X PPC in QEMU

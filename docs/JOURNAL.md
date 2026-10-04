@@ -123,3 +123,47 @@ radeon's dmesg, a read-only mmap of BAR2 to read `MC_SEQ_MISC0` and
   trace are waiting on the user.
 - The x4 / 2.5 GT/s link does not matter for modesetting. Noted in case it
   points at a seating or slot problem.
+
+## 2026-10-04 — Monitor EDID; reference trace captured in an x86 guest
+
+**Tried.** With the user's approval: read the EDID through the host's
+`radeon`, moved the card to `vfio-pci` (`scripts/card-bind.sh vfio`), and ran
+`scripts/x86-trace-guest.sh` until it produced a complete trace.
+
+**Observed.**
+
+- EDID: 256 bytes, both checksums valid, manufacturer `XXX`, name `AAA`,
+  2023, digital. Preferred timing 1366x768@59.79 (85.5 MHz); second detailed
+  timing 1920x1080@60 (148.5 MHz). The host's radeon chose 1366x768 for
+  fbcon.
+- Unbinding `radeon` on the host produced two kernel WARNs
+  (`irq_domain_remove`, `msi_device_data_release`) and set the W taint. No
+  other effect; `vfio-pci` bound normally.
+- Guest attempt 1: the initcpio busybox is dynamically linked and has no
+  `insmod` or `mount` applets. Fixed by copying its libraries and adding
+  `kmod` and `mount` from the host.
+- Guest attempt 2: with the card directly on the guest's root bus, radeon
+  failed with "Fatal error during GPU init", error -22. The guest kernel had
+  logged "Video device with shadowed ROM at [mem 0x000c0000-0x000dffff]" for
+  the 7570, so radeon read the emulated VGA's BIOS at 0xc0000 and found no
+  ATOM signature. `romfile=` did not help, for the same reason.
+- Guest attempt 3: card behind a `pci-bridge`. radeon read the ROM through
+  the passed-through ROM BAR, logged "GPU not posted. posting now...", and
+  initialised fully. `modetest` then set 1920x1080 and 1366x768.
+- Trace: 929 MB raw, of which all but 16 MB is framebuffer aperture writes.
+  Details in REFERENCE-TRACE.md.
+
+**Concluded.**
+
+- Milestone 0's criteria are met: ID, memory type, VBIOS, trace.
+- A VFIO reset gives the un-POSTed state without rebooting the host. That is
+  the recovery method for milestone 2, still to be reproduced outside QEMU.
+- Linux does load the MC microcode on this card from cold (6024 words to
+  `MC_SEQ_SUP_PGM`). Whether the card works without it remains the open
+  question for milestone 2.
+- The x86 "shadowed ROM" behaviour is specific to x86 guests and does not
+  apply to `mac99`, but it is exactly the failure the pc297 attempt hit:
+  taking the VBIOS from the legacy address instead of the ROM BAR.
+- After the run the card stays on `vfio-pci`; the monitor shows nothing
+  until something drives the card again. A host reboot gives it back to
+  `radeon`.

@@ -8,7 +8,7 @@ wherever its criterion involves video output.
 
 | # | Milestone | State |
 |---|---|---|
-| 0 | Know the card, capture ground truth | In progress: ID, memory type and VBIOS done; EDID and register trace pending |
+| 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | QEMU built and guest scripts ready; waiting for install media and the card |
 | 2 | Cold POST and modeset from Linux userspace | Not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
@@ -19,8 +19,9 @@ wherever its criterion involves video output.
 |---|---|---|
 | Card seated in the CPU x16 slot (`PCI_E1`), host powered back on | M0 | done 2026-10-04 |
 | BIOS: primary display left on the integrated GPU (IGD) | M0 | done (iGPU is `boot_vga`) |
-| Monitor connected to the 7570 (DisplayPort or DVI-I) and powered on | M0 (EDID, modeset trace) | **open**: none detected |
-| Approval of the M0 host actions listed below | M0 | open |
+| Monitor connected to the 7570 | M0 (EDID, modeset trace) | done: DVI-I via DVI-to-HDMI adapter |
+| Approval of the M0 host actions listed below | M0 | given 2026-10-04 (rebinding, module load/unload; trace in an x86 guest, no mmiotrace) |
+| Which resolution is the panel's real native one: 1366x768 (EDID preferred) or 1920x1080 | M2, M3 | **open** |
 | Mac OS X 10.4 PowerPC install DVD image (retail, ideally 10.4.6 or later) | M1 | open |
 | Mac OS X 10.4.11 Combo Update (PPC) `.dmg`, if the DVD is older | M1 | open |
 | Xcode 2.5 Developer DVD `.dmg` | M1 | open |
@@ -38,22 +39,15 @@ Steps:
    IOMMU group (10, with its audio function).
 2. **What Linux says.** Done except EDID: family TURKS, 1024 MB **GDDR5**
    (not DDR3 as assumed), DisplayPort + DVI-I, firmware leaves the card
-   un-POSTed. EDID waits for a monitor.
+   un-POSTed. EDID read: preferred 1366x768@59.79, also 1920x1080@60.
 3. **VBIOS dump.** Done; hashes in HARDWARE.md. `echo 1 > rom; cat rom > private/vbios.rom; echo 0 > rom`
    on the sysfs node. Read-only; nothing is written to the card. Record size,
    SHA-256 and MD5 in HARDWARE.md. Cross-check the memory type against the
    VBIOS tables.
-4. **Register trace.** Two captures of the same thing, init and one modeset:
-   - **(a) VFIO trace, preferred.** Pass the card to a throwaway x86 Linux
-     guest (QEMU/KVM, `x-no-mmap=on`, `vfio_region_*` trace events) and let
-     the guest's `radeon` initialise it. Same tool and trace format we will
-     later use for the kext, so the comparison is like for like. Nothing on
-     the host changes beyond rebinding the card to `vfio-pci`.
-   - **(b) mmiotrace on the host**, as the brief suggests. Works, but while
-     the tracer is active the kernel takes every CPU except one offline, on
-     the whole server. Only with explicit approval.
-5. **Document.** Trace files stay in `traces/` (ignored); a summary of the
-   init order and the modeset sequence goes in `docs/`.
+4. **Register trace.** Done with the VFIO method in an x86 guest
+   (`scripts/x86-trace-guest.sh`): cold init, fbcon modeset, two explicit
+   modesets, blank and unblank. mmiotrace was not used.
+5. **Document.** Done: `docs/REFERENCE-TRACE.md`.
 
 Host actions that need approval before they happen:
 
@@ -85,7 +79,9 @@ assigned and accessible.
 Success: from an un-POSTed card, the program shows a test pattern at the
 monitor's native resolution (user confirms).
 
-1. Find and document a reliable way back to the un-POSTed state.
+1. Find and document a reliable way back to the un-POSTed state. Known:
+   the reset QEMU's `vfio-pci` performs does it. To do: the same from a
+   plain host process.
    - Open question raised by milestone 0: the card is GDDR5, the case where
      Linux loads `TURKS_mc.bin`. Test early whether VRAM works after
      `asic_init` alone. If not, the MC microcode loader comes into scope

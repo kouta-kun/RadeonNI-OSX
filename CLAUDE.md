@@ -13,14 +13,14 @@ for this phase. `PROMPT.md` is the user's original brief.
 
 ## Current state
 
-No driver code exists yet. Milestone 0 is in progress: the card is confirmed
-as Turks PRO `1002:675d` at `0000:10:00.0` (audio at `10:00.1`), its memory is
-GDDR5 (not DDR3 as the brief assumed), and the VBIOS is dumped to
-`private/vbios.rom`. Still pending: a monitor on the card, EDID, and the
-reference register trace. QEMU is built and the guest scripts exist, but no
-Tiger image has been installed (the user supplies the media).
-`docs/PLAN.md` has the milestone states and the list of things needed from
-the user; check it first.
+No driver code exists yet. Milestone 0 is done: the card is Turks PRO
+`1002:675d` at `0000:10:00.0` (audio at `10:00.1`) with GDDR5 memory (not DDR3
+as the brief assumed), the VBIOS is in `private/vbios.rom`, and the reference
+trace of the stock Linux driver is in `traces/` and described in
+`docs/REFERENCE-TRACE.md`. The monitor is on the DVI-I connector; its EDID
+prefers 1366x768. Next: milestone 2 can start; milestone 1 waits for the
+Tiger install media from the user. `docs/PLAN.md` has the milestone states
+and the list of things needed from the user; check it first.
 
 ## Documents
 
@@ -32,6 +32,8 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
 - `docs/HARNESS.md`: host facts, QEMU command line, patches, recovery.
   Sections marked PLANNED have not been run.
 - `docs/HARDWARE.md`: facts about this specific card.
+- `docs/REFERENCE-TRACE.md`: how the Linux driver's trace was captured, its
+  phases and findings.
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
   Treat `[I]` as a hypothesis; fix the document when reality differs.
 
@@ -41,6 +43,11 @@ Keep these current as part of the work, and commit small and often.
 
 - `scripts/host-inventory.sh`: read-only host inspection (GPUs, drivers,
   IOMMU groups, tools). Re-run after any hardware or kernel change.
+- `scripts/card-bind.sh {status|vfio|none|radeon}`: move the 7570 between
+  host drivers at runtime. After a host reboot it is back on `radeon`.
+- `scripts/x86-trace-guest.sh <name>` then `scripts/trace-split.py
+  traces/<name>.log`: capture and reduce a reference trace of the stock
+  Linux driver. The compact per-phase files are diffable.
 - `scripts/build-qemu.sh`: builds QEMU 11.1.1 (`qemu-system-ppc`, `qemu-ppc`)
   into `third_party/qemu/`, applying `patches/qemu/*.patch`. The host has no
   packaged PowerPC QEMU; always use this build.

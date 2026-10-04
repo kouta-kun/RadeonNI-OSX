@@ -63,33 +63,48 @@ properties; the trace events `vfio_region_read`, `vfio_region_write`,
 OpenBIOS prompt on serial and its PCI bus is `/pci@f2000000` with `mac-io`,
 `usb`, `QEMU,VGA` and `ethernet`.
 
-## Binding the card to a driver (PLANNED)
+## Binding the card to a driver
 
-No persistent host configuration. Binding is done at runtime through sysfs
-`driver_override`, for both functions of the card (VGA and HDMI audio), by a
-script in `scripts/`. This avoids kernel parameters, initramfs changes and
-blacklists, all of which need the user's approval.
+    scripts/card-bind.sh status
+    scripts/card-bind.sh vfio      # for QEMU passthrough
+    scripts/card-bind.sh none      # driverless, for the milestone 2 tool
+    scripts/card-bind.sh radeon    # back to the stock drivers
 
-Expected consequence: at every host boot the stock `radeon` module will
-auto-bind and initialise the card. That is acceptable for milestone 0 (it is
-the reference driver) and must be undone by the script before passthrough.
+No persistent host configuration: the script uses sysfs `driver_override` on
+both functions, releases fbcon first, and refuses to act on anything that is
+not `1002:675d` or that is the boot VGA. `vfio` and `status` have been run;
+`none` and `radeon` have not.
 
-## Returning the card to the un-POSTed state (PLANNED, unverified)
+At every host boot the stock `radeon` auto-binds about 60 s in, POSTs the
+card and puts fbcon on it. Unbinding it logs two kernel WARNs
+(`irq_domain_remove`, `msi_device_data_release`) and taints the kernel with
+W; nothing else was affected.
 
-Known so far (2026-10-04): the host firmware does not POST the card (iGPU is
-primary, the ROM has no EFI image), so after a host boot it stays un-POSTed
-until `radeon` binds and posts it.
+## Returning the card to the un-POSTed state
 
-Required by milestone 2. Candidates, to be tested in this order:
+Verified 2026-10-04: starting a QEMU guest with the card on `vfio-pci` resets
+it to the un-POSTed state (all `CRTC_CONTROL` enables clear, `CONFIG_MEMSIZE`
+zero, Linux says "GPU not posted"), regardless of what initialised it before.
+This worked twice in a row.
 
-1. Secondary bus reset through the root port (`/sys/bus/pci/devices/<vga>/reset`
-   with `reset_method` = `bus`), then check `radeon_card_posted()`'s
-   conditions by hand: all `CRTC_CONTROL` enable bits clear and
-   `CONFIG_MEMSIZE` zero.
-2. If the firmware always POSTs the card at host boot and a bus reset does not
-   clear it: suspend-to-RAM of the host is *not* an option without approval.
+Also known: the host firmware does not POST the card (iGPU is primary, the
+ROM has no EFI image), so it is un-POSTed after a host boot until `radeon`
+binds.
 
-Record the result in JOURNAL and replace this section.
+Not yet tested: triggering the same reset from a host process without QEMU
+(VFIO's hot-reset ioctl, or sysfs `reset`), which milestone 2 needs.
+
+## Reference trace guest
+
+    scripts/card-bind.sh vfio
+    scripts/x86-trace-guest.sh <name>
+    scripts/trace-split.py traces/<name>.log
+
+Boots the host kernel in a KVM guest with an initramfs holding `radeon` and
+its firmware, and logs every access to the card. Takes about three minutes
+and writes roughly 1 GB to `traces/`. The card must be behind a bridge in an
+x86 guest: on the root bus the kernel treats its ROM as shadowed at 0xc0000
+and radeon reads the wrong BIOS. See REFERENCE-TRACE.md.
 
 ## QEMU and the Tiger guest
 

@@ -64,8 +64,19 @@ There is no EFI (GOP) image and no FCode image in the ROM.
   sequencer is not running. After radeon's init `MC_SEQ_SUP_CNTL` (0x28c8)
   reads `0xb1800001` (run bit set).
 
+## Monitor (attached 2026-10-04)
+
+On the DVI-I connector through a DVI-to-HDMI adapter. EDID saved to
+`private/monitor-edid.bin`: 256 bytes, checksums valid, manufacturer `XXX`,
+name `AAA`, year 2023, digital input.
+
+| Timing | Pixel clock | H total | V total | Sync offsets / widths | Refresh |
+|---|---|---|---|---|---|
+| 1366x768 (preferred) | 85.50 MHz | 1792 | 798 | H 70/143, V 3/3 | 59.79 Hz |
+| 1920x1080 | 148.50 MHz | 2200 | 1125 | H 88/44, V 4/5 | 60.00 Hz |
+
 ## Still unknown
 
-- Monitor EDID and native mode: no monitor was detected on either connector.
+- Whether the panel is physically 1366x768 or 1920x1080.
 - Reference clock and default engine/memory clocks (FirmwareInfo table).
 - Whether VRAM is usable after `asic_init` alone, without the MC microcode.
