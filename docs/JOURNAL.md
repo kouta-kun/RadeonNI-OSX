@@ -51,3 +51,30 @@ reproduces it): os-release, kernel cmdline and config, `lspci -nnvv`, `lspci
   enumerates.
 - The premise "the server has the 7570 installed as a secondary GPU" in the
   brief was wrong at the time of inspection; RESEARCH.md §11 updated.
+
+## 2026-10-04 — QEMU 11.1.1 built from source; `mac99` and VFIO checked without the card
+
+**Tried.** `scripts/build-qemu.sh`: QEMU 11.1.1 release tarball (SHA-256
+`079ffbff…12482`), targets `ppc-softmmu` and `ppc-linux-user`, `log` trace
+backend, built under `third_party/`. Then booted `-M mac99,via=pmu -cpu G4`
+with `-nographic` and `auto-boot?=false`.
+
+**Observed.**
+
+- The build takes about two minutes and needs no packages beyond what the
+  host already has.
+- `vfio-pci` is built into `qemu-system-ppc` on the x86 host, with
+  `x-no-mmap`, `romfile` and `x-vga` properties. The four trace events named
+  in RESEARCH.md §8 exist under those names.
+- OpenBIOS 1.1 (built 2026-06-29) reaches its prompt on serial. `dev
+  /pci@f2000000 ls` lists `mac-io@c`, `usb@d`, `QEMU,VGA@e`, `ethernet@f`.
+- `hw/ppc/mac_newworld.c` maps the PCI hole at `0x80000000`, as RESEARCH.md
+  says.
+- The host's OpenSSH 10.5 still offers `diffie-hellman-group1/14-sha1` and
+  `ssh-rsa` when asked, so it should be able to talk to Tiger's sshd.
+
+**Concluded.** The harness side of RESEARCH.md §8 holds as far as it can be
+checked with no device: cross-architecture VFIO is compiled in and the trace
+mechanism is there. Whether a device actually attaches, and what OpenBIOS
+does with its BARs, is still open. `scripts/tiger.sh` wraps the guest
+lifecycle; only its plumbing has been exercised.

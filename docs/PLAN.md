@@ -9,7 +9,7 @@ wherever its criterion involves video output.
 | # | Milestone | State |
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Blocked**: card not on the PCI bus |
-| 1 | Tiger in QEMU with the card passed through | Not started (card-independent prep can proceed) |
+| 1 | Tiger in QEMU with the card passed through | QEMU built and guest scripts ready; waiting for install media and the card |
 | 2 | Cold POST and modeset from Linux userspace | Not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
 
@@ -75,7 +75,7 @@ Not planned: kernel parameters, initramfs changes, blacklists, anything on
 Success: the card shows in `ioreg` in Tiger as an `IOPCIDevice` with its BARs
 assigned and accessible.
 
-1. Build QEMU (`ppc-softmmu`, `ppc-linux-user`) from source in `third_party/`.
+1. ~~Build QEMU (`ppc-softmmu`, `ppc-linux-user`) from source in `third_party/`.~~ Done 2026-10-04 (`scripts/build-qemu.sh`).
 2. Install Tiger on `mac99` with emulated VGA; update to 10.4.11; install
    Xcode 2.5; enable Remote Login; install an ssh key. Snapshot.
 3. Add `vfio-pci`. Inspect the OpenBIOS device tree and `ioreg`.

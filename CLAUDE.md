@@ -14,7 +14,9 @@ for this phase. `PROMPT.md` is the user's original brief.
 ## Current state
 
 No driver code exists yet. Milestone 0 is blocked: the HD 7570 does not
-enumerate on the host's PCI bus (2026-10-04). `docs/PLAN.md` has the milestone
+enumerate on the host's PCI bus (2026-10-04). QEMU is built and the guest
+scripts exist, but no Tiger image has been installed (the user supplies the
+media). `docs/PLAN.md` has the milestone
 states and the list of things needed from the user; check it first.
 
 ## Documents
@@ -36,8 +38,15 @@ Keep these current as part of the work, and commit small and often.
 
 - `scripts/host-inventory.sh`: read-only host inspection (GPUs, drivers,
   IOMMU groups, tools). Re-run after any hardware or kernel change.
+- `scripts/build-qemu.sh`: builds QEMU 11.1.1 (`qemu-system-ppc`, `qemu-ppc`)
+  into `third_party/qemu/`, applying `patches/qemu/*.patch`. The host has no
+  packaged PowerPC QEMU; always use this build.
+- `scripts/tiger.sh {create|install|cdrom|run|passthru|snapshot|restore|ssh}`:
+  Tiger guest lifecycle. Screen on VNC `127.0.0.1:5901`, ssh on port 2222.
+  `passthru <addr>` attaches the card with `x-no-mmap=on` and writes the
+  register trace to `traces/`.
 
-There is no build or test yet. Add the commands here when they exist.
+There is no driver build or test yet. Add the commands here when they exist.
 
 ## Host safety rules
 

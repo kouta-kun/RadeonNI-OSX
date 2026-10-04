@@ -49,12 +49,18 @@ slot (`PCI_E1`), behind root port `00:01.1`.
 
 | Tool | State |
 |---|---|
-| `qemu-base` | 11.1.1-1 (x86 only) |
-| `qemu-system-ppc` | missing; plan is a source build under `third_party/` so it can be patched |
-| `qemu-ppc` (user mode) | missing; same source build |
-| OpenBIOS | QEMU ships a binary; source build under `third_party/` when patching is needed |
+| `qemu-base` (Arch package) | 11.1.1-1, x86 only; used for `qemu-img` |
+| `qemu-system-ppc`, `qemu-ppc` | 11.1.1 built from source by `scripts/build-qemu.sh` into `third_party/qemu/`; not installed on the host |
+| OpenBIOS | 1.1 (built 2026-06-29), the binary shipped in the QEMU tarball; source build when patching is needed |
 | PowerPC Linux cross compiler | missing, not in Arch repos; to be chosen in milestone 2 |
 | gcc / meson / ninja / dtc | present |
+
+Verified on the source build (2026-10-04): `vfio-pci` is available in
+`qemu-system-ppc` on this x86 host, with the `x-no-mmap` and `romfile`
+properties; the trace events `vfio_region_read`, `vfio_region_write`,
+`vfio_pci_read_config` and `vfio_pci_write_config` exist; `mac99` reaches the
+OpenBIOS prompt on serial and its PCI bus is `/pci@f2000000` with `mac-io`,
+`usb`, `QEMU,VGA` and `ethernet`.
 
 ## Binding the card to a driver (PLANNED)
 
@@ -80,21 +86,43 @@ Required by milestone 2. Candidates, to be tested in this order:
 
 Record the result in JOURNAL and replace this section.
 
-## QEMU command line (PLANNED)
+## QEMU and the Tiger guest
 
-Baseline for Tiger on `mac99`, before passthrough:
+    scripts/build-qemu.sh             # once; builds third_party/qemu/
+    scripts/tiger.sh create           # images/tiger.qcow2, 32 GB sparse
+    scripts/tiger.sh install media/<tiger-dvd>.iso
+    scripts/tiger.sh run
+    scripts/tiger.sh passthru <host-pci-addr> [trace-name]
+    scripts/tiger.sh ssh [cmd]
 
-    qemu-system-ppc -M mac99,via=pmu -cpu G4 -m 1024 \
-        -drive file=images/tiger.qcow2,format=qcow2 \
-        -netdev user,id=n0,hostfwd=tcp:127.0.0.1:2222-:22 -device sungem,netdev=n0 \
-        -vnc 127.0.0.1:1 -monitor unix:build/qemu-mon.sock,server,nowait
+The machine is `-M mac99,via=pmu -cpu G4 -m 1024` with `sungem` networking.
+Guest screen on VNC `127.0.0.1:5901`, guest ssh on `127.0.0.1:2222`, monitor
+socket at `build/qemu-mon.sock`, serial log at `build/guest-serial.log`.
+From another machine: `ssh -L 5901:127.0.0.1:5901 arch-server`, then a VNC
+client on `localhost:5901`.
 
-Passthrough adds:
+`passthru` adds `-device vfio-pci,host=<addr>,x-no-mmap=on` and logs the
+`vfio_region_*` and `vfio_pci_*_config` trace events to `traces/<name>.log`.
+It refuses to start unless the device is already bound to `vfio-pci`.
+`x-vga=on` is not used; the emulated VGA stays primary.
 
-    -device vfio-pci,host=<addr>,x-no-mmap=on \
-    -trace 'vfio_region_*' -trace 'vfio_pci_*_config' -D traces/<name>.log
+Only the script plumbing has been run (QEMU starts and reaches OpenBIOS with
+an empty disk). Booting Tiger, the install procedure and passthrough are
+untested until the media and the card are available.
 
-`x-vga=on` is not used. The emulated VGA stays primary.
+### Installing Tiger (PLANNED, needs the user at the VNC console)
+
+1. `scripts/tiger.sh install media/<dvd>.iso`. In the installer: Disk Utility,
+   partition the 32 GB disk as Apple Partition Map with one HFS+ Journaled
+   volume, then install. Deselect printer drivers and extra languages.
+2. First boot: create the user `tiger` (the scripts assume it; override with
+   `TIGER_USER`). System Preferences, Sharing, enable Remote Login. Energy
+   Saver: never sleep.
+3. Shut down. `scripts/tiger.sh cdrom media/<combo-update>.dmg` to reach
+   10.4.11, then the same with the Xcode 2.5 image.
+4. Shut down. `scripts/tiger.sh snapshot clean-install`.
+
+The steps after 2 can be driven over ssh once Remote Login is on.
 
 ## Guest recovery (PLANNED)
 
