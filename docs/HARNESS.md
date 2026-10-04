@@ -53,7 +53,8 @@ slot (`PCI_E1`), behind root port `00:01.1`.
 | `qemu-base` (Arch package) | 11.1.1-1, x86 only; used for `qemu-img` |
 | `qemu-system-ppc`, `qemu-ppc` | 11.1.1 built from source by `scripts/build-qemu.sh` into `third_party/qemu/`; not installed on the host |
 | OpenBIOS | 1.1 (built 2026-06-29), the binary shipped in the QEMU tarball; source build when patching is needed |
-| PowerPC Linux cross compiler | missing, not in Arch repos; to be chosen in milestone 2 |
+| PowerPC Linux cross compiler | Bootlin `powerpc-e300c3` musl 2026.08-1 in `third_party/ppc-toolchain/`, fetched by `scripts/fetch-deps.sh`; static binaries run under `third_party/qemu/qemu-ppc` |
+| Linux radeon sources | sparse checkout in `third_party/linux/`, same script; reference for porting |
 | gcc / meson / ninja / dtc | present |
 
 Verified on the source build (2026-10-04): `vfio-pci` is available in
@@ -91,8 +92,12 @@ Also known: the host firmware does not POST the card (iGPU is primary, the
 ROM has no EFI image), so it is un-POSTed after a host boot until `radeon`
 binds.
 
+`sudo scripts/card-state.py` reports the POST state without changing it.
+The card is also left un-POSTed when QEMU exits.
+
 Not yet tested: triggering the same reset from a host process without QEMU
-(VFIO's hot-reset ioctl, or sysfs `reset`), which milestone 2 needs.
+(VFIO's hot-reset ioctl, or `reset_subordinate` on bridge `00:01.1`), which
+milestone 2 needs.
 
 ## Reference trace guest
 

@@ -167,3 +167,50 @@ radeon's dmesg, a read-only mmap of BAR2 to read `MC_SEQ_MISC0` and
 - After the run the card stays on `vfio-pci`; the monitor shows nothing
   until something drives the card again. A host reboot gives it back to
   `radeon`.
+
+## 2026-10-04 — AtomBIOS interpreter ported; ASIC_Init replays the Linux trace on x86 and big-endian PowerPC
+
+**Tried.**
+
+- `scripts/card-state.py` after the trace guest had exited.
+- `scripts/fetch-deps.sh`: Bootlin `powerpc-e300c3` musl toolchain
+  (2026.08-1) and a sparse checkout of the Linux radeon sources (commit
+  `7704c4c5bb12`) into `third_party/`.
+- Copied `atom.c`, `atom.h`, `atom-bits.h`, `atom-names.h`, `atom-types.h`,
+  `atombios.h` and `ObjectID.h` (all MIT-headed) into `hw/atom/` and adapted
+  them to the OS layer `hw/rdn_os.h` through `hw/atom/atom_port.h`. Register
+  callbacks are in `hw/rdn_atom.c`.
+- `tests/atom_replay.c`: runs `ASIC_Init` from the VBIOS dump against a mock
+  card driven by the reference trace. Each access must be the next one in the
+  trace; reads return what the real card returned. Built for x86 and for
+  PowerPC, the latter run under `qemu-ppc`.
+
+**Observed.**
+
+- When QEMU exits, the card is left un-POSTed: all CRTCs off,
+  `CONFIG_MEMSIZE` 0, `MC_SEQ_SUP_CNTL` 0. `MC_SEQ_MISC0` also reads 0 in
+  that state, so the memory type cannot be read from it before `asic_init`.
+- First replay attempt matched 1492 accesses and then diverged on an I/O
+  port write: the interpreter asked for register 0x2a44 through the I/O BAR,
+  and Linux reaches registers beyond the 256-byte BAR through its
+  index/data pair at 0/4. With that reproduced in `rdn_atom.c`:
+- `make test`: `PASS: asic_init matches trace entries 53..2488 (2436
+  accesses), digest 63c4ddd8`, identical on x86 and on PowerPC.
+- The 53 accesses before it are Linux's GPU reset check and POST check
+  (reads) plus BIOS scratch register setup at 0x172c–0x173c. What follows
+  entry 2488 is `evergreen_init_golden_registers` and later the MC
+  microcode.
+- Turks goes through `evergreen_init()` in Linux, not `ni.c`'s Cayman path;
+  only the microcode loader comes from `ni.c`.
+
+**Concluded.**
+
+- The interpreter is correct for the largest table this VBIOS has, and is
+  endian-clean: no difference between hosts across 2436 accesses with
+  data-dependent control flow.
+- The design goal "what is validated without hardware is what runs on
+  hardware" holds so far: the same `hw/` objects go into the test and will go
+  into the tool and the kext.
+- A sysfs reset of the card from the host is still untested, because it
+  needs a POSTed card to be meaningful. The bridge `00:01.1` exposes
+  `reset_subordinate`, which is the candidate.

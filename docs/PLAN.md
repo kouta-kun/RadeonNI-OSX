@@ -10,7 +10,7 @@ wherever its criterion involves video output.
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | QEMU built and guest scripts ready; waiting for install media and the card |
-| 2 | Cold POST and modeset from Linux userspace | Not started |
+| 2 | Cold POST and modeset from Linux userspace | In progress: AtomBIOS interpreter ported and passing the big-endian replay test; nothing has touched the hardware yet |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
 
 ## Needed from the user
@@ -88,11 +88,17 @@ monitor's native resolution (user confirms).
      (blob loaded from a user-supplied file, never committed), which touches
      the "no microcode in this phase" decision and needs the user's say.
 2. Hardware library behind a small OS layer (MMIO, config space, delay,
-   memory, log). No Linux or IOKit dependencies inside it.
+   memory, log). No Linux or IOKit dependencies inside it. OS layer done
+   (`hw/rdn_os.h`).
 3. VBIOS reader, AtomBIOS interpreter, `asic_init`, DDC/EDID, DCE5 modeset.
+   - Done: interpreter (`hw/atom/`), `asic_init` verified against the
+     reference trace without hardware.
+   - Next: userspace tool that maps the card, runs the pre-POST checks and
+     `asic_init` on the real hardware, and tests VRAM without the MC
+     microcode.
 4. Big-endian test: build for PowerPC Linux, run under `qemu-ppc` against the
    VBIOS dump, compare the interpreter's register writes with the x86 run.
-   Automated.
+   Automated. Done for `asic_init` (`make test`); extend as code is added.
 5. Compare against the milestone 0 trace before asking for a visual check.
 
 ## Milestone 3 — `IOFramebuffer` kext in Tiger on QEMU

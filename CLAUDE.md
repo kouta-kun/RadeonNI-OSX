@@ -13,12 +13,15 @@ for this phase. `PROMPT.md` is the user's original brief.
 
 ## Current state
 
-No driver code exists yet. Milestone 0 is done: the card is Turks PRO
-`1002:675d` at `0000:10:00.0` (audio at `10:00.1`) with GDDR5 memory (not DDR3
-as the brief assumed), the VBIOS is in `private/vbios.rom`, and the reference
-trace of the stock Linux driver is in `traces/` and described in
-`docs/REFERENCE-TRACE.md`. The monitor is on the DVI-I connector; its EDID
-prefers 1366x768. Next: milestone 2 can start; milestone 1 waits for the
+Milestone 0 is done: the card is Turks PRO `1002:675d` at `0000:10:00.0`
+(audio at `10:00.1`) with GDDR5 memory (not DDR3 as the brief assumed), the
+VBIOS is in `private/vbios.rom`, and the reference trace of the stock Linux
+driver is in `traces/` and described in `docs/REFERENCE-TRACE.md`. The
+monitor is on the DVI-I connector; its EDID prefers 1366x768.
+
+Milestone 2 is in progress: the AtomBIOS interpreter is ported and its
+`ASIC_Init` run reproduces the Linux trace on x86 and big-endian PowerPC.
+No code of ours has touched the real card yet. Milestone 1 waits for the
 Tiger install media from the user. `docs/PLAN.md` has the milestone states
 and the list of things needed from the user; check it first.
 
@@ -41,6 +44,16 @@ Keep these current as part of the work, and commit small and often.
 
 ## Commands
 
+- `make`: builds the hardware library and tests for x86 (`build/x86/`) and
+  big-endian PowerPC (`build/ppc/`).
+- `make test`: runs each test natively and under `qemu-ppc`; the two outputs
+  must be identical. Needs `private/vbios.rom` and the reference trace phase
+  files, and skips loudly without them. A single test by hand:
+  `build/x86/atom_replay private/vbios.rom traces/ref-radeon-2.phase-a1.txt`.
+- `scripts/fetch-deps.sh`: PowerPC cross toolchain and Linux radeon sources
+  into `third_party/`. Run once, with `scripts/build-qemu.sh`, on a fresh
+  checkout.
+- `sudo scripts/card-state.py`: is the card POSTed (read-only).
 - `scripts/host-inventory.sh`: read-only host inspection (GPUs, drivers,
   IOMMU groups, tools). Re-run after any hardware or kernel change.
 - `scripts/card-bind.sh {status|vfio|none|radeon}`: move the 7570 between
@@ -56,7 +69,25 @@ Keep these current as part of the work, and commit small and often.
   `passthru <addr>` attaches the card with `x-no-mmap=on` and writes the
   register trace to `traces/`.
 
-There is no driver build or test yet. Add the commands here when they exist.
+The kext does not exist yet. Add its commands here when it does.
+
+## Architecture
+
+- `hw/` is the hardware library: freestanding C99 that may include only
+  `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<stdbool.h>` and `<string.h>`.
+  It must also compile with Apple gcc 4.0.1 inside the Tiger guest.
+- `hw/rdn_os.h` is the only way out of the library: MMIO, I/O BAR, config
+  space, delay, clock, allocation, logging. Register values cross it in CPU
+  byte order; the implementation swaps. Userspace tool, tests and kext each
+  provide one implementation.
+- `hw/atom/` is the AtomBIOS interpreter and table headers taken from Linux
+  with minimal edits; `atom_port.h` maps the kernel services it expects onto
+  the OS layer. Keep it close to upstream and keep the copyright headers.
+  `hw/rdn_atom.c` holds the register callbacks, including Linux's I/O BAR
+  index/data behaviour.
+- `tests/` replays our code against the reference trace: every register
+  access must be the next one Linux made. This is how code is validated
+  before it runs on the card, and how big-endian correctness is checked.
 
 ## Host safety rules
 
