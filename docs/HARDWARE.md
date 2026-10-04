@@ -75,8 +75,20 @@ name `AAA`, year 2023, digital input.
 | 1366x768 (preferred) | 85.50 MHz | 1792 | 798 | H 70/143, V 3/3 | 59.79 Hz |
 | 1920x1080 | 148.50 MHz | 2200 | 1125 | H 88/44, V 4/5 | 60.00 Hz |
 
+## After ASIC_Init from cold (our code, 2026-10-04)
+
+| Register | Value | Meaning |
+|---|---|---|
+| `CONFIG_MEMSIZE` (0x5428) | `0x00000400` | 1024, in megabytes |
+| `MC_SEQ_MISC0` (0x2a00) | `0x500026a9` | GDDR5; reads 0 before `ASIC_Init` |
+| `MC_SEQ_SUP_CNTL` (0x28c8) | `0x00000000` | Sequencer not started by microcode |
+| `CRTC_CONTROL` x6 | `0x00400310` | All CRTCs disabled |
+
+The memory behind the 256 MB aperture reads back correctly in this state,
+with no MC microcode loaded. The I/O BAR is not required: `ASIC_Init` also
+works with AtomBIOS indirect I/O routed through MMIO.
+
 ## Still unknown
 
 - Whether the panel is physically 1366x768 or 1920x1080.
 - Reference clock and default engine/memory clocks (FirmwareInfo table).
-- Whether VRAM is usable after `asic_init` alone, without the MC microcode.

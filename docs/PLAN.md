@@ -10,7 +10,7 @@ wherever its criterion involves video output.
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | QEMU built and guest scripts ready; waiting for install media and the card |
-| 2 | Cold POST and modeset from Linux userspace | In progress: AtomBIOS interpreter ported and passing the big-endian replay test; nothing has touched the hardware yet |
+| 2 | Cold POST and modeset from Linux userspace | In progress: cold POST works on the real card and VRAM is usable without microcode; EDID and modeset not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
 
 ## Needed from the user
@@ -79,23 +79,20 @@ assigned and accessible.
 Success: from an un-POSTed card, the program shows a test pattern at the
 monitor's native resolution (user confirms).
 
-1. Find and document a reliable way back to the un-POSTed state. Known:
-   the reset QEMU's `vfio-pci` performs does it. To do: the same from a
-   plain host process.
-   - Open question raised by milestone 0: the card is GDDR5, the case where
-     Linux loads `TURKS_mc.bin`. Test early whether VRAM works after
-     `asic_init` alone. If not, the MC microcode loader comes into scope
-     (blob loaded from a user-supplied file, never committed), which touches
-     the "no microcode in this phase" decision and needs the user's say.
+1. ~~Find and document a reliable way back to the un-POSTed state.~~ Done:
+   `scripts/card-reset.sh` (secondary bus reset through the root port).
+   - ~~Does VRAM work after `asic_init` without `TURKS_mc.bin`?~~ Yes, as far
+     as the aperture test goes. No microcode loader is planned.
 2. Hardware library behind a small OS layer (MMIO, config space, delay,
    memory, log). No Linux or IOKit dependencies inside it. OS layer done
    (`hw/rdn_os.h`).
 3. VBIOS reader, AtomBIOS interpreter, `asic_init`, DDC/EDID, DCE5 modeset.
-   - Done: interpreter (`hw/atom/`), `asic_init` verified against the
-     reference trace without hardware.
-   - Next: userspace tool that maps the card, runs the pre-POST checks and
-     `asic_init` on the real hardware, and tests VRAM without the MC
-     microcode.
+   - Done: interpreter (`hw/atom/`), bring-up (`hw/rdn_post.c`), verified
+     against the reference trace without hardware and then on the card
+     (`tools/rdn_tool.c`), with and without the I/O BAR.
+   - Next: EDID over DDC, then the DCE5 modeset for the DVI-I digital
+     output, validated by replay against trace phases `a3`/`a4` before it
+     runs on the card. Then the test pattern and the user's visual check.
 4. Big-endian test: build for PowerPC Linux, run under `qemu-ppc` against the
    VBIOS dump, compare the interpreter's register writes with the x86 run.
    Automated. Done for `asic_init` (`make test`); extend as code is added.

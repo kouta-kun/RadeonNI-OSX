@@ -19,11 +19,12 @@ VBIOS is in `private/vbios.rom`, and the reference trace of the stock Linux
 driver is in `traces/` and described in `docs/REFERENCE-TRACE.md`. The
 monitor is on the DVI-I connector; its EDID prefers 1366x768.
 
-Milestone 2 is in progress: the AtomBIOS interpreter is ported and its
-`ASIC_Init` run reproduces the Linux trace on x86 and big-endian PowerPC.
-No code of ours has touched the real card yet. Milestone 1 waits for the
-Tiger install media from the user. `docs/PLAN.md` has the milestone states
-and the list of things needed from the user; check it first.
+Milestone 2 is in progress: our library cold-POSTs the real card (same
+register sequence as Linux, with or without the I/O BAR) and the video
+memory works without the MC microcode. EDID over DDC and the DCE5 modeset
+are next. Milestone 1 waits for the Tiger install media from the user.
+`docs/PLAN.md` has the milestone states and the list of things needed from
+the user; check it first.
 
 ## Documents
 
@@ -53,6 +54,10 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/fetch-deps.sh`: PowerPC cross toolchain and Linux radeon sources
   into `third_party/`. Run once, with `scripts/build-qemu.sh`, on a fresh
   checkout.
+- `sudo build/x86/rdn_tool {status|post|vramtest}`: our code on the real
+  card through sysfs; `-t file` logs accesses in the trace format, `-n`
+  avoids the I/O BAR. Needs `scripts/card-bind.sh none` first.
+- `scripts/card-reset.sh`: back to the un-POSTed state (bus reset).
 - `sudo scripts/card-state.py`: is the card POSTed (read-only).
 - `scripts/host-inventory.sh`: read-only host inspection (GPUs, drivers,
   IOMMU groups, tools). Re-run after any hardware or kernel change.
@@ -85,6 +90,8 @@ The kext does not exist yet. Add its commands here when it does.
   the OS layer. Keep it close to upstream and keep the copyright headers.
   `hw/rdn_atom.c` holds the register callbacks, including Linux's I/O BAR
   index/data behaviour.
+- `tools/rdn_tool.c` is the Linux sysfs implementation of the OS layer and
+  the milestone 2 front end.
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.

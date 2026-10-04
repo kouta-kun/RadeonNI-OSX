@@ -73,8 +73,7 @@ OpenBIOS prompt on serial and its PCI bus is `/pci@f2000000` with `mac-io`,
 
 No persistent host configuration: the script uses sysfs `driver_override` on
 both functions, releases fbcon first, and refuses to act on anything that is
-not `1002:675d` or that is the boot VGA. `vfio` and `status` have been run;
-`none` and `radeon` have not.
+not `1002:675d` or that is the boot VGA. `vfio`, `none` and `status` have been run; `radeon` has not.
 
 At every host boot the stock `radeon` auto-binds about 60 s in, POSTs the
 card and puts fbcon on it. Unbinding it logs two kernel WARNs
@@ -92,12 +91,25 @@ Also known: the host firmware does not POST the card (iGPU is primary, the
 ROM has no EFI image), so it is un-POSTed after a host boot until `radeon`
 binds.
 
-`sudo scripts/card-state.py` reports the POST state without changing it.
-The card is also left un-POSTed when QEMU exits.
+Without QEMU (verified 2026-10-04, three times):
 
-Not yet tested: triggering the same reset from a host process without QEMU
-(VFIO's hot-reset ioctl, or `reset_subordinate` on bridge `00:01.1`), which
-milestone 2 needs.
+    scripts/card-bind.sh none      # once after boot; unbinds radeon
+    scripts/card-reset.sh          # secondary bus reset through 00:01.1
+
+`sudo scripts/card-state.py` or `sudo build/x86/rdn_tool status` reports the
+POST state without changing it.
+
+## Driving the card from userspace (milestone 2)
+
+    scripts/card-bind.sh none
+    sudo build/x86/rdn_tool status
+    sudo build/x86/rdn_tool [-t traces/<name>.txt] [-n] post
+    sudo build/x86/rdn_tool vramtest
+
+`-t` logs every register access in the compact trace format, `-n` avoids the
+I/O BAR, `-b <file>` takes the VBIOS from a file instead of the expansion
+ROM. The tool refuses to run while a kernel driver owns the card or if the
+device is not `1002:675d`.
 
 ## Reference trace guest
 

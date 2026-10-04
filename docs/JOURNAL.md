@@ -214,3 +214,57 @@ radeon's dmesg, a read-only mmap of BAR2 to read `MC_SEQ_MISC0` and
 - A sysfs reset of the card from the host is still untested, because it
   needs a POSTed card to be meaningful. The bridge `00:01.1` exposes
   `reset_subordinate`, which is the candidate.
+
+## 2026-10-04 — First cold POST of the real card with our code; VRAM works without MC microcode
+
+**Tried.** `rdn_card_post()` (scratch registers, reset check, `ASIC_Init`)
+added to the library and to the replay test, then `tools/rdn_tool.c`, a
+sysfs front end, run against the driverless card:
+
+    scripts/card-bind.sh none
+    sudo build/x86/rdn_tool status
+    sudo build/x86/rdn_tool -t traces/ours-post-1.txt post
+    sudo build/x86/rdn_tool vramtest
+    scripts/card-reset.sh
+    sudo build/x86/rdn_tool -n -t traces/ours-post-2-noio.txt post
+    sudo build/x86/rdn_tool vramtest
+
+**Observed.**
+
+- Replay test from the very first access: `PASS: post matches trace entries
+  0..2488 (2489 accesses), digest 6b51b16f` on x86 and PowerPC.
+- First run of the tool read only 4096 bytes of VBIOS: sysfs returns one page
+  per read. The ATOM header parsed fine, the tables behind it were zeros. It
+  was caught before posting. The tool now loops and checks the image length
+  against the size byte in the ROM header.
+- Cold POST on the real card: returned 0. Afterwards `CONFIG_MEMSIZE` =
+  0x400 (the register is in megabytes: 1024), `MC_SEQ_MISC0` = `0x500026a9`
+  (GDDR5), all `CRTC_CONTROL` = `0x00400310`, `MC_SEQ_SUP_CNTL` = 0.
+- Our access log against Linux's first 2489 accesses: the same sequence and
+  the same written values. The only difference is 170 extra reads of 0x60c
+  and 0x61c, polling loops that spin more often when the registers are not
+  trapped by QEMU.
+- VRAM test through the 256 MB aperture, no MC microcode loaded: 16373 words
+  spread over the aperture, written and read back twice (pattern and
+  complement), 0 mismatches.
+- `reset_subordinate` on root port `00:01.1` puts the card back to
+  un-POSTed (`CONFIG_MEMSIZE` 0, `MC_SEQ_MISC0` 0). Wrapped as
+  `scripts/card-reset.sh`. POST, reset, POST, reset, POST all behaved the
+  same.
+- POST with `-n` (no I/O BAR; AtomBIOS indirect I/O through MMIO) also
+  succeeds and passes the VRAM test.
+
+**Concluded.**
+
+- Cold POST without x86 code works on this card with our library, in the
+  Linux order.
+- The MC microcode is not needed for the memory to be usable through the
+  aperture: `ASIC_Init` trains the GDDR5 itself. The "no microcode in this
+  phase" decision stands. Limits of the evidence: only the first 256 MB of
+  the 1024 MB are reachable through the aperture, the test is sparse, and
+  nothing has scanned out of that memory yet.
+- The I/O BAR is optional, which removes one dependency on OpenBIOS and on
+  the G5's Open Firmware.
+- The reset method for milestone 2 is settled: `scripts/card-reset.sh`.
+- After these runs the card is left posted and driverless, with nothing on
+  screen. Next is DDC/EDID and the DCE5 modeset.

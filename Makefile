@@ -26,7 +26,15 @@ TESTS     = atom_replay
 X86_TESTS = $(addprefix build/x86/,$(TESTS))
 PPC_TESTS = $(addprefix build/ppc/,$(TESTS))
 
-all: $(X86_TESTS) $(PPC_TESTS)
+# The tool talks to the real card through sysfs, so it is only useful on the
+# x86 host. The PowerPC build is there to keep it compiling big-endian.
+all: $(X86_TESTS) $(PPC_TESTS) build/x86/rdn_tool build/ppc/rdn_tool
+
+build/x86/rdn_tool: build/x86/tools/rdn_tool.o $(addprefix build/x86/,$(HW_OBJS))
+	$(CC) -o $@ $^
+
+build/ppc/rdn_tool: build/ppc/tools/rdn_tool.o $(addprefix build/ppc/,$(HW_OBJS))
+	$(PPC_CC) -static -o $@ $^
 
 build/x86/hw/atom/%.o: hw/atom/%.c $(HW_HDRS)
 	@mkdir -p $(dir $@)

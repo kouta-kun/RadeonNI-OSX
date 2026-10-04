@@ -21,7 +21,7 @@ Markers: **[V]** verified in the linked source. **[I]** inference or memory, unc
   - Linux aborts without MC ("MC ucode required for NI+"), but `ni_mc_load_microcode()` only loads it if the memory is GDDR5 and the sequencer is not running.
   - Haiku `radeon_hd` loads no microcode and supports these IDs.
   - **[I]** A DDR3 card should do modesetting with no blobs.
-  - **Correction (2026-10-04):** this card is GDDR5 (VBIOS string and `MC_SEQ_MISC0`), so it is the case where Linux does load `TURKS_mc.bin`. Whether modesetting works without it is untested.
+  - **Correction (2026-10-04):** this card is GDDR5 (VBIOS string and `MC_SEQ_MISC0`), so it is the case where Linux does load `TURKS_mc.bin`. Even so, after `ASIC_Init` alone the memory behind the aperture reads back correctly with no microcode [V, on the card]. Scan-out from it is not yet tested.
   - The blobs are big-endian (`be32_to_cpup`) and their licence only allows binary redistribution: [LICENSE.radeon](https://github.com/cernekee/linux-firmware/blob/master/LICENSE.radeon).
 - **Power [I]:** 45–60 W, no auxiliary connector.
 
@@ -123,7 +123,7 @@ Documentation:
 - **Linux:** HD 6570 (Turks) working on a G5 Quad; HD 5770 hung: [debian-powerpc](https://groups.google.com/g/linux.debian.ports.powerpc/c/-7huwbCGG-s). Read only through an automatic summary; one agent found no first-hand report. **Confirm.**
 - **[V]** HD 6970 on a G5 with kernel 6.10: console fine, X with artefacts: [debian-powerpc](https://www.mail-archive.com/debian-powerpc@lists.debian.org/msg71675.html).
 - **[V]** MorphOS on PowerMac11,2: 1 GB HD 6570, HD 5550 and HD 5450 give a black screen; X1300, X1950 XT and HD 4550 work. Two HD 6450 also fail: [thread 13632](https://morph.zone/modules/newbb_plus/viewtopic.php?topic_id=13632&forum=11), [thread 13622](https://morph.zone/modules/newbb_plus/viewtopic.php?forum=11&topic_id=13622). The developer notes they work on machines whose firmware runs the BIOS first.
-- **[I]** Cold POST of Evergreen/NI is the highest-risk step. Follow the Linux order.
+- **[I]** Cold POST of Evergreen/NI is the highest-risk step. Follow the Linux order. **Update (2026-10-04):** our port of that order cold-POSTs this card on the x86 host, with the same register sequence as Linux.
 
 ## 7. The direct prior attempt
 
@@ -192,7 +192,7 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 ## 11. Still to verify
 
 - ~~PCI ID and memory type of this specific card.~~ `1002:675d` Turks PRO, GDDR5 (2026-10-04).
-- Whether GDDR5 VRAM is usable after `asic_init` without the MC microcode.
+- ~~Whether GDDR5 VRAM is usable after `asic_init` without the MC microcode.~~ Yes through the aperture (2026-10-04); scan-out still to confirm.
 - The report of an HD 6570 under Linux on a G5 Quad, first-hand.
 - Whether OpenBIOS assigns the 7570's BARs under `mac99`.
 - Whether the G5's Open Firmware assigns large BARs to a card with no FCode.
