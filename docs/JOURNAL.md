@@ -300,3 +300,40 @@ version this DVD installs and on what Xcode 2.5 requires.
 **Licence check.** `r600.c`, `r600_reg.h`, `radeon.h` and `nid.h`, which the
 bring-up port drew on, carry the same MIT permission notice as the files
 checked earlier and no GPL text.
+
+## 2026-10-04 — Tiger 10.4.6 installed; ssh into the guest; 10.4.11 update started
+
+**Tried.** Let the Easy Install finish, booted from disk, went through the
+setup assistant with `guest-ctl.py`, enabled sshd, installed a key.
+
+**Observed.**
+
+- The copy took about 25 minutes under TCG. The installer restarts by
+  itself and, because QEMU was started with `-boot d`, comes back up on the
+  DVD. QEMU has to be stopped and restarted with `scripts/tiger.sh run`.
+- A helper command of mine that ran `pkill -f guest-wait.sh` killed its own
+  shell (the pattern matched its own command line). The second QEMU that was
+  then started against the same disk was refused by the qcow2 write lock, so
+  nothing was damaged. The QMP socket takes one client at a time; while a
+  watcher holds it, `guest-ctl.py` cannot connect. The installer QEMU was
+  ended with SIGTERM while it sat at the DVD's language screen.
+- Snapshot `installed-raw` taken before the first boot.
+- First boot: keyboard identification (click OK, press `z`, press `/`),
+  region, no transfer, default keyboard, blank Apple ID, Command-Q on the
+  registration form then Skip, account `tiger` / password `tiger`, default
+  time zone and date.
+- `sw_vers`: 10.4.6, build 8I128, Darwin 8.6.0, xnu-792.6.70. OpenSSH
+  3.8.1p1.
+- sshd: `sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist`.
+  Sleep disabled with `pmset`. Key fetched in the guest with `curl` from a
+  one-minute web server on the host's loopback (`10.0.2.2` from the guest).
+  Tiger's sshd needs an RSA key; it is in `private/ssh/` (git-ignored).
+  `scripts/tiger.sh ssh` works. `tiger` has passwordless sudo. Tiger's sudo
+  has no `-n` option.
+- Apple's Software Update server still serves the 10.4.11 Combined update
+  for PowerPC (186 MB) and a Java update. `sudo softwareupdate -i
+  MacOSXUpdCombo10.4.11PPC-10.4.11` started in the guest.
+
+**Concluded.** No Combo Update file is needed from the user as long as
+Apple's server keeps answering. The guest is reachable over ssh, so the rest
+of the setup does not need the GUI.

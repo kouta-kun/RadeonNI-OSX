@@ -168,9 +168,29 @@ Steps taken (2026-10-04): choose English; Utilities > Terminal;
 `diskutil partitionDisk disk0 1 APMFormat "Journaled HFS+" Tiger 31G`;
 quit Terminal; Continue; Agree; destination `Tiger`; Install (Easy Install).
 
-Still to do after the copy finishes: first-boot assistant with user `tiger`,
-Remote Login, Energy Saver set to never sleep, ssh key, Xcode 2.5, then the
-`clean-install` snapshot.
+When the copy finishes the guest restarts into the DVD again: stop QEMU and
+start it with `scripts/tiger.sh run`. First boot, then:
+
+- Setup assistant: OK, `z`, `/` for the keyboard; defaults elsewhere; leave
+  the Apple ID blank; Command-Q on the registration form and Skip; account
+  `tiger`, password `tiger`.
+- In Terminal (Spotlight: Command-Space, "Terminal"):
+  `sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist` and
+  `sudo pmset -a sleep 0 displaysleep 0 disksleep 0`.
+- ssh key: RSA key pair in `private/ssh/tiger_rsa` (Tiger's OpenSSH 3.8 does
+  not know newer key types); its public half goes in
+  `~tiger/.ssh/authorized_keys`. `scripts/tiger.sh ssh` uses it.
+- `tiger ALL=(ALL) NOPASSWD: ALL` appended to `/etc/sudoers`.
+- `sudo softwareupdate -i MacOSXUpdCombo10.4.11PPC-10.4.11`, restart.
+
+The guest is only reachable from the host's loopback (port 2222), which is
+why the weak password is tolerable.
+
+Snapshots: `installed-raw` (10.4.6, before first boot). To come:
+`clean-install` after 10.4.11 and Xcode 2.5.
+
+Only one QMP client can be connected at a time: do not run `guest-ctl.py`
+while `guest-wait.sh` is running.
 
 ## Guest recovery (PLANNED)
 

@@ -88,7 +88,7 @@ restore)
     ;;
 ssh)
     # Tiger ships an old OpenSSH; re-enable the algorithms it speaks.
-    exec ssh -p 2222 \
+    exec ssh -p 2222 -i "$root/private/ssh/tiger_rsa" -o IdentitiesOnly=yes \
         -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1 \
         -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \

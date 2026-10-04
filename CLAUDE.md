@@ -23,7 +23,9 @@ Milestone 2 is in progress: our library cold-POSTs the real card (same
 register sequence as Linux, with or without the I/O BAR) and the video
 memory works without the MC microcode. EDID over DDC and the DCE5 modeset
 are next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
-is in progress: Tiger is being installed in the guest from the user's media.
+is in progress: Tiger is installed in `images/tiger.qcow2` (user `tiger`,
+password `tiger`, passwordless sudo, ssh via `scripts/tiger.sh ssh`); Xcode
+and the passthrough test are still to do.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
