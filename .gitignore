@@ -1,0 +1,45 @@
+# Never commit: proprietary or bulky artefacts.
+
+# VBIOS dumps and anything derived from the card's ROM
+*.rom
+*.vbios
+/vbios/
+/private/
+
+# Radeon microcode (binary-redistribution-only licence)
+*_mc.bin
+*_me.bin
+*_pfp.bin
+*_rlc.bin
+*_smc.bin
+*.bin.zst
+/firmware/
+
+# Register traces (large; may embed ROM contents). Summaries go in docs/.
+/traces/
+*.mmiotrace
+*.trace
+
+# Disk images, snapshots, Apple install media
+*.qcow2
+*.img
+*.raw
+*.iso
+*.dmg
+*.cdr
+*.toast
+*.sparseimage
+/images/
+/media/
+
+# Third-party source checkouts and their builds (QEMU, OpenBIOS, Linux, Haiku)
+/third_party/
+
+# Build output
+/build/
+*.o
+*.a
+*.d
+*.kext/
+*.dSYM/
+.DS_Store
