@@ -337,3 +337,71 @@ setup assistant with `guest-ctl.py`, enabled sshd, installed a key.
 **Concluded.** No Combo Update file is needed from the user as long as
 Apple's server keeps answering. The guest is reachable over ssh, so the rest
 of the setup does not need the GUI.
+
+## 2026-10-04 — 10.4.11 and Xcode 2.5 in the guest; host kernel oops on first Tiger passthrough
+
+**Tried.** Updated the guest to 10.4.11, installed the Xcode 2.5 pieces
+needed for kexts, snapshotted, then `scripts/card-bind.sh vfio`,
+`scripts/card-reset.sh` and `sudo scripts/tiger.sh passthru 0000:10:00.0`.
+
+**Observed (guest).**
+
+- `softwareupdate -i` in the guest lists the 10.4.11 Combined update but
+  never opens a connection to download it. The package URL is in Apple's
+  catalog (`http://swscan.apple.com/content/catalogs/index-1.sucatalog`);
+  downloaded on the host from `swcdn.apple.com` (`.tar`, 195368960 bytes,
+  SHA-256 `6689b28d…b6d1aa`), copied in over ssh, installed with
+  `installer -pkg`.
+- Apple's `installer` hangs under QEMU on larger packages: all files are
+  written, the log says "Assembling receipt", then the process and its
+  `runner` helper sit idle indefinitely. Seen with the Combo update
+  (559 MB), `DevSDK.pkg` and `MacOSX10.4.Universal.pkg`; small packages
+  finish. Cause unknown. Killing it leaves a stale helper registration and
+  the next `installer` dies with "Couldn't register server on this host"
+  until the guest is restarted.
+- After a restart: 10.4.11, build 8S165, xnu-792.24.17. Snapshot
+  `tiger-10.4.11`.
+- The real meta-package is `/Volumes/Xcode Tools/Packages/XcodeTools.mpkg`
+  (the one at the top of the disc is not usable from the command line).
+  Its sub-packages are relocatable: on their own they install to `/`, and
+  the meta-package places `DeveloperTools`, `DeveloperToolsCLI`, `gcc4.0`
+  and `MacOSX10.4.Universal` under `/Developer`.
+- What was done: `DevToolsSystem`, `DeveloperToolsCLI`, `gcc4.0`, `DevSDK`
+  and `BSDSDK` with `installer` into `/`; then the four `/Developer`
+  packages unpacked directly with
+  `cd /Developer && gzip -dc <pkg>/Contents/Archive.pax.gz | sudo pax -r -pe`.
+  The `DeveloperTools` postflight only rewrites library paths when the
+  folder is not `/Developer`, so it was not run.
+- Result: `xcodebuild` runs (DevToolsCore-798.0), gcc 4.0.1 build 5370
+  compiles and runs a PPC binary, `Kernel.framework` headers include
+  `IOKit/graphics/IOFramebuffer.h` and `IOKit/pci/IOPCIDevice.h`, the
+  Kernel Extension project template is present. Snapshot `clean-install`.
+
+**Observed (host).**
+
+- QEMU for the passthrough run never started the guest. The host kernel
+  oopsed inside it: "BUG: unable to handle page fault", in
+  `native_queued_spin_lock_slowpath`, called from `__pm_runtime_resume` <-
+  `irq_chip_pm_get` <- `request_threaded_irq` <-
+  `vfio_pci_set_intx_trigger`, i.e. while vfio-pci was setting up the card's
+  legacy INTx interrupt. About four minutes later a second oops hit an
+  unrelated process (`nmbd`, in `anon_vma_fork`).
+- Since then anything that walks `/proc` for all processes (`ps`, `pgrep`)
+  blocks and cannot be killed. Plain commands, sudo, dmesg and the
+  filesystem still work. The kernel is tainted `D` and `W`.
+- A copy of the kernel log is in `build/host-oops-dmesg.txt`.
+
+**Concluded.**
+
+- The host kernel is damaged and has to be rebooted before any more
+  hardware work. Rebooting is the user's call.
+- Hypothesis, not verified: the stale interrupt state comes from unbinding
+  the host's `radeon` earlier in this boot, which logged WARNs in
+  `irq_domain_remove` and `msi_device_data_release`. The x86 trace guest ran
+  after that unbind without an oops, but it used MSI ("Failed to enable MSI"
+  was printed once); `mac99` has no MSI, so this was the first INTx request.
+- If the hypothesis is right, the fix is to keep `radeon` from ever binding
+  to the card, which needs a boot-time change on the host (approval
+  required). If it is wrong, INTx passthrough of this card is broken on its
+  own and the guest should be started without the interrupt.
+- Milestone 1's passthrough test has not produced any result yet.

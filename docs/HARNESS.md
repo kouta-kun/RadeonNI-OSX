@@ -80,6 +80,14 @@ card and puts fbcon on it. Unbinding it logs two kernel WARNs
 (`irq_domain_remove`, `msi_device_data_release`) and taints the kernel with
 W; nothing else was affected.
 
+## Known host hazard: kernel oops on INTx setup (2026-10-04)
+
+The first `scripts/tiger.sh passthru` run oopsed the host kernel in
+`vfio_pci_set_intx_trigger`. It happened in a boot where `radeon` had
+earlier been unbound from the card (with WARNs). Until this is understood,
+do not start a `mac99` passthrough guest in a boot where `radeon` has been
+bound to the card. See JOURNAL.
+
 ## Returning the card to the un-POSTed state
 
 Verified 2026-10-04: starting a QEMU guest with the card on `vfio-pci` resets
@@ -186,8 +194,26 @@ start it with `scripts/tiger.sh run`. First boot, then:
 The guest is only reachable from the host's loopback (port 2222), which is
 why the weak password is tolerable.
 
-Snapshots: `installed-raw` (10.4.6, before first boot). To come:
-`clean-install` after 10.4.11 and Xcode 2.5.
+The `softwareupdate` step does not work (it never downloads). Instead fetch
+`MacOSXUpdCombo10.4.11PPC.tar` from the URL in Apple's catalog on the host,
+copy it in with `scripts/tiger.sh ssh 'cat > /tmp/combo.tar' < file`, unpack
+twice with `tar`, and run `sudo installer -pkg ... -target /`.
+
+Apple's `installer` hangs after "Assembling receipt" on large packages under
+QEMU. The files are in place by then: check `/var/log/install.log`, restart
+the guest, and verify. Do not start another `installer` before the restart.
+
+Xcode 2.5 (`scripts/tiger.sh cdrom media/xcode25.img`), packages under
+`/Volumes/Xcode Tools/Packages/Packages`:
+
+- `installer -pkg` into `/`: `DevToolsSystem`, `DeveloperToolsCLI`,
+  `gcc4.0`, `DevSDK`, `BSDSDK` (restart after one hangs).
+- Unpacked into `/Developer` with
+  `gzip -dc <pkg>/Contents/Archive.pax.gz | sudo pax -r -pe`:
+  `MacOSX10.4.Universal`, `DeveloperToolsCLI`, `gcc4.0`, `DeveloperTools`.
+
+Snapshots: `installed-raw` (10.4.6, before first boot), `tiger-10.4.11`,
+`clean-install` (10.4.11 with Xcode 2.5, ssh and sudo set up).
 
 Only one QMP client can be connected at a time: do not run `guest-ctl.py`
 while `guest-wait.sh` is running.

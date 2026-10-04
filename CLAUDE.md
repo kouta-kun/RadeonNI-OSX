@@ -23,9 +23,11 @@ Milestone 2 is in progress: our library cold-POSTs the real card (same
 register sequence as Linux, with or without the I/O BAR) and the video
 memory works without the MC microcode. EDID over DDC and the DCE5 modeset
 are next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
-is in progress: Tiger is installed in `images/tiger.qcow2` (user `tiger`,
-password `tiger`, passwordless sudo, ssh via `scripts/tiger.sh ssh`); Xcode
-and the passthrough test are still to do.
+is blocked: the Tiger guest is ready (10.4.11, Xcode 2.5, snapshot
+`clean-install`, user `tiger` / password `tiger`, `scripts/tiger.sh ssh`),
+but the first passthrough run oopsed the host kernel during vfio INTx
+setup. The host needs a reboot, and the user has to decide how to keep the
+stock `radeon` driver off the card at boot. Read the last JOURNAL entry.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -112,6 +114,8 @@ The host is the user's server, reached over ssh. Stop and ask before:
   that could cost the user access. The chipset's IOMMU group 9 includes the
   NIC; never bind any of it to `vfio-pci`.
 - Enabling `mmiotrace` (it takes all CPUs but one offline).
+- Starting a `mac99` passthrough guest in a host boot where `radeon` has
+  been bound to the 7570: that combination oopsed the host kernel once.
 - Writing to the card's flash. Nothing is ever flashed.
 - Abandoning a design decision below.
 
