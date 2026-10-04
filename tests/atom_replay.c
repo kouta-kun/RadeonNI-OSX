@@ -1,7 +1,8 @@
 /*
  * Hardware-free test of the AtomBIOS interpreter.
  *
- * Runs ASIC_Init from a VBIOS dump against a mock card whose behaviour comes
+ * Runs the card bring-up (rdn_card_post: scratch registers, reset check,
+ * ASIC_Init) from a VBIOS dump against a mock card whose behaviour comes
  * from a reference trace of the Linux radeon driver (a phase file written by
  * scripts/trace-split.py). Every register access the interpreter makes must
  * be the next access in the trace: same direction, same BAR, same offset and,
@@ -21,7 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../hw/rdn_atom.h"
+#include "../hw/rdn_card.h"
 
 enum { KIND_MMIO, KIND_IO };
 
@@ -160,7 +161,7 @@ static void os_log(void *c, enum rdn_log_level level, const char *fmt,
 {
 	struct mock *m = c;
 
-	if (m->quiet || level == RDN_LOG_DEBUG)
+	if (m->quiet || level != RDN_LOG_ERROR)
 		return;
 	fprintf(stderr, "atom: ");
 	vfprintf(stderr, fmt, ap);
@@ -221,10 +222,10 @@ static struct access *load_trace(const char *path, size_t *count)
 	return t;
 }
 
-static int run_asic_init(struct mock *m, void *bios)
+static int run_post(struct mock *m, void *bios)
 {
 	struct rdn_os os;
-	struct rdn_atom atom;
+	struct rdn_card card;
 	int ret;
 
 	memset(&os, 0, sizeof(os));
@@ -239,10 +240,10 @@ static int run_asic_init(struct mock *m, void *bios)
 	os.free = os_free;
 	os.log = os_log;
 
-	if (rdn_atom_init(&atom, &os, bios))
+	if (rdn_card_init(&card, &os, bios))
 		return -1;
-	ret = atom_asic_init(atom.ctx);
-	rdn_atom_fini(&atom);
+	ret = rdn_card_post(&card);
+	rdn_card_fini(&card);
 	return ret;
 }
 
@@ -265,12 +266,12 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
-	/* Find out what ASIC_Init does first, to locate it in the trace. */
+	/* Find out what bring-up does first, to locate it in the trace. */
 	memset(&probe, 0, sizeof(probe));
 	probe.quiet = 1;
-	run_asic_init(&probe, bios);
+	run_post(&probe, bios);
 	if (!probe.have_first) {
-		fprintf(stderr, "ASIC_Init made no register access\n");
+		fprintf(stderr, "bring-up made no register access\n");
 		return 1;
 	}
 
@@ -287,7 +288,7 @@ int main(int argc, char **argv)
 		m.pos = start;
 		m.quiet = 1;
 		m.digest = 2166136261u;
-		ret = run_asic_init(&m, bios);
+		ret = run_post(&m, bios);
 		if (m.matched > best) {
 			best = m.matched;
 			best_start = start;
@@ -303,14 +304,14 @@ int main(int argc, char **argv)
 		m.trace_len = trace_len;
 		m.pos = best_start;
 		m.digest = 2166136261u;
-		ret = run_asic_init(&m, bios);
+		ret = run_post(&m, bios);
 		printf("FAIL: best candidate starts at trace entry %zu, "
-		       "%zu accesses matched, asic_init returned %d\n",
+		       "%zu accesses matched, post returned %d\n",
 		       best_start, m.matched, ret);
 		return 1;
 	}
 
-	printf("PASS: asic_init matches trace entries %zu..%zu "
+	printf("PASS: post matches trace entries %zu..%zu "
 	       "(%zu accesses), digest %08x\n",
 	       best_start, m.pos - 1, m.matched, (unsigned)m.digest);
 	return 0;

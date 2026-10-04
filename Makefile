@@ -18,7 +18,7 @@ CFLAGS_COMMON = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter
 CFLAGS_UPSTREAM = $(CFLAGS_COMMON) -Wno-sign-compare -Wno-type-limits \
 	-Wno-unused-variable -Wno-unused-but-set-variable
 
-HW_OBJS   = hw/rdn_atom.o hw/atom/atom.o
+HW_OBJS   = hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
 HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h)
 
 TESTS     = atom_replay
