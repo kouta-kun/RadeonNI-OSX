@@ -116,6 +116,13 @@ struct osmesa_buffer
    /* That surface's size, and where on it this drawable is shown. */
    unsigned target_width, target_height;
    int target_x, target_y;
+   /*
+    * OSMesaSurfaceStorage: every finished picture of the drawable is
+    * also copied into memory the caller named (imported like the target),
+    * where others can read it. Handle 0: nowhere.
+    */
+   unsigned own_handle, own_stride, own_offset;
+   struct pipe_resource *store_res;
 
    struct osmesa_buffer *next;  /**< next in linked list */
 };
@@ -143,6 +150,8 @@ struct osmesa_context
    GLint user_row_length; /*< user-specified number of pixels per row */
    GLboolean y_up;        /*< TRUE  -> Y increases upward */
                           /*< FALSE -> Y increases downward */
+   /* OSMesaSurfaceStorage, for the next OSMesaMakeCurrentSurface. */
+   unsigned own_handle, own_stride, own_offset;
    /* OSMesaReadbackRects: the only parts of the color buffer to copy out. */
    GLint num_rects;
    GLint *rects;
@@ -445,6 +454,11 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
 
       if (!osbuffer->direct_res)
          return false;
+      if (osbuffer->store_res) {
+         u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
+         pipe->resource_copy_region(pipe, osbuffer->store_res, 0, 0, 0, 0,
+                                    res, 0, &box);
+      }
       if (osmesa->num_rects > 0) {
          for (int i = 0; i < osmesa->num_rects; i++) {
             const GLint *r = osmesa->rects + i * 4;
@@ -554,6 +568,19 @@ osmesa_st_framebuffer_validate(struct st_context *st,
             screen->resource_from_handle(screen, &target, &whandle,
                                          PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
       }
+      if (osbuffer->direct && osbuffer->own_handle && !osbuffer->store_res &&
+          statts[i] == ST_ATTACHMENT_FRONT_LEFT) {
+         struct winsys_handle whandle;
+
+         memset(&whandle, 0, sizeof(whandle));
+         whandle.type = WINSYS_HANDLE_TYPE_KMS;
+         whandle.handle = osbuffer->own_handle;
+         whandle.stride = osbuffer->own_stride;
+         whandle.offset = osbuffer->own_offset;
+         osbuffer->store_res =
+            screen->resource_from_handle(screen, &templat, &whandle,
+                                         PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+      }
       out[i] = osbuffer->textures[statts[i]] =
          screen->resource_create(screen, &templat);
    }
@@ -598,6 +625,7 @@ osmesa_destroy_buffer(struct osmesa_buffer *osbuffer)
     */
    st_api_destroy_drawable(&osbuffer->base);
    pipe_resource_reference(&osbuffer->direct_res, NULL);
+   pipe_resource_reference(&osbuffer->store_res, NULL);
 
    FREE(osbuffer);
 }
@@ -890,6 +918,70 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
 
 
 
+GLAPI void GLAPIENTRY
+OSMesaShowStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
+                GLuint offset, GLsizei width, GLsizei height, GLint x, GLint y,
+                GLint count, const GLint *rects)
+{
+   struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
+   struct pipe_context *pipe;
+   struct pipe_screen *screen;
+   struct pipe_resource templat, *src;
+   struct winsys_handle whandle;
+   struct pipe_box box;
+
+   if (!osbuffer || !osbuffer->direct || !osbuffer->direct_res || width < 1 ||
+       height < 1)
+      return;
+   pipe = osmesa->st->pipe;
+   screen = pipe->screen;
+   memset(&templat, 0, sizeof(templat));
+   templat.target = PIPE_TEXTURE_RECT;
+   templat.format = osbuffer->visual.color_format;
+   templat.width0 = width;
+   templat.height0 = height;
+   templat.depth0 = 1;
+   templat.array_size = 1;
+   templat.usage = PIPE_USAGE_DEFAULT;
+   templat.bind = PIPE_BIND_RENDER_TARGET;
+   memset(&whandle, 0, sizeof(whandle));
+   whandle.type = WINSYS_HANDLE_TYPE_KMS;
+   whandle.handle = handle;
+   whandle.stride = stride;
+   whandle.offset = offset;
+   src = screen->resource_from_handle(screen, &templat, &whandle,
+                                      PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+   if (!src)
+      return;
+   for (int i = 0; i < count; i++) {
+      const GLint *r = rects + i * 4;
+      int x0 = MAX2(MAX2(r[0], 0), -x), y0 = MAX2(MAX2(r[1], 0), -y);
+      int x1 = MIN2(MIN2(r[0] + r[2], width), (int)osbuffer->target_width - x);
+      int y1 = MIN2(MIN2(r[1] + r[3], height), (int)osbuffer->target_height - y);
+
+      if (x1 <= x0 || y1 <= y0)
+         continue;
+      u_box_2d(x0, y0, x1 - x0, y1 - y0, &box);
+      pipe->resource_copy_region(pipe, osbuffer->direct_res, 0, x + x0, y + y0,
+                                 0, src, 0, &box);
+   }
+   pipe->flush(pipe, NULL, 0);
+   pipe_resource_reference(&src, NULL);
+}
+
+
+GLAPI void GLAPIENTRY
+OSMesaSurfaceStorage(OSMesaContext osmesa, GLuint handle, GLsizei stride,
+                     GLuint offset)
+{
+   if (!osmesa)
+      return;
+   osmesa->own_handle = handle;
+   osmesa->own_stride = stride;
+   osmesa->own_offset = offset;
+}
+
+
 GLAPI GLboolean GLAPIENTRY
 OSMesaMakeCurrentDirect(OSMesaContext osmesa, GLuint handle, GLsizei width,
                         GLsizei height, GLsizei stride, GLuint offset)
@@ -924,7 +1016,10 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
         osbuffer->direct_stride != (unsigned)stride ||
         osbuffer->direct_offset != offset ||
         osbuffer->target_width != (unsigned)target_width ||
-        osbuffer->target_height != (unsigned)target_height)) {
+        osbuffer->target_height != (unsigned)target_height ||
+        osbuffer->own_handle != osmesa->own_handle ||
+        osbuffer->own_stride != osmesa->own_stride ||
+        osbuffer->own_offset != osmesa->own_offset)) {
       osmesa_destroy_buffer(osbuffer);
       osmesa->current_buffer = NULL;
    }
@@ -945,6 +1040,9 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
    osbuffer->direct_offset = offset;
    osbuffer->target_width = target_width;
    osbuffer->target_height = target_height;
+   osbuffer->own_handle = osmesa->own_handle;
+   osbuffer->own_stride = osmesa->own_stride;
+   osbuffer->own_offset = osmesa->own_offset;
    /* Only the place changes when a window moves: the buffer is kept. */
    osbuffer->target_x = x;
    osbuffer->target_y = y;

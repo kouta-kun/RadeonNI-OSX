@@ -110,6 +110,9 @@ struct context {
 	 */
 	unsigned long connection, window, surface;
 	int placed;
+	/* Its picture: video memory of our own, registered with the kext. */
+	uint32_t store_offset, store_row_bytes, store_width, store_height;
+	int stored;
 	int bound;
 	/*
 	 * The engine's context as gldCreateContext was told, so that the
@@ -181,10 +184,50 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 	}
 	if (c->mesa)
 		OSMesaDestroyContext(c->mesa);
+	if (c->stored) {
+		rdn_target_surface_buffer((uint32_t)c->surface, 0, 0, 0, 0);
+		rdn_target_vram_free(c->store_offset);
+	}
 	memset(c, 0, sizeof(*c));
 }
 
 /* Read the engine's record; false if there is nothing to draw into. */
+/*
+ * A surface's picture is kept in a linear buffer in video memory, 64
+ * pixels to the row's multiple as the card wants of a linear render
+ * target, and the kext is told where: the window server reads it there
+ * when it draws the window itself. A new one when the size changes; none
+ * (width 0) to give it up.
+ */
+static void surface_store(struct context *c, uint32_t width, uint32_t height)
+{
+	uint32_t row_bytes = ((width + 63) & ~63u) * 4;
+	uint32_t rows = (height + 63) & ~63u;
+
+	if (c->stored && c->store_width == width && c->store_height == height)
+		return;
+	if (c->stored) {
+		rdn_target_surface_buffer((uint32_t)c->surface, 0, 0, 0, 0);
+		/* Mesa lets go of it at the next bind; nothing reads it now. */
+		rdn_target_vram_free(c->store_offset);
+		c->stored = 0;
+	}
+	if (!width || !height ||
+	    !rdn_target_vram_alloc((row_bytes * rows + 4095) & ~4095u, &c->store_offset))
+		return;
+	c->store_row_bytes = row_bytes;
+	c->store_width = width;
+	c->store_height = height;
+	c->stored = 1;
+	if (!rdn_target_surface_buffer((uint32_t)c->surface, c->store_offset,
+				       row_bytes, width, height))
+		rdn_log("the kext did not take surface 0x%lx's buffer", c->surface);
+	else
+		rdn_log("surface 0x%lx keeps its picture at aperture offset 0x%x, %ux%u, %u bytes a row",
+			c->surface, (unsigned)c->store_offset, (unsigned)width,
+			(unsigned)height, (unsigned)row_bytes);
+}
+
 /*
  * Where the window server has the surface now, from the kext: size as the
  * drawable, place and rectangles kept in the context. The base only says
@@ -312,6 +355,12 @@ void rdn_mesa_detach(void *gld_ctx)
 
 	if (!c)
 		return;
+	if (c->type == DRAWABLE_SURFACE && c->stored) {
+		/* Off the store before it is freed. */
+		if (c->mesa && OSMesaGetCurrentContext() == c->mesa)
+			OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
+		surface_store(c, 0, 0);
+	}
 	c->type = 0;
 	c->record = NULL;
 	c->bound = 0;
@@ -565,6 +614,9 @@ void rdn_make_current(void *rend)
 	}
 	rdn_origin_x = rdn_origin_y = 0;
 	if (c->type == DRAWABLE_SURFACE) {
+		surface_store(c, d.width, d.height);
+		OSMesaSurfaceStorage(c->mesa, c->stored ? RDN_TARGET_VRAM_HANDLE : 0,
+				     (GLsizei)c->store_row_bytes, c->store_offset);
 		if (!OSMesaMakeCurrentSurface(c->mesa, RDN_TARGET_SCREEN_HANDLE,
 					      (GLsizei)c->screen_width,
 					      (GLsizei)c->screen_height,
@@ -650,6 +702,46 @@ static int drawable_changed(const struct context *c)
 	struct drawable d;
 
 	return !read_record(c, &d) || memcmp(&d, &c->drawable, sizeof(d)) != 0;
+}
+
+/*
+ * The window server has just put an update on the screen. It paints the
+ * area of every program's surface plain white in its own picture and
+ * leaves the surface to the driver: lay each one's picture back over its
+ * visible part.
+ */
+void rdn_flushed(void *rend)
+{
+	static int16_t rects[MAX_SCREEN_RECTS][4];
+	static GLint r[MAX_SCREEN_RECTS][4];
+	uint32_t list[32][5], n, i, k, count;
+	struct context *c = NULL;
+	int32_t b[4];
+	int j;
+
+	for (j = 0; j < MAX_CONTEXTS; j++)
+		if (contexts[j].gld_ctx && contexts[j].rend == rend)
+			c = &contexts[j];
+	if (!c || c->type != DRAWABLE_SCREEN || !c->direct || !c->bound)
+		return;
+	n = rdn_target_surface_list(list, 32);
+	for (i = 0; i < n; i++) {
+		count = 0;
+		if (!rdn_target_surface_region(list[i][0], b, rects,
+					       MAX_SCREEN_RECTS, &count) ||
+		    b[2] <= 0 || b[3] <= 0 || !count || count > MAX_SCREEN_RECTS)
+			continue;
+		for (k = 0; k < count; k++) {
+			r[k][0] = rects[k][0] - b[0];
+			r[k][1] = rects[k][1] - b[1];
+			r[k][2] = rects[k][2];
+			r[k][3] = rects[k][3];
+		}
+		OSMesaShowStore(c->mesa, RDN_TARGET_VRAM_HANDLE,
+				(GLsizei)list[i][2], list[i][1],
+				(GLsizei)list[i][3], (GLsizei)list[i][4],
+				b[0], b[1], (GLint)count, &r[0][0]);
+	}
 }
 
 int rdn_swap(void *rend)

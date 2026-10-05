@@ -4,6 +4,7 @@
  *   rdnuc info             print what the accelerator reports
  *   rdnuc probe            read the pixels the drawing self-test colours
  *   rdnuc grab file.ppm    save the screen as the card holds it
+ *   rdnuc peek off [n]     print n words of video memory at aperture offset off
  *   rdnuc alloc            allocate, write, read back and free video memory
  *
  * Build in the guest, next to a copy of hw/rdn_user.h:
@@ -120,6 +121,14 @@ int main(int argc, char **argv)
 			}
 		fclose(f);
 		printf("saved %ux%u\n", (unsigned)info.fb_width, (unsigned)info.fb_height);
+	} else if (!strcmp(cmd, "peek") && argc > 2) {
+		/* Words of video memory at an aperture offset, as the CPU reads them. */
+		unsigned long off = strtoul(argv[2], NULL, 0);
+		int i, n = argc > 3 ? atoi(argv[3]) : 8;
+
+		for (i = 0; i < n; i++)
+			printf("%08x%s", (unsigned)aperture[off / 4 + i],
+			       i % 8 == 7 || i == n - 1 ? "\n" : " ");
 	} else if (!strcmp(cmd, "alloc")) {
 		int off[3], i, bad = 0;
 		kern_return_t kr;

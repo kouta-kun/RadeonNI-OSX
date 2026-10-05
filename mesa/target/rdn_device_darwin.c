@@ -109,6 +109,38 @@ static bool dev_surface_region(struct rdn_device *dev, uint32_t id,
 	return true;
 }
 
+static bool dev_surface_buffer(struct rdn_device *dev, uint32_t id,
+			       uint64_t offset, uint32_t row_bytes,
+			       uint32_t width, uint32_t height)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+
+	return IOConnectMethodScalarIScalarO(d->conn, RDN_UC_SURFACE_BUFFER, 5, 0,
+					     (int)id, (int)offset, (int)row_bytes,
+					     (int)width, (int)height) == 0;
+}
+
+static uint32_t dev_surface_list(struct rdn_device *dev, struct rdn_surface *list,
+				 uint32_t max)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	static struct rdn_user_surfaces s;
+	IOByteCount size = sizeof(s);
+	uint32_t i;
+
+	if (IOConnectMethodScalarIStructureO(d->conn, RDN_UC_SURFACE_LIST, 0,
+					     &size, &s))
+		return 0;
+	for (i = 0; i < s.count && i < max && i < RDN_USER_SURFACES; i++) {
+		list[i].id = s.surface[i].id;
+		list[i].offset = s.surface[i].offset;
+		list[i].row_bytes = s.surface[i].row_bytes;
+		list[i].width = s.surface[i].width;
+		list[i].height = s.surface[i].height;
+	}
+	return i;
+}
+
 static void dev_destroy(struct rdn_device *dev)
 {
 	struct darwin_device *d = (struct darwin_device *)dev;
@@ -182,6 +214,8 @@ struct rdn_device *rdn_device_open(void)
 	d->base.sync_for_cpu = dev_sync_for_cpu;
 	d->base.destroy = dev_destroy;
 	d->base.surface_region = dev_surface_region;
+	d->base.surface_buffer = dev_surface_buffer;
+	d->base.surface_list = dev_surface_list;
 	return &d->base;
 
 fail_close:

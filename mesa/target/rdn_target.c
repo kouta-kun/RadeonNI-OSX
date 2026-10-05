@@ -47,6 +47,52 @@ rdn_target_surface_region(uint32_t id, int32_t bounds[4], int16_t (*rects)[4],
    return true;
 }
 
+bool
+rdn_target_vram_alloc(uint32_t bytes, uint32_t *offset)
+{
+   uint64_t o;
+
+   if (!the_device || the_device->alloc(the_device, bytes, 4096, &o))
+      return false;
+   *offset = (uint32_t)o;
+   return true;
+}
+
+void
+rdn_target_vram_free(uint32_t offset)
+{
+   if (the_device)
+      the_device->free(the_device, offset);
+}
+
+bool
+rdn_target_surface_buffer(uint32_t id, uint32_t offset, uint32_t row_bytes,
+                          uint32_t width, uint32_t height)
+{
+   return the_device && the_device->surface_buffer &&
+          the_device->surface_buffer(the_device, id, offset, row_bytes, width,
+                                     height);
+}
+
+uint32_t
+rdn_target_surface_list(uint32_t (*list)[5], uint32_t max)
+{
+   struct rdn_surface s[32];
+   uint32_t n, i;
+
+   if (!the_device || !the_device->surface_list)
+      return 0;
+   n = the_device->surface_list(the_device, s, MIN2(max, 32));
+   for (i = 0; i < n; i++) {
+      list[i][0] = s[i].id;
+      list[i][1] = s[i].offset;
+      list[i][2] = s[i].row_bytes;
+      list[i][3] = s[i].width;
+      list[i][4] = s[i].height;
+   }
+   return n;
+}
+
 struct pipe_screen *osmesa_create_screen(void);
 
 struct pipe_screen *

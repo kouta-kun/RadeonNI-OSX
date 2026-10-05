@@ -46,6 +46,11 @@ struct rdn_region {
    int16_t rects[RDN_REGION_RECTS][4];
 };
 
+struct rdn_surface {
+   uint32_t id;
+   uint32_t offset, row_bytes, width, height;
+};
+
 struct rdn_device {
    struct rdn_device_info info;
 
@@ -88,6 +93,21 @@ struct rdn_device {
     */
    bool (*surface_region)(struct rdn_device *dev, uint32_t id,
                           struct rdn_region *region);
+
+   /*
+    * Optional: tell the window system where surface `id` keeps its
+    * picture: a linear buffer at this aperture offset. Width 0 takes it
+    * away.
+    */
+   bool (*surface_buffer)(struct rdn_device *dev, uint32_t id, uint64_t offset,
+                          uint32_t row_bytes, uint32_t width, uint32_t height);
+
+   /*
+    * Optional: the surfaces that have such a buffer, at most `max`;
+    * returns how many.
+    */
+   uint32_t (*surface_list)(struct rdn_device *dev, struct rdn_surface *list,
+                            uint32_t max);
 
    void (*destroy)(struct rdn_device *dev);
 };

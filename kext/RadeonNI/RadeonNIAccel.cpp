@@ -420,6 +420,8 @@ void RadeonNIAccel::setSurfaceRegion(UInt32 wid, const IOAccelDeviceRegion *rgn,
 	if (slot >= 0) {
 		struct rdn_user_region *region = &fShapes[slot].region;
 
+		if (!fShapes[slot].used)
+			fShapes[slot].bufWidth = 0;
 		fShapes[slot].used = true;
 		fShapes[slot].wid = wid;
 		region->count = rects;
@@ -453,6 +455,75 @@ bool RadeonNIAccel::getSurfaceRegion(UInt32 wid, struct rdn_user_region *region)
 	return found;
 }
 
+void RadeonNIAccel::setSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
+				     UInt32 width, UInt32 height)
+{
+	int i, slot = -1;
+
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces; i++) {
+		if (fShapes[i].used && fShapes[i].wid == wid) {
+			slot = i;
+			break;
+		}
+		if (!fShapes[i].used && slot < 0)
+			slot = i;
+	}
+	if (slot >= 0) {
+		/* The owner may be first: the shape then comes later. */
+		if (!fShapes[slot].used) {
+			fShapes[slot].used = true;
+			fShapes[slot].wid = wid;
+			bzero(&fShapes[slot].region, sizeof(fShapes[slot].region));
+		}
+		fShapes[slot].bufOffset = offset;
+		fShapes[slot].bufRowBytes = rowBytes;
+		fShapes[slot].bufWidth = width;
+		fShapes[slot].bufHeight = height;
+	}
+	IOLockUnlock(fLock);
+}
+
+bool RadeonNIAccel::getSurfaceBuffer(UInt32 wid, UInt32 *offset, UInt32 *rowBytes,
+				     UInt32 *width, UInt32 *height)
+{
+	bool found = false;
+	int i;
+
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces && !found; i++) {
+		if (!fShapes[i].used || fShapes[i].wid != wid ||
+		    !fShapes[i].bufWidth)
+			continue;
+		*offset = fShapes[i].bufOffset;
+		*rowBytes = fShapes[i].bufRowBytes;
+		*width = fShapes[i].bufWidth;
+		*height = fShapes[i].bufHeight;
+		found = true;
+	}
+	IOLockUnlock(fLock);
+	return found;
+}
+
+void RadeonNIAccel::listSurfaces(struct rdn_user_surfaces *list)
+{
+	int i;
+
+	list->count = 0;
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces && list->count < RDN_USER_SURFACES; i++) {
+		if (!fShapes[i].used || !fShapes[i].bufWidth)
+			continue;
+		list->surface[list->count].id = fShapes[i].wid;
+		list->surface[list->count].offset = fShapes[i].bufOffset;
+		list->surface[list->count].row_bytes = fShapes[i].bufRowBytes;
+		list->surface[list->count].width = fShapes[i].bufWidth;
+		list->surface[list->count].height = fShapes[i].bufHeight;
+		list->count++;
+	}
+	IOLockUnlock(fLock);
+}
+
 void RadeonNIAccel::forgetSurface(UInt32 wid)
 {
 	int i;
@@ -462,6 +533,11 @@ void RadeonNIAccel::forgetSurface(UInt32 wid)
 		if (fShapes[i].used && fShapes[i].wid == wid)
 			fShapes[i].used = false;
 	IOLockUnlock(fLock);
+}
+
+UInt32 RadeonNIAccel::apertureBytes(void)
+{
+	return fFramebuffer ? fFramebuffer->apertureSize() : 0;
 }
 
 IOMemoryDescriptor *RadeonNIAccel::apertureMemory(void)
@@ -548,6 +624,10 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 0, 0 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceRegion,
 		  kIOUCScalarIStructO, 1, sizeof(struct rdn_user_region) },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceBuffer,
+		  kIOUCScalarIScalarO, 5, 0 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceList,
+		  kIOUCScalarIStructO, 0, sizeof(struct rdn_user_surfaces) },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -626,6 +706,27 @@ IOReturn RadeonNIUserClient::methodFenceWait(UInt32 fence, UInt32 timeoutMs,
 IOReturn RadeonNIUserClient::methodSyncForCPU(void)
 {
 	fAccel->syncForCPU();
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodSurfaceList(struct rdn_user_surfaces *list,
+					       IOByteCount *size)
+{
+	if (*size < sizeof(*list))
+		return kIOReturnBadArgument;
+	fAccel->listSurfaces(list);
+	*size = sizeof(*list);
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodSurfaceBuffer(UInt32 wid, UInt32 offset,
+	UInt32 rowBytes, UInt32 width, UInt32 height)
+{
+	/* Inside the aperture, or nothing. */
+	if (width && ((UInt64)offset + (UInt64)rowBytes * height >
+		      fAccel->apertureBytes() || rowBytes < width * 4))
+		return kIOReturnBadArgument;
+	fAccel->setSurfaceBuffer(wid, offset, rowBytes, width, height);
 	return kIOReturnSuccess;
 }
 

@@ -288,9 +288,12 @@ rdn_buffer_from_handle(struct radeon_winsys *rws, struct winsys_handle *whandle,
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
    struct rdn_bo *bo;
 
-   /* The screen is the only memory with a name. */
+   bool screen = whandle->handle == RDN_WINSYS_HANDLE_SCREEN;
+
+   /* The screen, or video memory the caller allocated itself. */
    if (whandle->type != WINSYS_HANDLE_TYPE_KMS ||
-       whandle->handle != RDN_WINSYS_HANDLE_SCREEN || !ws->dev->screen.width)
+       (screen && !ws->dev->screen.width) ||
+       (!screen && whandle->handle != RDN_WINSYS_HANDLE_VRAM))
       return NULL;
    bo = CALLOC_STRUCT(rdn_bo);
    if (!bo)
@@ -298,9 +301,15 @@ rdn_buffer_from_handle(struct radeon_winsys *rws, struct winsys_handle *whandle,
    pipe_reference_init(&bo->base.reference, 1);
    bo->base.alignment_log2 = 8;
    bo->base.usage = 0;
-   bo->base.size = (uint64_t)ws->dev->screen.pitch_pixels * 4 *
-                   ws->dev->screen.height;
-   bo->offset = ws->dev->screen.offset;
+   if (screen) {
+      bo->base.size = (uint64_t)ws->dev->screen.pitch_pixels * 4 *
+                      ws->dev->screen.height;
+      bo->offset = ws->dev->screen.offset;
+   } else {
+      /* The surface's place in it is the handle's offset (r600 adds it). */
+      bo->base.size = ws->dev->aperture_size;
+      bo->offset = 0;
+   }
    bo->domain = RADEON_DOMAIN_VRAM;
    bo->flags = 0;
    bo->foreign = true;

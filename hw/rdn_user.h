@@ -39,6 +39,16 @@ enum {
 	 * shape on the screen. Fails if there is no such surface.
 	 */
 	RDN_UC_SURFACE_REGION,
+	/*
+	 * scalars in: surface ID, aperture offset, bytes per row, width,
+	 * height. Where the surface's picture is kept: a linear buffer of
+	 * 32-bit pixels, top row first, which the kext shows to whoever
+	 * locks the surface for reading (the window server). Width 0 takes
+	 * the buffer away again.
+	 */
+	RDN_UC_SURFACE_BUFFER,
+	/* struct out: struct rdn_user_surfaces, every surface with a buffer */
+	RDN_UC_SURFACE_LIST,
 	RDN_UC_METHOD_COUNT
 };
 
@@ -73,6 +83,17 @@ struct rdn_user_region {
 	/* x, y, width, height of the box around them all. */
 	int32_t bounds[4];
 	int16_t rects[RDN_USER_REGION_RECTS][4];
+};
+
+/* The surfaces whose owners have registered a buffer. */
+#define RDN_USER_SURFACES		32
+
+struct rdn_user_surfaces {
+	uint32_t count;
+	struct {
+		uint32_t id;
+		uint32_t offset, row_bytes, width, height;
+	} surface[RDN_USER_SURFACES];
 };
 
 #define RDN_USER_VERSION		1

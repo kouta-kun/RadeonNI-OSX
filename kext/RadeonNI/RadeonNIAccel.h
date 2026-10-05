@@ -78,11 +78,17 @@ public:
 	bool fenceWait(UInt32 fence, UInt32 timeoutMs);
 	void syncForCPU(void);
 	IOMemoryDescriptor *apertureMemory(void);
+	UInt32 apertureBytes(void);
 	/* The shapes of the window server's surfaces, by surface ID. */
 	void setSurfaceRegion(UInt32 wid, const IOAccelDeviceRegion *rgn,
 			      UInt32 rects);
 	bool getSurfaceRegion(UInt32 wid, struct rdn_user_region *region);
 	void forgetSurface(UInt32 wid);
+	void setSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
+			      UInt32 width, UInt32 height);
+	bool getSurfaceBuffer(UInt32 wid, UInt32 *offset, UInt32 *rowBytes,
+			      UInt32 *width, UInt32 *height);
+	void listSurfaces(struct rdn_user_surfaces *list);
 
 private:
 	RadeonNI *fFramebuffer;
@@ -98,6 +104,8 @@ private:
 		UInt32 wid;
 		bool used;
 		struct rdn_user_region region;
+		/* The surface's picture, if its owner has said where it is. */
+		UInt32 bufOffset, bufRowBytes, bufWidth, bufHeight;
 	} fShapes[kMaxSurfaces];
 	/* See RadeonNIAGPShim. */
 	IOAGPDevice *fAncestor;
@@ -133,6 +141,9 @@ public:
 	IOReturn methodSyncForCPU(void);
 	IOReturn methodSurfaceRegion(UInt32 wid, struct rdn_user_region *region,
 				     IOByteCount *size);
+	IOReturn methodSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
+				     UInt32 width, UInt32 height);
+	IOReturn methodSurfaceList(struct rdn_user_surfaces *list, IOByteCount *size);
 
 private:
 	RadeonNIAccel *fAccel;

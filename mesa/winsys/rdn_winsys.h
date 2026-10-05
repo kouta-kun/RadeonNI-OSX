@@ -19,6 +19,12 @@ struct pipe_screen_config;
  * screen), linear, not owned by the resource.
  */
 #define RDN_WINSYS_HANDLE_SCREEN 0x7570
+/*
+ * And with this handle, video memory that the caller got from the device
+ * itself (rdn_device's alloc) at the winsys_handle's offset: a linear
+ * surface whose place the caller can tell others.
+ */
+#define RDN_WINSYS_HANDLE_VRAM 0x7571
 
 typedef struct pipe_screen *(*rdn_screen_create_t)(struct radeon_winsys *,
                                                    const struct pipe_screen_config *);

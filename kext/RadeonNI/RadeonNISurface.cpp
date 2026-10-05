@@ -16,6 +16,63 @@ OSDefineMetaClassAndStructors(RadeonNISurfaceClient, IOUserClient)
 /* Enough of the log to see the pattern, not every frame for ever. */
 #define MAX_NOTES 400
 
+bool RadeonNISurfaceClient::initWithTask(task_t owningTask, void *securityID,
+					 UInt32 type)
+{
+	if (!super::initWithTask(owningTask, securityID, type))
+		return false;
+	fTask = owningTask;
+	return true;
+}
+
+/*
+ * Reading a surface: its owner has told the accelerator where the picture
+ * is in video memory (RDN_UC_SURFACE_BUFFER); that part of the aperture is
+ * mapped, read-only, into the task that asks. The window server does this
+ * when it has to draw a program's OpenGL window itself.
+ */
+IOReturn RadeonNISurfaceClient::lockForRead(IOAccelSurfaceInformation *info,
+					    IOByteCount *size)
+{
+	UInt32 offset, rowBytes, width, height, start, length;
+	IOMemoryDescriptor *aperture;
+
+	if (!info || !size || *size < sizeof(*info))
+		return kIOReturnBadArgument;
+	if (!fAccel->getSurfaceBuffer(fWid, &offset, &rowBytes, &width, &height))
+		return kIOReturnUnsupported;
+	aperture = fAccel->apertureMemory();
+	if (!aperture)
+		return kIOReturnNotReady;
+	unlockRead();
+	start = offset & ~(UInt32)(PAGE_SIZE - 1);
+	length = (offset - start + rowBytes * height + PAGE_SIZE - 1) &
+		 ~(UInt32)(PAGE_SIZE - 1);
+	fReadMap = aperture->map(fTask, 0, kIOMapAnywhere | kIOMapReadOnly,
+				 start, length);
+	if (!fReadMap)
+		return kIOReturnNoMemory;
+	/* What the GPU drew must be what the CPU reads. */
+	fAccel->syncForCPU();
+	bzero(info, sizeof(*info));
+	info->address[0] = fReadMap->getVirtualAddress() + (offset - start);
+	info->rowBytes = rowBytes;
+	info->width = width;
+	info->height = height;
+	/* 32-bit ARGB, as QuickDraw numbers pixel formats (k32ARGBPixelFormat). */
+	info->pixelFormat = 32;
+	*size = sizeof(*info);
+	return kIOReturnSuccess;
+}
+
+void RadeonNISurfaceClient::unlockRead(void)
+{
+	if (fReadMap) {
+		fReadMap->release();
+		fReadMap = 0;
+	}
+}
+
 bool RadeonNISurfaceClient::start(IOService *provider)
 {
 	fAccel = OSDynamicCast(RadeonNIAccel, provider);
@@ -29,7 +86,12 @@ IOReturn RadeonNISurfaceClient::clientClose(void)
 {
 	IOLog("RadeonNI: surface client %p (window %lu) closed after %lu calls\n",
 	      this, (unsigned long)fWid, (unsigned long)fCalls);
-	if (fAccel && fWid)
+	unlockRead();
+	/*
+	 * The window server's and the program's clients share the surface
+	 * by its ID; only when the window server lets go is it forgotten.
+	 */
+	if (fAccel && fWid && fSetShape)
 		fAccel->forgetSurface(fWid);
 	terminate();
 	return kIOReturnSuccess;
@@ -131,13 +193,16 @@ IOExternalMethod *RadeonNISurfaceClient::getTargetAndMethodForIndex(
 IOReturn RadeonNISurfaceClient::readLockOptions(UInt32 options,
 	IOAccelSurfaceInformation *info, IOByteCount *size)
 {
-	note("readLockOptions", options, 0, 0, 0);
-	return kIOReturnUnsupported;
+	IOReturn ret = lockForRead(info, size);
+
+	note("readLockOptions", options, ret, 0, 0);
+	return ret;
 }
 
 IOReturn RadeonNISurfaceClient::readUnlockOptions(UInt32 options)
 {
 	note("readUnlockOptions", options, 0, 0, 0);
+	unlockRead();
 	return kIOReturnSuccess;
 }
 
@@ -198,6 +263,7 @@ IOReturn RadeonNISurfaceClient::setShape(UInt32 options, UInt32 fbIndex,
 	note("setShape", options, fbIndex, size, 0);
 	noteRegion("setShape", rgn, size);
 	/* The structure is declared with one rectangle and holds num_rects. */
+	fSetShape = true;
 	if (rgn && size >= sizeof(IOAccelDeviceRegion) - sizeof(IOAccelBounds) &&
 	    rgn->num_rects <= (size - (sizeof(IOAccelDeviceRegion) -
 				       sizeof(IOAccelBounds))) / sizeof(IOAccelBounds))
@@ -220,13 +286,16 @@ IOReturn RadeonNISurfaceClient::queryLock(void)
 IOReturn RadeonNISurfaceClient::readLock(IOAccelSurfaceInformation *info,
 					 IOByteCount *size)
 {
-	note("readLock", 0, 0, 0, 0);
-	return kIOReturnUnsupported;
+	IOReturn ret = lockForRead(info, size);
+
+	note("readLock", ret, 0, 0, 0);
+	return ret;
 }
 
 IOReturn RadeonNISurfaceClient::readUnlock(void)
 {
 	note("readUnlock", 0, 0, 0, 0);
+	unlockRead();
 	return kIOReturnSuccess;
 }
 

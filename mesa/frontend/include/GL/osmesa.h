@@ -268,6 +268,29 @@ OSMesaMakeCurrentDirect( OSMesaContext ctx, GLuint handle, GLsizei width,
  * coordinates. Calling it again with another x, y moves the drawable
  * without losing its contents.
  */
+/*
+ * osx-gpu: memory of the device (named by `handle`, with this row length
+ * in bytes and byte offset) into which every finished picture of the next
+ * OSMesaMakeCurrentSurface's drawable is copied as well, top row first, so
+ * that others can be told where to find it. Handle 0 (the default): none.
+ */
+GLAPI void APIENTRY
+OSMesaSurfaceStorage( OSMesaContext ctx, GLuint handle, GLsizei stride,
+                      GLuint offset );
+
+
+/*
+ * osx-gpu: copy rectangles of such a memory picture (width x height
+ * pixels; the rectangles in its own coordinates) to the target surface of
+ * the context's current drawable, the picture's top left corner at x, y
+ * there. This is how one context shows what another one drew.
+ */
+GLAPI void APIENTRY
+OSMesaShowStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
+                 GLuint offset, GLsizei width, GLsizei height, GLint x,
+                 GLint y, GLint count, const GLint *rects );
+
+
 GLAPI GLboolean APIENTRY
 OSMesaMakeCurrentSurface( OSMesaContext ctx, GLuint handle,
                           GLsizei target_width, GLsizei target_height,

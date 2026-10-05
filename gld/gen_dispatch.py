@@ -92,6 +92,8 @@ def main():
             out.append('\tx += rdn_origin_x;')
             out.append('\ty += rdn_origin_y;')
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
+        if name == 'flush':
+            out.append('\trdn_flushed(ctx);')
         out.append('}')
         out.append('')
 

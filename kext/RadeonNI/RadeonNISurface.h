@@ -24,6 +24,7 @@ class RadeonNISurfaceClient : public IOUserClient
 	OSDeclareDefaultStructors(RadeonNISurfaceClient)
 
 public:
+	virtual bool initWithTask(task_t owningTask, void *securityID, UInt32 type);
 	virtual bool start(IOService *provider);
 	virtual IOReturn clientClose(void);
 	virtual IOReturn clientDied(void);
@@ -63,6 +64,13 @@ public:
 private:
 	RadeonNIAccel *fAccel;
 	UInt32 fWid, fMode;
+	/* Whose client this is, and its view of the surface while read-locked. */
+	task_t fTask;
+	bool fSetShape;
+	IOMemoryMap *fReadMap;
+
+	IOReturn lockForRead(IOAccelSurfaceInformation *info, IOByteCount *size);
+	void unlockRead(void);
 	UInt32 fCalls;
 
 	void note(const char *what, UInt32 a, UInt32 b, UInt32 c, UInt32 d);

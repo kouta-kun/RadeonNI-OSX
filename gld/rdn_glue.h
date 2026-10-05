@@ -81,6 +81,8 @@ void rdn_mesa_detach(void *gld_ctx);
  * renderer's.
  */
 int rdn_swap(void *rend);
+/* glFlush has been done for this context. */
+void rdn_flushed(void *rend);
 /* True if the context's GL entry points are now Mesa's. */
 int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
 /* Finish the frame and put it into the drawable's buffer. */
