@@ -793,6 +793,10 @@ void rdn_watch_end(void)
 	struct context *c = NULL;
 	int sx, sy, sw, sh, dx, dy, j;
 	static unsigned noted;
+	/* Where each surface's corner was when it was drawn last. */
+	enum { MAX_DRAWN = 32 };
+	static struct { uint32_t id; long x, y; } drawn[MAX_DRAWN];
+	long best_d = 0;
 
 	if (!watch.in_quads || watch.vertices != 4 || watch.texcoords != 4 ||
 	    !watch.white || watch.rect_on[0] || watch.rect_on[1])
@@ -820,11 +824,74 @@ void rdn_watch_end(void)
 	dy = (int)(watch.v[0][1] - watch.top) +
 	     ((int)c->screen_height - c->origin_y - (int)c->screen.height);
 
-	/* Whose is it? The one it fits; of several, the first. */
+	/*
+	 * Whose is it? Nothing in the quad says. Of the surfaces it fits,
+	 * the one whose corner would be nearest to where that surface was
+	 * drawn last or to where the kext has it (which is right except for
+	 * a step's lag during a drag), whichever is nearer.
+	 */
 	n = rdn_target_surface_list(list, 32);
-	for (i = 0; i < n && best == 32; i++)
-		if ((uint32_t)(sx + sw) <= list[i][3] && (uint32_t)(sy + sh) <= list[i][4])
+	for (i = 0; i < n; i++) {
+		static int16_t rects[MAX_SCREEN_RECTS][4];
+		long ox = dx - sx, oy = dy - sy, d, bx, by;
+		uint32_t count, k;
+		int32_t b[4];
+
+		if ((uint32_t)(sx + sw) > list[i][3] || (uint32_t)(sy + sh) > list[i][4])
+			continue;
+		for (k = 0; k < MAX_DRAWN; k++)
+			if (drawn[k].id == list[i][0])
+				break;
+		d = -1;
+		if (k < MAX_DRAWN) {
+			bx = drawn[k].x;
+			by = drawn[k].y;
+			d = labs(ox - bx) + labs(oy - by);
+		}
+		/* The nearer of the two counts. */
+		if (rdn_target_surface_region(list[i][0], b, rects,
+					      MAX_SCREEN_RECTS, &count)) {
+			long e = labs(ox - b[0]) + labs(oy - b[1]);
+
+			if (d < 0 || e < d)
+				d = e;
+		}
+		if (d < 0)
+			continue;
+		if (best == 32 || d < best_d) {
 			best = i;
+			best_d = d;
+		}
+	}
+	if (best != 32) {
+		uint32_t k, slot = 0;
+
+		for (k = 0; k < MAX_DRAWN; k++) {
+			if (drawn[k].id == list[best][0]) {
+				slot = k;
+				break;
+			}
+			/* Otherwise a free place, or the one of a surface that is gone. */
+			if (!drawn[k].id)
+				slot = k;
+		}
+		if (drawn[slot].id != list[best][0]) {
+			for (k = 0; k < MAX_DRAWN; k++) {
+				uint32_t m;
+
+				for (m = 0; m < n; m++)
+					if (list[m][0] == drawn[k].id)
+						break;
+				if (m == n) {
+					slot = k;
+					break;
+				}
+			}
+		}
+		drawn[slot].id = list[best][0];
+		drawn[slot].x = dx - sx;
+		drawn[slot].y = dy - sy;
+	}
 	if (best == 32) {
 		if (noted++ < 40)
 			rdn_log("a white quad %dx%d (from %d,%d) fits none of %u surfaces",
