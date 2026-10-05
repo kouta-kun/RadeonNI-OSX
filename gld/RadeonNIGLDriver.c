@@ -102,6 +102,8 @@ static const char *const names[GLD_COUNT] = {
 };
 
 static gld_fn real[GLD_COUNT];
+/* A pixel format record this bundle allocated itself, if any. */
+static void *own_format;
 static FILE *logf;
 static int ready;
 /*
@@ -206,7 +208,7 @@ static void describe(int idx, long a, long b, long c, long d, long ret)
 		dump("rendinfo", a, 0x100);
 		break;
 	case IDX_gldChoosePixelFormat:
-		dump("attrs", b, 0x40);
+		dump("attrs", b, 0xa0);
 		if (a) {
 			dump("pixfmt*", a, 4);
 			dump("pixfmt", *(long *)a, 0x80);
@@ -520,7 +522,18 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		int n = 0;
 
 		while (*in && n < 62) {
-			/* kCGLPFAAccelerated and kCGLPFANoRecovery take no value. */
+			/*
+			 * kCGLPFAAccelerated and kCGLPFANoRecovery take no
+			 * value. 20, 21 and 22 are not public; the window
+			 * server asks for them with the value 8 each (taken
+			 * to be the red, green and blue sizes), and the
+			 * software renderer answers such a list with no
+			 * format at all.
+			 */
+			if (*in == 20 || *in == 21 || *in == 22) {
+				in += in[1] ? 2 : 1;
+				continue;
+			}
 			if (*in != 73 && *in != 72)
 				filtered[n++] = *in;
 			in++;
@@ -528,10 +541,49 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		filtered[n] = 0;
 		b = (long)filtered;
 	}
-	if (real[idx])
+	if (idx == IDX_gldDestroyPixelFormat && a && (void *)a == own_format) {
+		/* Ours, not the software renderer's, to free. */
+		free(own_format);
+		own_format = NULL;
+		ret = 0;
+	} else if (real[idx])
 		ret = real[idx](a, b, c, d, e, f, g, h);
 	if (restore_id)
 		*(long *)b = RDN_RENDERER_ID;
+	/*
+	 * The window server's own request is one the software renderer
+	 * answers with no format (seen: window, the three private
+	 * attributes, depth 0). Ask it for any window format instead.
+	 */
+	if (idx == IDX_gldChoosePixelFormat && RDN_CLAIMS_ACCELERATED &&
+	    ret == 0 && a && !*(long *)a && real[idx]) {
+		/*
+		 * Inside the window server the software renderer has no
+		 * format for any request. Make the record ourselves, as the
+		 * window server's own checks want it: 32-bit ARGB, no depth,
+		 * no stencil, no auxiliary buffers, a window, accelerated,
+		 * on every display. Thirteen words, as the software
+		 * renderer's records are; freed by gldDestroyPixelFormat.
+		 */
+		unsigned long *fmt = calloc(13, sizeof(*fmt));
+
+		if (fmt) {
+			fmt[1] = RDN_RENDERER_ID;
+			fmt[2] = 0x24dc | 0x1 | RECORD_ACCELERATED;
+			fmt[4] = 0x8000;	/* colour mode: ARGB 8888 */
+			fmt[6] = 1;		/* depth mode: none */
+			fmt[7] = 1;		/* stencil mode: none */
+			fmt[12] = 0xffffffff;	/* display mask */
+			*(unsigned long **)a = fmt;
+			own_format = fmt;
+		}
+		if (logf) {
+			fprintf(logf, "[%d]   made a format of our own -> %lx, %lx\n",
+				(int)getpid(), ret, *(long *)a);
+			if (ret == 0 && *(long *)a)
+				dump("pixfmt", *(long *)a, 0x80);
+		}
+	}
 	if (logf) {
 		fprintf(logf, "[%d]   %s -> %lx\n", (int)getpid(), names[idx], ret);
 		fflush(logf);
