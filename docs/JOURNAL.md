@@ -926,3 +926,42 @@ application. The hypothesis in the plan was wrong in one detail
 proven: one entry of 686, one short off-screen program. Open points are in
 GLD-INTERFACE.md. The guest is left with the kext loaded with the
 accelerator and the bundle installed.
+
+## 2026-10-05 — A1: command processor and first 3D drawing, from Linux userspace
+
+**Tried.** Ported to `hw/`: `evergreen_gpu_init()` for Turks (`rdn_gpu.c`),
+CP microcode load, ring start, ring test, fences and indirect buffers
+(`rdn_cp.c`), and a drawing self-test built from Linux 3.9's blit code
+(`rdn_selftest.c`). `tests/accel_replay.c` checks the bring-up against the
+existing Linux trace (phase a1 already contains Linux's CP start). Then on
+the card: `rdn_tool post`, `modeset`, `accel`. New `rdn_tool grab` saves the
+scanout surface as an image, read back through the aperture.
+
+Memory model as planned: ring, indirect buffer, shaders, vertices and
+texture all in video memory, written through the aperture. No GART, no
+write-back, no interrupt, no MC microcode. Video memory stays at GPU address
+0xF00000000 where ASIC_Init puts it.
+
+**Observed.**
+- Replay: 2938 register accesses in Linux's order, identical on x86 and
+  big-endian PowerPC. The first run failed on `W 28c58`: registers beyond
+  the 128 KB BAR have to go through the index/data pair at offsets 0 and 4,
+  as the trace shows Linux doing. `rdn_rreg`/`rdn_wreg` now do that.
+- On the card: ring test passes in 1 us, fences complete.
+- First drawing attempts gave results that lagged one run behind and
+  readbacks that disagreed with themselves. Cause: the card caches host
+  accesses to video memory; Linux writes `HDP_MEM_COHERENCY_FLUSH_CNTL`.
+  With a flush before every ring commit and after every fence wait the
+  results are stable.
+- With a linear render target only every other group of four pixel columns
+  was written. Setting the non-display tiling order bit in
+  `CB_COLOR0_ATTRIB` fixes it; `ARRAY_LINEAR_GENERAL` does not.
+- Final state, read back from the framebuffer (`build/grab-a1.png`): the
+  textured square and the textured triangle are complete, in the right
+  places, with the right colours in all four texture quadrants, on top of
+  the test pattern.
+
+**Concluded.** The command processor and the 3D pipeline (vertex fetch,
+both shader stages, texturing, rasterisation, colour write) work on this
+card under our code with everything in video memory. What the monitor
+shows is for the user to confirm; the readback says it is right.

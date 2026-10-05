@@ -52,7 +52,11 @@ been planned in detail.
   (`gld/`, a logging pass-through to Apple's software renderer) and an
   off-screen GL program runs through it with `glClear` replaced by ours.
   Only one of the 686 entries was replaced, and only off-screen.
-- A1 to A7 have not started. No acceleration code touches the card yet.
+- A1 works by readback (2026-10-05), not yet confirmed on the monitor by
+  the user: `hw/rdn_gpu.c`, `hw/rdn_cp.c` and `hw/rdn_selftest.c` start the
+  3D engine and the command processor and draw a textured square and
+  triangle, from `rdn_tool accel` on the x86 host.
+- A2 to A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` installed in
   `/System/Library/Extensions`; the snapshots do not. It is inert unless
   the kext is loaded with `RDN_ACCEL=1`.
@@ -88,6 +92,11 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/fetch-deps.sh`: PowerPC cross toolchain and Linux radeon sources
   into `third_party/`. Run once, with `scripts/build-qemu.sh`, on a fresh
   checkout.
+- `sudo build/x86/rdn_tool accel` (after `post` and `modeset`): start the
+  3D engine and command processor and draw the self-test picture.
+  `sudo build/x86/rdn_tool grab file.ppm` saves the scanout surface, so the
+  picture can be checked without the monitor (`pnmtopng` to view it).
+  The microcode must be in `firmware/` (`zstd -d` from `/lib/firmware/radeon`).
 - `sudo build/x86/rdn_tool {status|post|vramtest|edid|modeset|peek}`: our code on the real
   card through sysfs; `-t file` logs accesses in the trace format, `-n`
   avoids the I/O BAR. Needs `scripts/card-bind.sh none` first.
@@ -156,6 +165,11 @@ Keep these current as part of the work, and commit small and often.
   the two standard headers Kernel.framework lacks. The VBIOS reaches it as a
   `VBIOS` data property injected into the personality by `scripts/kext.sh
   load`; it is never part of the built bundle or the repository.
+- `hw/rdn_accel.h` is the acceleration core: `rdn_gpu.c` (3D engine setup),
+  `rdn_cp.c` (microcode, ring, fences, indirect buffers), `rdn_selftest.c`.
+  Everything the GPU reads is in video memory, written little-endian through
+  the aperture; see the header for the rules (host data path flush).
+  `hw/linux/` holds register headers copied from Linux unchanged.
 - `hw/rdn_modeset.c` builds AtomBIOS parameter blocks byte by byte in
   little-endian layout (no structs, no bitfields) and follows the Linux
   call order recorded in `traces/ref-radeon-3.atomcalls.txt`.

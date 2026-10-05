@@ -99,3 +99,19 @@ DisplayPort connector uses id 0x92 with the AUX channel.
 
 - Whether the panel is physically 1366x768 or 1920x1080.
 - Reference clock and default engine/memory clocks (FirmwareInfo table).
+
+## 3D engine and command processor (2026-10-05, on the card)
+
+- The register BAR is 128 KB; the 3D context registers (0x28000 and up) are
+  reached through the index/data pair at offsets 0x0 and 0x4.
+- The command processor runs with its ring in video memory, at GPU address
+  0xF00000000 + offset, with no GART, no write-back and no MC microcode.
+  Only `TURKS_pfp.bin` and `TURKS_me.bin` are loaded.
+- Host accesses to video memory are cached by the card. Write 1 to
+  `HDP_MEM_COHERENCY_FLUSH_CNTL` (0x5480) after writing what the GPU will
+  read and before reading what the GPU wrote.
+- A linear render target (`ARRAY_LINEAR_ALIGNED`) needs the non-display
+  tiling order bit (bit 4) in `CB_COLOR0_ATTRIB`, also when it is the
+  scanout surface; without it half of the pixel columns are not written.
+- `evergreen_gpu_init()` gives tile_config 0x22, backend_map 0x1100, 6
+  active SIMDs.

@@ -46,16 +46,6 @@
 #include "linux/evergreen_blit_shaders.h"
 #undef u32
 
-#ifndef EBUSY
-#define EBUSY 16
-#endif
-#ifndef ENOMEM
-#define ENOMEM 12
-#endif
-#ifndef ETIMEDOUT
-#define ETIMEDOUT 110
-#endif
-
 #define RDN_CP_PACKET2		0x80000000
 /* Linux pads every commit to 16 words. */
 #define RDN_RING_ALIGN_MASK	15
@@ -163,13 +153,21 @@ void rdn_ring_emit(struct rdn_accel *accel, uint32_t value)
 	accel->wptr = (accel->wptr + 1) & (accel->ring_words - 1);
 }
 
+/*
+ * The card caches what the host writes to and reads from video memory.
+ * This makes the GPU see the host's writes and the host see the GPU's
+ * (Linux: r600_mmio_hdp_flush()).
+ */
+void rdn_hdp_flush(struct rdn_accel *accel)
+{
+	rdn_wreg(accel->card, RDN_HDP_MEM_COHERENCY_FLUSH_CNTL, 0x1);
+}
+
 void rdn_ring_commit(struct rdn_accel *accel)
 {
 	while (accel->wptr & RDN_RING_ALIGN_MASK)
 		rdn_ring_emit(accel, RDN_CP_PACKET2);
-	/* The read back makes sure the ring words have reached the card. */
-	(void)rdn_vram_read32(accel, accel->ring_offset +
-		((accel->wptr - 1) & (accel->ring_words - 1)) * 4);
+	rdn_hdp_flush(accel);
 	rdn_wreg(accel->card, CP_RB_WPTR, accel->wptr);
 	(void)rdn_rreg(accel->card, CP_RB_WPTR);
 }
@@ -396,6 +394,8 @@ int rdn_fence_wait(struct rdn_accel *accel, uint32_t seq, uint32_t timeout_ms)
 		}
 		rdn_udelay(accel, 10);
 	}
+	/* The host may now read what the GPU drew. */
+	rdn_hdp_flush(accel);
 	return 0;
 }
 

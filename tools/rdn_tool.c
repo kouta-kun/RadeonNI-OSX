@@ -7,6 +7,11 @@
  *   rdn_tool [options] vramtest    write/read patterns through the aperture
  *   rdn_tool [options] modeset     read the EDID from the DVI connector, set
  *                                  its preferred mode and show a test pattern
+ *   rdn_tool [options] accel       start the 3D engine and the command
+ *                                  processor (after post and modeset), run
+ *                                  the ring test and one fence; -f names the
+ *                                  directory with the microcode
+ *   rdn_tool [options] grab [file]  save the scanout surface as a PPM image
  *   rdn_tool [options] peek REG...  read registers (hex offsets)
  *   rdn_tool [options] edid [file] probe every DDC line for an EDID; save
  *                                  the first one found to file
@@ -37,6 +42,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../hw/rdn_accel.h"
 #include "../hw/rdn_card.h"
 #include "../hw/rdn_i2c.h"
 #include "../hw/rdn_mode.h"
@@ -398,6 +404,154 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 	return r;
 }
 
+/*
+ * Acceleration. Layout of the aperture while the tool runs: the scanout
+ * surface at 0 (as modeset leaves it), the ring at 32 MB, scratch space for
+ * indirect buffers, shaders and vertices at 34 MB.
+ */
+#define ACCEL_RING_OFFSET	(32u << 20)
+#define ACCEL_RING_BYTES	(1u << 20)
+#define ACCEL_WORK_OFFSET	(34u << 20)
+
+static const char *fw_dir = "firmware";
+
+static uint8_t *read_fw(const char *name, size_t *size)
+{
+	char path[512];
+	uint8_t *buf = malloc(1 << 16);
+	FILE *f;
+
+	snprintf(path, sizeof(path), "%s/%s", fw_dir, name);
+	f = fopen(path, "rb");
+	if (!f || !buf) {
+		perror(path);
+		return NULL;
+	}
+	*size = fread(buf, 1, 1 << 16, f);
+	fclose(f);
+	return buf;
+}
+
+static int do_accel(struct linux_card *lc, struct rdn_card *card)
+{
+	struct rdn_accel_fw fw;
+	struct rdn_accel accel;
+	volatile void *aperture;
+	struct stat st;
+	int fd, r;
+
+	if (!rdn_card_posted(card)) {
+		fprintf(stderr, "card is not posted; run 'post' and 'modeset' first\n");
+		return -1;
+	}
+	fw.pfp = read_fw("TURKS_pfp.bin", &fw.pfp_size);
+	fw.me = read_fw("TURKS_me.bin", &fw.me_size);
+	if (!fw.pfp || !fw.me)
+		return -1;
+
+	/* Not the write-combining mapping: the ring is read back. */
+	fd = sysfs_open(lc, "resource0", O_RDWR);
+	if (fd < 0 || fstat(fd, &st))
+		return -1;
+	aperture = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (aperture == MAP_FAILED) {
+		perror("mmap aperture");
+		return -1;
+	}
+
+	r = rdn_accel_init(&accel, card, aperture, (uint32_t)st.st_size, &fw,
+			   ACCEL_RING_OFFSET, ACCEL_RING_BYTES);
+	printf("accel init returned %d; tile_config 0x%x, backend_map 0x%x, "
+	       "GRBM_STATUS %08x, CP_STAT %08x\n", r,
+	       (unsigned)accel.cfg.tile_config, (unsigned)accel.cfg.backend_map,
+	       (unsigned)rdn_rreg(card, 0x8010), (unsigned)rdn_rreg(card, 0x8680));
+	if (!r) {
+		uint32_t seq;
+
+		r = rdn_fence_emit(&accel, &seq);
+		if (!r)
+			r = rdn_fence_wait(&accel, seq, 1000);
+		printf("fence %u: %d\n", (unsigned)seq, r);
+	}
+	if (!r) {
+		/* Draw on whatever CRTC 0 is scanning out, at aperture offset 0. */
+		static const struct { uint32_t x, y; const char *what; } probe[] = {
+			{ 128, 128, "square, red" }, { 256, 128, "square, green" },
+			{ 128, 256, "square, blue" }, { 256, 256, "square, white" },
+			{ 760, 128, "triangle, red" }, { 776, 128, "triangle, green" },
+			{ 700, 300, "triangle, blue" }, { 840, 300, "triangle, white" },
+			{ 660, 100, "outside the triangle" },
+		};
+		struct rdn_selftest_target t;
+		volatile uint32_t *pix = aperture;
+		unsigned i;
+
+		memset(&t, 0, sizeof(t));
+		t.gpu_addr = rdn_vram_addr(&accel, 0);
+		t.width = rdn_rreg(card, EVERGREEN_GRPH_X_END);
+		t.height = rdn_rreg(card, EVERGREEN_GRPH_Y_END);
+		t.pitch_pixels = rdn_rreg(card, EVERGREEN_GRPH_PITCH);
+		t.big_endian_pixels = RDN_BIG_ENDIAN;
+		printf("drawing on %ux%u, pitch %u\n", (unsigned)t.width,
+		       (unsigned)t.height, (unsigned)t.pitch_pixels);
+		r = rdn_accel_selftest(&accel, &t, ACCEL_WORK_OFFSET);
+		printf("selftest returned %d; GRBM_STATUS %08x\n", r,
+		       (unsigned)rdn_rreg(card, 0x8010));
+		for (i = 0; i < sizeof(probe) / sizeof(probe[0]); i++)
+			printf("  pixel (%u,%u) = %08x  (%s)\n", (unsigned)probe[i].x,
+			       (unsigned)probe[i].y,
+			       (unsigned)pix[probe[i].y * t.pitch_pixels + probe[i].x],
+			       probe[i].what);
+	}
+
+	munmap((void *)aperture, st.st_size);
+	close(fd);
+	return r;
+}
+
+/*
+ * Save what CRTC 0 scans out (32 bpp, at aperture offset 0) as a PPM file,
+ * so that the picture can be looked at without the monitor.
+ */
+static int do_grab(struct linux_card *lc, struct rdn_card *card, const char *path)
+{
+	uint32_t w = rdn_rreg(card, EVERGREEN_GRPH_X_END);
+	uint32_t h = rdn_rreg(card, EVERGREEN_GRPH_Y_END);
+	uint32_t pitch = rdn_rreg(card, EVERGREEN_GRPH_PITCH);
+	volatile uint32_t *pix;
+	uint32_t x, y;
+	struct stat st;
+	FILE *f;
+	int fd;
+
+	fd = sysfs_open(lc, "resource0", O_RDWR);
+	if (fd < 0 || fstat(fd, &st) || !w || !h || pitch < w ||
+	    (uint64_t)pitch * h * 4 > (uint64_t)st.st_size)
+		return -1;
+	pix = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	f = fopen(path, "wb");
+	if (pix == MAP_FAILED || !f) {
+		perror(path);
+		return -1;
+	}
+	/* See rdn_hdp_flush(): make the card's read cache current. */
+	rdn_wreg(card, 0x5480, 1);
+	fprintf(f, "P6\n%u %u\n255\n", (unsigned)w, (unsigned)h);
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++) {
+			uint32_t v = pix[y * pitch + x];
+
+			fputc((v >> 16) & 0xff, f);
+			fputc((v >> 8) & 0xff, f);
+			fputc(v & 0xff, f);
+		}
+	fclose(f);
+	munmap((void *)pix, st.st_size);
+	close(fd);
+	printf("saved %ux%u to %s\n", (unsigned)w, (unsigned)h, path);
+	return 0;
+}
+
 /* Probe every I2C line the VBIOS lists; a display answers with its EDID. */
 static int edid_probe(struct rdn_card *card, const char *save)
 {
@@ -443,19 +597,20 @@ int main(int argc, char **argv)
 	void *bios;
 	int opt, fd, no_io = 0, ret = 0;
 
-	while ((opt = getopt(argc, argv, "s:b:t:nd")) != -1) {
+	while ((opt = getopt(argc, argv, "s:b:t:f:nd")) != -1) {
 		switch (opt) {
 		case 's': addr = optarg; break;
 		case 'b': bios_file = optarg; break;
 		case 't': trace = optarg; break;
+		case 'f': fw_dir = optarg; break;
 		case 'n': no_io = 1; break;
 		case 'd': force_dvi = 1; break;
 		default: return 2;
 		}
 	}
 	if (optind >= argc) {
-		fprintf(stderr, "usage: %s [-s addr] [-b vbios] [-t trace] [-n] "
-			"status|post|vramtest|edid [file]|modeset|peek REG...\n", argv[0]);
+		fprintf(stderr, "usage: %s [-s addr] [-b vbios] [-t trace] [-f fwdir] [-n] "
+			"status|post|vramtest|edid [file]|modeset|accel|grab [file]|peek REG...\n", argv[0]);
 		return 2;
 	}
 	cmd = argv[optind];
@@ -541,6 +696,19 @@ int main(int argc, char **argv)
 			fclose(lc.trace);
 			lc.trace = NULL;
 		}
+	} else if (!strcmp(cmd, "accel")) {
+		if (trace) {
+			lc.trace = fopen(trace, "w");
+			if (!lc.trace)
+				perror(trace);
+		}
+		ret = do_accel(&lc, &card);
+		if (lc.trace) {
+			fclose(lc.trace);
+			lc.trace = NULL;
+		}
+	} else if (!strcmp(cmd, "grab")) {
+		ret = do_grab(&lc, &card, optind + 1 < argc ? argv[optind + 1] : "build/grab.ppm");
 	} else if (!strcmp(cmd, "peek")) {
 		int i;
 

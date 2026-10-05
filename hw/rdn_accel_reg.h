@@ -30,7 +30,19 @@
 #define EVENT_TYPE(x)			((x) << 0)
 #define EVENT_INDEX(x)			((x) << 8)
 
+#define RDN_HDP_MEM_COHERENCY_FLUSH_CNTL	0x5480
+
 /* The scratch registers. */
 #define RDN_SCRATCH_REG(n)		(0x8500 + 4 * (n))
+
+#ifndef EBUSY
+#define EBUSY 16
+#endif
+#ifndef ENOMEM
+#define ENOMEM 12
+#endif
+#ifndef ETIMEDOUT
+#define ETIMEDOUT 110
+#endif
 
 #endif /* RDN_ACCEL_REG_H */

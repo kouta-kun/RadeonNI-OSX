@@ -104,6 +104,13 @@ void rdn_accel_fini(struct rdn_accel *accel);
 void rdn_gpu_init(struct rdn_accel *accel);
 
 /*
+ * Flush the card's cache of host accesses to video memory: needed after
+ * the host writes something the GPU will read, and before the host reads
+ * something the GPU wrote. rdn_ring_commit() and rdn_fence_wait() do it.
+ */
+void rdn_hdp_flush(struct rdn_accel *accel);
+
+/*
  * Ring access: reserve, write, commit. rdn_ring_begin() waits for room and
  * fails with -EBUSY if the command processor stops consuming.
  */
@@ -126,5 +133,23 @@ int rdn_fence_wait(struct rdn_accel *accel, uint32_t seq, uint32_t timeout_ms);
  */
 int rdn_ib_submit(struct rdn_accel *accel, uint64_t addr, uint32_t words,
 		  bool swap, uint32_t *seq);
+
+/*
+ * rdn_selftest.c: draw, with the 3D engine, a square (64,64)-(320,320) and
+ * a triangle with corners (768,64), (640,320), (896,320) onto a 32-bit
+ * surface. Both carry the same texture: red top left, green top right, blue
+ * bottom left, white bottom right. `work_offset` (4 KB aligned) names
+ * rdn_selftest_work_bytes() of scratch space in the aperture.
+ */
+struct rdn_selftest_target {
+	uint64_t gpu_addr;
+	uint32_t width, height, pitch_pixels;
+	bool big_endian_pixels;
+};
+
+uint32_t rdn_selftest_work_bytes(void);
+int rdn_accel_selftest(struct rdn_accel *accel,
+		       const struct rdn_selftest_target *target,
+		       uint32_t work_offset);
 
 #endif /* RDN_ACCEL_H */

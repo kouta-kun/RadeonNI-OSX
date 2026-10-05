@@ -14,6 +14,8 @@
  *  - write-back, which Linux turns on and we leave off, and with it the
  *    ring's read pointer and the scratch registers, which we read back
  *    through the register interface. The mock answers those itself.
+ *  - the flush of the card's host-access cache before each ring commit,
+ *    which a ring in video memory needs and Linux's ring does not.
  *
  * The ring's memory is an ordinary buffer here; its contents are part of
  * the digest, so the x86 and PowerPC runs must produce the same words.
@@ -84,6 +86,9 @@ static int mock_exempt(struct mock *m, int write, uint32_t offset,
 		return !write;
 	case RDN_SCRATCH_REG(0):
 		*result = 0xDEADBEEF;
+		return 1;
+	case RDN_HDP_MEM_COHERENCY_FLUSH_CNTL:
+		/* Our ring is written through the aperture; Linux's is not. */
 		return 1;
 	case CP_RB_RPTR_ADDR:
 	case CP_RB_RPTR_ADDR_HI:
