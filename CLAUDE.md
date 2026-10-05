@@ -73,14 +73,14 @@ been planned in detail.
   off-screen and in windows; each frame is copied into the buffer Apple's
   code presents. Not done: full-screen contexts, presenting without the
   copy.
-- A5 (Quartz Extreme) works (2026-10-05), not yet confirmed complete by the
-  user: with `RDN_ACCEL=1 RDN_ACCELCAPS=3 RDN_AGPSHIM=3 RDN_GA=1
+- A5 (Quartz Extreme) is confirmed on the monitor by the user
+  (2026-10-05): with `RDN_ACCEL=1 RDN_ACCELCAPS=3 RDN_AGPSHIM=3 RDN_GA=1
   RDN_SURFACES=1 scripts/kext.sh up` the window server composites the
-  7570's display with OpenGL through Mesa on the card.
+  7570's display with OpenGL through Mesa on the card; Exposé works.
   `docs/QUARTZ-EXTREME.md` has the gates, what the window server does and
   what is not done. The GPU copies each finished update to the screen;
-  `/tmp/rdngld.copy` in the guest selects the older CPU copy. The user
-  saw it working on the monitor, with Exposé flickering before that fix.
+  `/tmp/rdngld.copy` in the guest selects the older CPU copy. Open: it
+  looks a bit slow, and the software cursor flickers slightly.
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the

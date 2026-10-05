@@ -141,8 +141,8 @@ ways: desktop picture, Finder windows with shadows, a window moved in
 steps, Exposé's dimming and its return, all in the right place. Drawing
 directly, a window moved in eight steps took 304 command buffers in 5 s
 and the window server had used 4.3 s of CPU time after that and Exposé,
-against 19 s at the same point with the copy. **Not yet seen on the monitor by the
-user.**
+against 19 s at the same point with the copy. **Confirmed on the monitor by the user**, Exposé included; it looks a
+bit slow and the cursor flickers slightly.
 
 ## Not done
 

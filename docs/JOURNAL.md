@@ -1376,3 +1376,14 @@ GPU copies the region's rectangles to the scanout
 **Observed.** Readback correct after eight window moves (337 command
 buffers in 5 s). Not yet seen by the user.
 
+## 2026-10-05 — Quartz Extreme confirmed on the monitor by the user
+
+**Observed by the user**, with the GPU copying each finished update to the
+screen: Exposé "works great now", no flicker in it; it looks a bit slow.
+The cursor, moved across the 7570's display, leaves no marks but seems to
+flicker a little (the user is not sure it is not the display).
+
+**Concluded.** A5's criterion is met. Open after it: speed, and the
+cursor, which `IOFramebuffer` draws with the CPU into the surface the GPU
+copies over; a hardware cursor is the fix to try.
+
