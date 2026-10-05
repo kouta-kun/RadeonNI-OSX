@@ -34,9 +34,13 @@ System Preferences and a software cursor.
   the G5 package installed, to be written to a disk for the real G5
   (`docs/PLAN.md`, "First run on the real G5"). Never booted there. The
   guest's own disk has the snapshot `before-g5-image` from the same moment.
-- The user booted the G5 with the card and the phase 1 kext
-  (2026-10-05, their report; no details yet). The card is in the G5, not in
-  the host, so nothing on the host can use it.
+- The G5 (`PowerMac11,2`, 192.168.1.128) runs with the card and the
+  installed phase 1 kext at 1920x1080 (2026-10-05, kernel log read over
+  ssh). The card is in the G5, not in the host, so nothing on the host can
+  use it. Reach the G5 like the guest but on port 22: user `tiger`, key
+  `private/ssh/tiger_rsa`, the old-algorithm options from
+  `scripts/tiger.sh ssh`; `sudo` there asks for the password (`tiger`).
+  Open Firmware assigns the card's ROM BAR there (journal).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including
   the G5 install package.
 - The guest: snapshots `clean-install` and `pre-kext-install` (no kext

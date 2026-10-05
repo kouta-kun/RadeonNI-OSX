@@ -1950,3 +1950,26 @@ RDN_SURFACES=1 RDN_HWCURSOR=1`.
 **Not tested anywhere:** the accelerator starting at boot from an
 installed kext (under QEMU it was always loaded after boot, followed by
 a window server restart), and all of it on the G5.
+
+## 2026-10-05 — First facts from the real G5 (phase 1 kext)
+
+The G5 (`PowerMac11,2`, 192.168.1.128, ssh as in the guest: user `tiger`,
+key `private/ssh/tiger_rsa`) runs the image with the installed phase 1
+kext. Read over ssh:
+
+- `dmesg`: device 1002:675d, command 0004 on entry, VBIOS from the
+  personality, "card is not posted on entry", posted, CONFIG_MEMSIZE
+  1024 MB, one mode 1920x1080 at 148500 kHz (another monitor than the
+  host's), "framebuffer started".
+- Device tree: the card is `pci1028,2b20` (named after its subsystem ID,
+  so `ioreg -n pci1002,675d` finds nothing) in SLOT-2. Open Firmware
+  assigned everything: I/O (0x20), BAR0 256 MB at 0x90000000, BAR2 128 KB
+  at 0x80140000 and **the ROM (0x30) at 0x80120000, 128 KB**. So the ROM
+  path of "Deferred to the real G5" can be tried.
+- System Profiler: the 7570's display is the main one, 1920x1080, 32
+  bit, Quartz Extreme not supported (as expected without the
+  accelerator). Its listing showed no other display.
+
+The package with `install.sh --accel` and the microcode is unpacked in
+the G5's `~/RadeonNI-g5` (the earlier one moved to `~/RadeonNI-g5.old`);
+not installed yet, the user runs it.
