@@ -153,11 +153,9 @@ Driver:
 
 Harness:
 
-- A framebuffer loaded with `kextload` is only used after the window server
-  restarts; a display re-probe does not help. `scripts/kext.sh activate`
-  automates the restart. Loading the kext before the window server starts
-  (for example from `/etc/rc.local`) would remove the need, but departs from
-  "always loaded by hand": open question for the user.
+- A framebuffer loaded with `kextload` after boot is only used once the
+  window server restarts (`scripts/kext.sh activate`). Not an issue for the
+  installed kext, which loads before it.
 - QEMU needs `patches/qemu/0001-...`; OpenBIOS's `ranges` property and the
   bridge's address-select register still describe 256 MB.
 - Unbinding the host's `radeon` from the card led to a host kernel oops;

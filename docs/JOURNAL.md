@@ -809,3 +809,30 @@ the window server starts, which is what an installed driver does anyway;
 in the harness that could be an `/etc/rc.local` that runs `kextload` from a
 directory outside `/System/Library/Extensions`. That touches the "always
 loaded by hand" decision and is the user's call. Not tried.
+
+## 2026-10-04 — Installed in /System/Library/Extensions: loads at boot, no window server restart
+
+**Decision.** The user dropped the rule "always loaded by hand from a
+temporary directory, never installed in /System/Library/Extensions" (it
+came from the original brief; the user wants the driver to run as a real
+one does).
+
+**Tried.** Snapshot `pre-kext-install` with the guest off. `scripts/kext.sh
+install`: copy the bundle with the VBIOS-carrying Info.plist to
+`/System/Library/Extensions/RadeonNI.kext`, root:wheel, validate with
+`kextload -t -n`, delete `Extensions.mkext` and `Extensions.kextcache`,
+touch the Extensions folder. Guest restart.
+
+**Observed.** 39 s after boot: the kext is loaded (index 54), the log shows
+a cold POST ("GPU not posted. posting now..."), modes, "framebuffer
+started", and then, with no action from outside, the window server setting
+mode 2 (1920x1080, the resolution saved earlier). `IODisplayConnect`,
+`AppleDisplay` and the user client are attached. `system_profiler`: 1920 x
+1080, 32-bit. Host kernel untainted.
+
+**Concluded.** Installed like any driver, the kext is matched and started
+before the window server, which then uses the screen by itself. This is the
+normal way to run it from now on; `load` + `activate` remains as the quick
+loop. Recovery if an installed kext breaks boot: start the guest without the
+card (`scripts/tiger.sh run`), where the kext matches nothing and is never
+loaded, then `scripts/kext.sh uninstall`; or restore a snapshot.

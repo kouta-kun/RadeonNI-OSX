@@ -10,25 +10,26 @@
 #   scripts/kext.sh unload
 #   scripts/kext.sh log        kernel log lines from the driver
 #
-# The kext is never installed in /System/Library/Extensions: a guest reboot
-# always removes it.
+#   scripts/kext.sh install    install into /System/Library/Extensions so
+#                              that it loads at boot like a real driver
+#   scripts/kext.sh uninstall
+#
+# load/activate is the quick loop while developing; install is how the
+# driver is meant to run.
 
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 gssh() { "$root/scripts/tiger.sh" ssh "$@"; }
 ID=org.osxgpu.driver.RadeonNI
+SLE=/System/Library/Extensions
 
-case "${1:-}" in
-build)
-    tar -C "$root" -cf - hw kext | gssh 'rm -rf ~/osx-gpu && mkdir -p ~/osx-gpu && tar -C ~/osx-gpu -xf -'
-    gssh 'cd ~/osx-gpu/kext/RadeonNI && make 2>&1 && ls -l build/RadeonNI.kext/Contents/MacOS/ && file build/RadeonNI.kext/Contents/MacOS/RadeonNI'
-    ;;
-load)
-    # The VBIOS is not in the repository or in the built kext: it is added to
-    # the personality here, as a data property, from the host's dump.
-    vbios=$root/private/vbios.rom
+# The VBIOS is not in the repository or in the built kext: it is added to
+# the personality here, as a data property, from the host's dump.
+make_plist() {
+    local vbios=$root/private/vbios.rom
     [ -f "$vbios" ] || { echo "missing $vbios" >&2; exit 1; }
+    mkdir -p "$root/build"
     python3 - "$root/kext/RadeonNI/Info.plist" "$vbios" > "$root/build/kext-Info.plist" <<'PY'
 import base64, sys
 plist = open(sys.argv[1]).read()
@@ -37,11 +38,40 @@ marker = "\t\t\t<key>IOProviderClass</key>"
 assert marker in plist
 sys.stdout.write(plist.replace(marker, "\t\t\t<key>VBIOS</key>\n\t\t\t<data>" + data + "</data>\n" + marker))
 PY
+}
+
+case "${1:-}" in
+build)
+    tar -C "$root" -cf - hw kext | gssh 'rm -rf ~/osx-gpu && mkdir -p ~/osx-gpu && tar -C ~/osx-gpu -xf -'
+    gssh 'cd ~/osx-gpu/kext/RadeonNI && make 2>&1 && ls -l build/RadeonNI.kext/Contents/MacOS/ && file build/RadeonNI.kext/Contents/MacOS/RadeonNI'
+    ;;
+load)
+    make_plist
     gssh 'sudo rm -rf /tmp/rdnkext && sudo mkdir /tmp/rdnkext &&
         sudo cp -R ~/osx-gpu/kext/RadeonNI/build/RadeonNI.kext /tmp/rdnkext/ && cat > /tmp/rdn-Info.plist &&
         sudo cp /tmp/rdn-Info.plist /tmp/rdnkext/RadeonNI.kext/Contents/Info.plist &&
         sudo chown -R root:wheel /tmp/rdnkext && sudo chmod -R go-w /tmp/rdnkext &&
         sudo sync && sudo kextload -t /tmp/rdnkext/RadeonNI.kext; kextstat | grep -i osxgpu' < "$root/build/kext-Info.plist"
+    ;;
+install)
+    # Install like a real driver: the system loads it at boot when it finds
+    # the card, before the window server starts. Takes effect at the next
+    # guest boot. If it ever stops the guest from booting, boot without the
+    # card (scripts/tiger.sh run): the kext then matches nothing and is not
+    # loaded, and "scripts/kext.sh uninstall" removes it.
+    make_plist
+    gssh "sudo rm -rf $SLE/RadeonNI.kext &&
+        sudo cp -R ~/osx-gpu/kext/RadeonNI/build/RadeonNI.kext $SLE/ && cat > /tmp/rdn-Info.plist &&
+        sudo cp /tmp/rdn-Info.plist $SLE/RadeonNI.kext/Contents/Info.plist &&
+        sudo chown -R root:wheel $SLE/RadeonNI.kext && sudo chmod -R go-w $SLE/RadeonNI.kext &&
+        sudo kextload -t -n $SLE/RadeonNI.kext &&
+        sudo rm -f /System/Library/Extensions.mkext /System/Library/Extensions.kextcache &&
+        sudo touch $SLE && sudo sync && ls -ld $SLE/RadeonNI.kext" < "$root/build/kext-Info.plist"
+    ;;
+uninstall)
+    gssh "sudo rm -rf $SLE/RadeonNI.kext &&
+        sudo rm -f /System/Library/Extensions.mkext /System/Library/Extensions.kextcache &&
+        sudo touch $SLE && sudo sync && echo removed"
     ;;
 activate)
     # Tiger's window server only looks for framebuffers when it starts, so a

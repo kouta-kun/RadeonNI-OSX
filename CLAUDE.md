@@ -22,11 +22,12 @@ System Preferences and a software cursor.
   GDDR5, monitor on the DVI-I connector. VBIOS dump in `private/vbios.rom`.
 - `hw/` cold-POSTs the card, reads the EDID over DDC, starts the display
   engine clock and sets modes through AtomBIOS. No MC microcode is needed.
-- `kext/RadeonNI` is the `IOFramebuffer` subclass built on it. After
-  `kextload` the window server must be restarted to use the screen
-  (`scripts/kext.sh activate`); it only looks for framebuffers at startup.
+- `kext/RadeonNI` is the `IOFramebuffer` subclass built on it. It is
+  installed in the guest's `/System/Library/Extensions` and comes up at
+  boot. A kext loaded by hand later needs `scripts/kext.sh activate`,
+  because the window server only looks for framebuffers when it starts.
 - The tag `working-framebuffer` marks the confirmed phase 1 state.
-- The guest: snapshot `clean-install`, user `tiger` / password `tiger`,
+- The guest: snapshots `clean-install` and `pre-kext-install` (no kext), user `tiger` / password `tiger`,
   `scripts/tiger.sh ssh`. QEMU must be the patched build (`patches/qemu/`).
 - `radeon` is blacklisted on the host (`/etc/modprobe.d/osx-gpu.conf`)
   because unbinding it led to a host kernel oops.
@@ -92,10 +93,12 @@ Keep these current as part of the work, and commit small and often.
 - `tools/guest/cgmode.c`: build in the guest (`gcc -o cgmode cgmode.c
   -framework ApplicationServices`) to list and switch display modes through
   Quartz and to put the cursor on a display.
-- `scripts/kext.sh {build|load|activate|up|unload|log}`: build
-  `kext/RadeonNI` inside the running guest with its Makefile, load it from
-  `/tmp` with `kextload`, and (`activate`) restart the guest's window server
-  so that it uses the new screen. `up` does all three.
+- `scripts/kext.sh {build|install|uninstall|load|activate|up|unload|log}`:
+  build `kext/RadeonNI` inside the running guest with its Makefile.
+  `install` puts it in `/System/Library/Extensions` (effective at the next
+  guest boot). For a quick loop without rebooting, `load` runs it from
+  `/tmp` and `activate` restarts the window server so it uses the screen
+  (`up` = build, load, activate).
 
 ## Architecture
 
@@ -162,9 +165,13 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
   "Deferred to the real G5").
 - Cold POST follows the Linux `radeon` initialisation order.
 - The kext is built inside the Tiger guest over ssh with Xcode 2.5 and
-  Apple's gcc. It is always loaded by hand with `kextload` from a temporary
-  directory and never installed in `/System/Library/Extensions`. Use QEMU
-  snapshots.
+  Apple's gcc. It is installed in `/System/Library/Extensions` like a real
+  driver (`scripts/kext.sh install`) so that it loads at boot, before the
+  window server. The original rule against installing it there was dropped
+  by the user on 2026-10-04. If an installed kext breaks boot, start the
+  guest without the card (`scripts/tiger.sh run`): it then matches nothing
+  and is not loaded, and `scripts/kext.sh uninstall` removes it. Snapshots
+  are the second way back.
 - QEMU: emulated VGA stays primary; `vfio-pci` with `x-no-mmap=on` plus the
   `vfio_region_*` trace events gives the register trace to compare against
   the reference. No `x-vga`.

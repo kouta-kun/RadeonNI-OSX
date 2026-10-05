@@ -272,6 +272,20 @@ OpenBIOS is not patched.
 
 ## Building and loading the kext
 
+The normal way, as a real driver: with a passthrough guest running,
+
+    scripts/kext.sh build
+    scripts/kext.sh install    # into /System/Library/Extensions
+    # restart the guest: the kext loads at boot and the desktop comes up
+
+`scripts/kext.sh uninstall` removes it. If an installed kext keeps the guest
+from booting, boot without the card (`scripts/tiger.sh run`); the kext then
+matches nothing and is not loaded. Snapshot `pre-kext-install` is the guest
+just before the first install.
+
+The quick loop, without rebooting the guest (uninstall first, or the
+installed copy is already running):
+
 With a passthrough guest running:
 
     scripts/kext.sh build     # tar hw/ and kext/ to the guest, make there
