@@ -34,6 +34,9 @@ System Preferences and a software cursor.
   the G5 package installed, to be written to a disk for the real G5
   (`docs/PLAN.md`, "First run on the real G5"). Never booted there. The
   guest's own disk has the snapshot `before-g5-image` from the same moment.
+- The user booted the G5 with the card and the phase 1 kext
+  (2026-10-05, their report; no details yet). The card is in the G5, not in
+  the host, so nothing on the host can use it.
 - The tag `working-framebuffer` marks the confirmed phase 1 state including
   the G5 install package.
 - The guest: snapshots `clean-install` and `pre-kext-install` (no kext
@@ -246,9 +249,13 @@ Keep these current as part of the work, and commit small and often.
   the card's error masking re-applied. `TIGER_BOOTARGS=debug=0x100` makes
   a guest kernel panic print its backtrace on the emulated screen.
 - `tools/guest/qe.c`: is Quartz Extreme in use on each display.
-- `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
-  with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
-  `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.
+- `scripts/make-g5-package.sh [--with-vbios] [--with-firmware]`: package
+  the guest-built kext with `g5/install.sh`, `g5/uninstall.sh` and
+  `g5/README.txt` into `build/RadeonNI-g5.tar.gz`, to be unpacked and
+  installed on the real Mac. There, `sudo ./install.sh --accel
+  [--hwcursor]` installs the kext with the Quartz Extreme personality
+  `kext.sh` uses under QEMU (needs `--with-firmware`); without options,
+  phase 1's.
 
 ## Architecture
 

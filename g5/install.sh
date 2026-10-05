@@ -2,12 +2,19 @@
 # Install RadeonNI.kext on a PowerPC Mac running Mac OS X 10.4, so that it
 # loads at boot like any other driver.
 #
-#   sudo ./install.sh [vbios.rom]
+#   sudo ./install.sh [--accel] [--hwcursor] [vbios.rom]
 #
 # Run it from the unpacked package directory, on the Mac itself. It needs
 # the VBIOS image of the card: the kext does not read the card's ROM yet, so
 # the image is stored in the kext's Info.plist. Without an argument the
 # script looks for vbios.rom next to itself.
+#
+# Without options the driver is a plain framebuffer. --accel also starts
+# the card's 3D engine at boot, for OpenGL and Quartz Extreme; that needs
+# the microcode files TURKS_pfp.bin and TURKS_me.bin next to this script,
+# and RadeonNIGLDriver.bundle and RadeonNIGA.plugin already installed in
+# /System/Library/Extensions. --hwcursor (with --accel) uses the card's
+# hardware cursor. Run the script again without options to go back.
 #
 # Nothing is written to the card. To undo: sudo ./uninstall.sh
 #
@@ -19,9 +26,21 @@ set -e
 SLE=/System/Library/Extensions
 KEXT=RadeonNI.kext
 here=$(cd "$(dirname "$0")" && pwd)
-vbios=${1:-$here/vbios.rom}
 
 fail() { echo "install.sh: $*" >&2; exit 1; }
+
+accel=0
+hwcursor=0
+vbios=$here/vbios.rom
+for arg in "$@"; do
+    case "$arg" in
+    --accel) accel=1 ;;
+    --hwcursor) hwcursor=1 ;;
+    -*) fail "unknown option $arg" ;;
+    *) vbios=$arg ;;
+    esac
+done
+[ "$hwcursor" = 0 ] || [ "$accel" = 1 ] || fail "--hwcursor needs --accel"
 
 [ "$(id -u)" = 0 ] || fail "run as root: sudo ./install.sh [vbios.rom]"
 [ -d "$here/$KEXT" ] || fail "$KEXT not found next to this script"
@@ -44,6 +63,15 @@ size=$(wc -c < "$vbios" | tr -d ' ')
 [ "$size" -ge $((blocks * 512)) ] || fail "$vbios is truncated: $size bytes, header says $((blocks * 512))"
 strings "$vbios" | grep -q ATOMBIOS || fail "$vbios has no ATOMBIOS marker"
 
+if [ "$accel" = 1 ]; then
+    for f in TURKS_pfp.bin TURKS_me.bin; do
+        [ -s "$here/$f" ] || fail "--accel needs the microcode file $f next to this script"
+    done
+    for b in RadeonNIGLDriver.bundle RadeonNIGA.plugin; do
+        [ -d "$SLE/$b" ] || fail "--accel needs $SLE/$b, which is not installed"
+    done
+fi
+
 if ioreg -p IODeviceTree | grep -q 'pci1002,675d'; then
     echo "Found the Radeon HD 7570 (1002:675d)."
 else
@@ -58,7 +86,7 @@ cp -R "$here/$KEXT" "$tmp/"
 
 # Put the image into the driver's personality as a base64 <data> property.
 perl -MMIME::Base64 -e '
-    my ($plist, $rom) = @ARGV;
+    my ($plist, $rom, $accel, $hwcursor, $dir) = @ARGV;
     local $/;
     open(my $p, "<", $plist) or die "$plist: $!";
     my $text = <$p>;
@@ -68,12 +96,29 @@ perl -MMIME::Base64 -e '
     my $data = encode_base64(<$r>, "");
     close($r);
     $text =~ s{\s*<key>VBIOS</key>\s*<data>.*?</data>}{}s;
-    $text =~ s{(\t*<key>IOProviderClass</key>)}{\t\t\t<key>VBIOS</key>\n\t\t\t<data>$data</data>\n$1}
+    my $extra = "\t\t\t<key>VBIOS</key>\n\t\t\t<data>$data</data>\n";
+    if ($accel) {
+        # The keys scripts/kext.sh adds for Quartz Extreme under QEMU.
+        $extra .= "\t\t\t<key>Accelerator</key>\n\t\t\t<true/>\n";
+        for my $fw (["FW_PFP", "TURKS_pfp.bin"], ["FW_ME", "TURKS_me.bin"]) {
+            open(my $f, "<", "$dir/$fw->[1]") or die "$fw->[1]: $!";
+            binmode($f);
+            my $blob = encode_base64(<$f>, "");
+            close($f);
+            $extra .= "\t\t\t<key>$fw->[0]</key>\n\t\t\t<data>$blob</data>\n";
+        }
+        $extra .= "\t\t\t<key>AccelCaps</key>\n\t\t\t<integer>3</integer>\n";
+        $extra .= "\t\t\t<key>AGPShim</key>\n\t\t\t<integer>3</integer>\n";
+        $extra .= "\t\t\t<key>Surfaces</key>\n\t\t\t<true/>\n";
+        $extra .= "\t\t\t<key>GAPlugin</key>\n\t\t\t<true/>\n";
+        $extra .= "\t\t\t<key>HWCursor</key>\n\t\t\t<true/>\n" if $hwcursor;
+    }
+    $text =~ s{(\t*<key>IOProviderClass</key>)}{$extra$1}
         or die "IOProviderClass not found in $plist\n";
     open($p, ">", $plist) or die "$plist: $!";
     print $p $text;
     close($p);
-' "$tmp/$KEXT/Contents/Info.plist" "$vbios"
+' "$tmp/$KEXT/Contents/Info.plist" "$vbios" "$accel" "$hwcursor" "$here"
 
 chown -R root:wheel "$tmp/$KEXT"
 chmod -R go-w "$tmp/$KEXT"
@@ -91,6 +136,12 @@ rm -rf "$tmp"
 rm -f /System/Library/Extensions.mkext /System/Library/Extensions.kextcache
 touch "$SLE"
 sync
+
+if [ "$accel" = 1 ]; then
+    echo
+    echo "Acceleration is ON: the 3D engine starts at boot."
+    echo "To go back to the plain framebuffer: sudo ./install.sh"
+fi
 
 cat <<'MSG'
 

@@ -10,6 +10,7 @@ Contents
   install.sh      installs it into /System/Library/Extensions
   uninstall.sh    removes it
   vbios.rom       the card's VBIOS image, if the package was built with it
+  TURKS_*.bin     the card's microcode, if the package was built with it
 
 Install
   1. Keep the Mac's existing graphics card as the main display.
@@ -19,6 +20,15 @@ Install
 
 The VBIOS image is required because the driver does not read the card's own
 ROM yet. It must be the image of the card that is in the Mac.
+
+Acceleration (experimental; never run on a real Mac)
+  sudo ./install.sh --accel       (add --hwcursor for the hardware cursor)
+  Restart. This starts the card's 3D engine at boot, for OpenGL and Quartz
+  Extreme. It needs TURKS_pfp.bin and TURKS_me.bin in this folder, and
+  RadeonNIGLDriver.bundle and RadeonNIGA.plugin in
+  /System/Library/Extensions. After each restart, "touch /tmp/rdngld.surface"
+  before starting an OpenGL program makes its window or full screen be drawn
+  by the card directly. To go back: sudo ./install.sh, and restart.
 
 What the driver does
   It initialises the card from cold (no x86 BIOS runs on a Mac), reads the

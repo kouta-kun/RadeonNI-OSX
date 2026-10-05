@@ -1930,3 +1930,23 @@ are the emulated G4's; the G5 has to rebuild them on its first boot.
 
 To write it: `sudo qemu-img convert -p -O raw images/tiger-g5.qcow2
 /dev/sdX`.
+
+## 2026-10-05 — The G5 runs with the card; an installer option for acceleration
+
+**Reported by the user:** the G5 runs with the Radeon (the image with the
+phase 1 kext). No log or details yet. The card is no longer in the host.
+
+**Done.** `g5/install.sh --accel [--hwcursor]` puts the same keys into
+the installed kext's personality that `scripts/kext.sh` adds under QEMU
+for Quartz Extreme (`Accelerator`, `FW_PFP`, `FW_ME`, `AccelCaps` 3,
+`AGPShim` 3, `Surfaces`, `GAPlugin`, optionally `HWCursor`);
+`scripts/make-g5-package.sh --with-firmware` packs the two microcode
+files. Checked in a guest without the card, started with `-snapshot` so
+that nothing stays on its disk: the installer accepts the kext, and the
+resulting `Info.plist` parses to exactly the personality `kext.sh`
+generates with `RDN_ACCEL=1 RDN_ACCELCAPS=3 RDN_AGPSHIM=3 RDN_GA=1
+RDN_SURFACES=1 RDN_HWCURSOR=1`.
+
+**Not tested anywhere:** the accelerator starting at boot from an
+installed kext (under QEMU it was always loaded after boot, followed by
+a window server restart), and all of it on the G5.

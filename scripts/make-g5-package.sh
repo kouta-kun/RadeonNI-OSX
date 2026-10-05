@@ -3,11 +3,13 @@
 # build/RadeonNI-g5.tar.gz, holding the kext as built in the running Tiger
 # guest plus g5/install.sh, g5/uninstall.sh and g5/README.txt.
 #
-#   scripts/make-g5-package.sh [--with-vbios]
+#   scripts/make-g5-package.sh [--with-vbios] [--with-firmware]
 #
 # --with-vbios also packs private/vbios.rom, so that install.sh needs no
-# argument. The VBIOS belongs to the card's vendor: a package built that way
-# is for your own machine, not for publishing.
+# argument. --with-firmware also packs the command processor's microcode
+# from firmware/, which install.sh --accel needs. Both belong to the card's
+# vendor: a package built that way is for your own machine, not for
+# publishing.
 
 set -euo pipefail
 
@@ -30,9 +32,13 @@ cp "$root/g5/install.sh" "$root/g5/uninstall.sh" "$root/g5/README.txt" "$root/LI
 chmod +x "$stage/install.sh" "$stage/uninstall.sh"
 git -C "$root" describe --tags --always --dirty > "$stage/VERSION"
 
-if [ "${1:-}" = --with-vbios ]; then
-    cp "$root/private/vbios.rom" "$stage/vbios.rom"
-fi
+for arg in "$@"; do
+    case "$arg" in
+    --with-vbios) cp "$root/private/vbios.rom" "$stage/vbios.rom" ;;
+    --with-firmware) cp "$root/firmware/TURKS_pfp.bin" "$root/firmware/TURKS_me.bin" "$stage/" ;;
+    *) echo "unknown option $arg" >&2; exit 1 ;;
+    esac
+done
 
 tar -C "$root/build" -czf "$out" RadeonNI-g5
 echo "$out"
