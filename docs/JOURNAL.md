@@ -965,3 +965,25 @@ write-back, no interrupt, no MC microcode. Video memory stays at GPU address
 both shader stages, texturing, rasterisation, colour write) work on this
 card under our code with everything in video memory. What the monitor
 shows is for the user to confirm; the readback says it is right.
+
+## 2026-10-05 — A2: Mesa version settled on the newest release (26.2.4)
+
+**Decision (user).** Use the newest Mesa. The user has seen endianness
+problems with this GPU on big-endian PowerPC Linux "until recently", so the
+fixes are in current releases.
+
+**What happened.** I had started on Mesa 21.3.9, chosen for an easier
+build (the old C shader backend, fewer dependencies), without doing the
+old-versus-current comparison the plan called for. It built on the host
+after two small fixes. Nothing version-specific had been written on top of
+it, so it was dropped.
+
+**Observed with 26.2.4.** Configures and builds on the host unmodified with
+`-Dgallium-drivers=r600,softpipe` and no window system (meson 1.12, GCC 16,
+mako and pyyaml in a private Python environment under `third_party/`).
+Differences that matter here: the off-screen (OSMesa) frontend no longer
+exists, so the project needs its own small frontend; the surface layout
+code from libdrm is now inside Mesa's radeon winsys; `r600` needs C++17.
+
+**Concluded.** Mesa 26.2.4 is the base. The C++17 requirement lands on the
+Tiger cross-compile in A3.

@@ -216,6 +216,9 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
   shim around Apple's software renderer, VMsvga2's MIT sources) and by
   reading disassembly to understand the interface. All code is written
   fresh. Findings go in `docs/GLD-INTERFACE.md`.
+- Mesa is the newest release (26.2.4 on 2026-10-05), not an older one that
+  would build more easily: the big-endian fixes for this GPU are recent
+  (user's decision).
 - Mesa and the GL bundle may be cross-compiled on the host. The GL bundle
   may be installed in the guest's `/System/Library/Extensions` if the
   framework only loads it from there.

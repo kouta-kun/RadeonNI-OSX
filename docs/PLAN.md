@@ -245,10 +245,10 @@ guest has no accelerated device.
    info, drawable).
 3. The window server's requirements for Quartz Extreme cannot be observed
    under QEMU.
-4. Mesa `r600` big-endian bugs. A2 tries one old release (TGSI shader
-   backend) and one current release and pins the better one.
-5. Tiger userland: no thread-local storage, missing libc functions, C++
-   runtime for newer Mesa.
+4. Mesa `r600` big-endian bugs. The newest release is used (26.2.4; user's
+   decision, 2026-10-05: the big-endian fixes for this GPU are recent).
+5. Tiger userland: no thread-local storage, missing libc functions, and a
+   C++17 compiler and runtime, which current Mesa `r600` requires.
 6. GDDR5 without the MC microcode under 3D load; load `TURKS_mc` if A1
    shows memory errors.
 7. TCG speed: fine for correctness, useless for judging performance.
