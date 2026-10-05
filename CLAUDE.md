@@ -176,6 +176,9 @@ Keep these current as part of the work, and commit small and often.
   `gld/RadeonNIGLDriver.bundle` in the guest and install it in the guest's
   `/System/Library/Extensions` (OpenGL loads it only from there). `log`
   shows every `gld*` call made to it (`/tmp/rdngld.log` in the guest).
+- `RDN_HWCURSOR=1` with `scripts/kext.sh up`: the card's hardware cursor
+  (`hw/rdn_cursor.c`) instead of `IOFramebuffer` drawing the cursor with
+  the CPU. Not yet confirmed on the monitor.
 - `scripts/ga.sh {build|install|uninstall}`: the 2D accelerator plug-in
   (`ga/RadeonNIGA.plugin`) the window server wants before it tries Quartz
   Extreme; built and installed in the guest like the GL bundle.

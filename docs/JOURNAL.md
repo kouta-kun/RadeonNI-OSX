@@ -1387,3 +1387,19 @@ flicker a little (the user is not sure it is not the display).
 cursor, which `IOFramebuffer` draws with the CPU into the surface the GPU
 copies over; a hardware cursor is the fix to try.
 
+## 2026-10-05 — Hardware cursor
+
+**Tried.** `hw/rdn_cursor.c` (after Linux's `radeon_cursor.c`: 64x64 ARGB
+overlay of CRTC 0, picture at 31 MB in video memory) and, in the kext,
+`getAttribute(kIOHardwareCursorAttribute)`, `setCursorImage` (through
+`convertCursorImage` with a 32-bit descriptor) and `setCursorState`,
+behind `RDN_HWCURSOR=1`.
+
+**Observed.** `IOFramebuffer` takes it: the first picture converts to
+32x32 and the calls succeed; Quartz Extreme still comes up. The overlay
+is not in the scanout surface, so it cannot be read back.
+
+**Not known until the user looks.** Whether the picture is right: I
+assumed the converted pixels are packed at the cursor's width and that
+their colours are already multiplied by alpha.
+
