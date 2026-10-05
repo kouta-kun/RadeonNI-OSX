@@ -1153,3 +1153,33 @@ real card: kext engine, user client, Mesa's r600 built for Tiger. What A3
 still needs is the top: the `gld*` bundle handing CGL contexts to Mesa
 instead of to Apple's software renderer. The user has not yet looked at
 the monitor for any of phase 2.
+
+## 2026-10-05 — A3: a CGL program in Tiger renders through Mesa on the card
+
+**Tried.** The driver bundle built on the host with Mesa inside
+(`mesa/target/meson.build`, `scripts/gld.sh install-mesa`): the `gld*`
+pass-through to Apple's software renderer stays, and at `gldInitDispatch`
+the application's GL table is filled with generated entry points
+(`gld/gen_dispatch.py`, from the SDK's `gliDispatch.h` at build time) that
+make the context's Mesa context current and call Mesa. Off-screen
+drawables only: Mesa renders on the card and copies into the buffer CGL
+was given, on flush.
+
+**Observed.**
+- 621 of the table's entries get a Mesa function.
+- First run: the picture was right, then a crash in `CGLDestroyContext`.
+  The running system's table is 684 entries, the SDK header's 686; the last
+  two writes landed on the CGL context's private fields. With the glue
+  limited to 684 the program exits cleanly.
+- `tools/guest/glprobe.c`, an ordinary CGL program linked against
+  OpenGL.framework, unmodified: `GL_VENDOR: Mesa`, `GL_RENDERER: AMD TURKS
+  (DRM 2.51.0 / 8.11.0)`, `GL_VERSION: 3.2 (Compatibility Profile) Mesa
+  26.2.4`; cleared to green, `glReadPixels` gives 0 255 0 255, and the
+  off-screen buffer itself holds `ff00ff00` ARGB words.
+
+**Concluded.** The route planned for phase 2 works end to end for an
+off-screen context: Apple's OpenGL framework, our bundle, Mesa's r600, the
+kext, the card. Open: windowed and full-screen drawables (A3's criterion
+and A4), the 63 Apple-only entry points, Apple-specific extension names
+that programs look for, more than one thread, and whether the engine ever
+puts its own entries back.

@@ -1,6 +1,12 @@
 /*
  * RadeonNIGLDriver: the OpenGL driver bundle of the Radeon HD 7570 driver.
  *
+ * Built two ways. In the guest, by gld/Makefile: the pass-through and call
+ * logger described below, for learning the interface. On the host, with
+ * RDN_MESA defined and linked with Mesa (mesa/target/meson.build): the
+ * same pass-through keeps Apple's engine supplied with a driver, while
+ * rdn_mesa.c gives each context's GL entry points to Mesa's r600.
+ *
  * Milestone A0 state: a pass-through. Every gld* entry point Tiger's
  * OpenGL expects from a driver bundle is forwarded to Apple's software
  * renderer, and each call is logged with its integer arguments and result,
@@ -91,6 +97,25 @@ static int ready;
  */
 static int patch = 1;
 
+#ifdef RDN_MESA
+#include <stdarg.h>
+#include "rdn_glue.h"
+
+void rdn_log(const char *fmt, ...)
+{
+	va_list ap;
+
+	if (!logf)
+		return;
+	fprintf(logf, "[%d] ", (int)getpid());
+	va_start(ap, fmt);
+	vfprintf(logf, fmt, ap);
+	va_end(ap);
+	fprintf(logf, "\n");
+	fflush(logf);
+}
+#endif
+
 static void setup(void)
 {
 	const char *path = getenv("RDN_GLD_LOG");
@@ -102,7 +127,12 @@ static void setup(void)
 	ready = 1;
 	if (getenv("RDN_GLD_PATCH"))
 		patch = atoi(getenv("RDN_GLD_PATCH"));
+#ifdef RDN_MESA
+	/* Logging every call is slow; with Mesa only when asked for. */
+	logf = path ? fopen(path, "a") : NULL;
+#else
 	logf = fopen(path ? path : DEFAULT_LOG, "a");
+#endif
 	handle = dlopen(REAL_BUNDLE, RTLD_NOW | RTLD_LOCAL);
 	if (logf)
 		fprintf(logf, "[%d] RadeonNIGLDriver loaded, software renderer %s\n",
@@ -150,6 +180,10 @@ static void describe(int idx, long a, long b, long c, long d, long ret)
 			dump("pixfmt*", a, 4);
 			dump("pixfmt", *(long *)a, 0x80);
 		}
+		break;
+	case IDX_gldAttachDrawable:
+		dump("drawable", c, 0x80);
+		dump("ctx", a, 0x60);
 		break;
 	case IDX_gldCreateShared:
 	case IDX_gldCreateContext:
@@ -221,7 +255,7 @@ static void scan(long table)
 }
 
 /* Changes made to what the software renderer answered. */
-static long adjust(int idx, long a, long b, long ret)
+static long adjust(int idx, long a, long b, long c, long ret)
 {
 	switch (idx) {
 	case IDX_gldGetRendererInfo:
@@ -244,13 +278,28 @@ static long adjust(int idx, long a, long b, long ret)
 		 * the CGL context object). 10.4.11, found by search.
 		 */
 		scan(b);
+#ifdef RDN_MESA
+		if (b)
+			rdn_mesa_dispatch((void *)a, (void *)b);
+#else
 		if (b)
 			take_over(*(GLIFunctionDispatch **)(b - APP_DISPATCH_BACK));
+#endif
 		break;
+#ifdef RDN_MESA
+	case IDX_gldCreateContext:
+		if (ret == 0 && a)
+			rdn_mesa_context_created(*(void **)a);
+		break;
+	case IDX_gldAttachDrawable:
+		rdn_mesa_attach((void *)a, b, (const void *)c);
+		break;
+#else
 	case IDX_gldGetString:
 		if (b == GL_RENDERER)
 			return (long)RDN_RENDERER_STRING;
 		break;
+#endif
 	}
 	return ret;
 }
@@ -276,6 +325,11 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		*(long *)b = SOFTWARE_RENDERER_ID;
 		restore_id = 1;
 	}
+#ifdef RDN_MESA
+	/* Mesa's context goes before the software renderer's own. */
+	if (idx == IDX_gldDestroyContext)
+		rdn_mesa_context_destroyed((void *)a);
+#endif
 	if (real[idx])
 		ret = real[idx](a, b, c, d, e, f, g, h);
 	if (restore_id)
@@ -285,11 +339,13 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		fflush(logf);
 	}
 	describe(idx, a, b, c, d, ret);
-	ret = adjust(idx, a, b, ret);
+	ret = adjust(idx, a, b, c, ret);
 	return ret;
 }
 
 #define X(name) \
+	__attribute__((visibility("default"))) \
+	long name(long a, long b, long c, long d, long e, long f, long g, long h); \
 	long name(long a, long b, long c, long d, long e, long f, long g, long h) \
 	{ \
 		return forward(IDX_##name, a, b, c, d, e, f, g, h); \

@@ -61,7 +61,7 @@ static int draw(long renderer)
 	CGLPixelFormatObj pix = NULL;
 	CGLContextObj ctx = NULL;
 	long npix = 0;
-	int n = 0, w = 64, h = 64;
+	int n = 0, w = 96, h = 64;
 	unsigned char *buf, px[4] = { 0, 0, 0, 0 };
 	CGLError err;
 
@@ -84,7 +84,8 @@ static int draw(long renderer)
 		return 1;
 	buf = calloc(w * h, 4);
 	err = CGLSetOffScreen(ctx, w, h, w * 4, buf);
-	printf("CGLSetOffScreen: err %d\n", err);
+	printf("CGLSetOffScreen: err %d (%dx%d, rowbytes %d, buffer %p)\n", err,
+	       w, h, w * 4, (void *)buf);
 	CGLSetCurrentContext(ctx);
 
 	/* The context object is public: where its GL dispatch table is. */
@@ -105,6 +106,10 @@ static int draw(long renderer)
 	       px[0], px[1], px[2], px[3], (unsigned)glGetError());
 
 	printf("after drawing: clear %p\n", (void *)ctx->disp.clear);
+	/* Where the picture is in the buffer: a few raw pixels. */
+	printf("buffer: first row %08x %08x, last row %08x, middle %08x\n",
+	       ((unsigned *)buf)[0], ((unsigned *)buf)[1],
+	       ((unsigned *)buf)[(h - 1) * w], ((unsigned *)buf)[(h / 2) * w + w / 2]);
 
 	CGLSetCurrentContext(NULL);
 	CGLDestroyContext(ctx);

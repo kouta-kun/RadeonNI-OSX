@@ -57,3 +57,34 @@ executable(
   dependencies : rdn_deps,
   install : false,
 )
+
+# The OpenGL driver bundle for Mac OS X: Apple's driver interface on the
+# outside (gld/RadeonNIGLDriver.c), Mesa inside. The dispatch glue is
+# generated from the SDK's header, at the place the toolchain container
+# has it. scripts/gld.sh puts the result into a bundle in the guest.
+if host_machine.system() == 'darwin'
+  rdn_dispatch_c = custom_target(
+    'rdn_dispatch_gen.c',
+    input : 'gld/gen_dispatch.py',
+    output : 'rdn_dispatch_gen.c',
+    command : [
+      prog_python, '@INPUT@',
+      '/usr/local/MacOSX10.4u.sdk/System/Library/Frameworks/OpenGL.framework/Headers/gliDispatch.h',
+      '@OUTPUT@',
+    ],
+  )
+  shared_module(
+    'RadeonNIGLDriver',
+    files('gld/RadeonNIGLDriver.c', 'gld/rdn_mesa.c'), rdn_dispatch_c,
+    rdn_sources,
+    c_args : ['-DRDN_MESA'],
+    gnu_symbol_visibility : 'hidden',
+    include_directories : [rdn_inc, include_directories('gld')],
+    link_args : rdn_device_link_args,
+    link_whole : rdn_link_whole,
+    link_with : rdn_link_with,
+    dependencies : rdn_deps,
+    name_prefix : '',
+    install : false,
+  )
+endif

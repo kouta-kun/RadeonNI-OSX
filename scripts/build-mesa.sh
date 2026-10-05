@@ -52,9 +52,10 @@ for d in src/gallium/winsys/rdn src/gallium/frontends/rdn src/gallium/targets/rd
 done
 rsync -a --delete "$root/mesa/winsys/" src/gallium/winsys/rdn/
 rsync -a --delete "$root/mesa/frontend/" src/gallium/frontends/rdn/
-rsync -a --delete --exclude hw --exclude tests "$root/mesa/target/" src/gallium/targets/rdn/
+rsync -a --delete --exclude hw --exclude tests --exclude gld "$root/mesa/target/" src/gallium/targets/rdn/
 rsync -a --delete "$root/hw/" src/gallium/targets/rdn/hw/
 rsync -a --delete "$root/mesa/tests/" src/gallium/targets/rdn/tests/
+rsync -a --delete --exclude build "$root/gld/" src/gallium/targets/rdn/gld/
 
 common=(-Drdn=true -Dgallium-drivers=r600,softpipe -Dvulkan-drivers=
     -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dllvm=disabled

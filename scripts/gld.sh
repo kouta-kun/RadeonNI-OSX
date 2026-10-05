@@ -3,6 +3,9 @@
 #
 #   scripts/gld.sh build      copy gld/ to the guest and build
 #   scripts/gld.sh install    copy the bundle to /System/Library/Extensions
+#   scripts/gld.sh install-mesa
+#                             install the host-built bundle that has Mesa
+#                             inside instead (see scripts/build-mesa.sh)
 #   scripts/gld.sh uninstall  remove it from there
 #   scripts/gld.sh log        the bundle's call log
 #   scripts/gld.sh clearlog
@@ -29,6 +32,18 @@ install)
         sudo cp -R ~/osx-gpu-gld/gld/build/$NAME.bundle $SLE/ &&
         sudo chown -R root:wheel $SLE/$NAME.bundle && sudo chmod -R go-w $SLE/$NAME.bundle &&
         sudo sync && ls -ld $SLE/$NAME.bundle"
+    ;;
+install-mesa)
+    # The bundle with Mesa inside, cross-built on the host
+    # (scripts/build-mesa.sh darwin src/gallium/targets/rdn/RadeonNIGLDriver.dylib).
+    bin=$(ls "$root"/third_party/mesa-*/build-darwin/src/gallium/targets/rdn/$NAME.dylib | tail -n 1)
+    [ -s "$bin" ] || { echo "build the bundle first" >&2; exit 1; }
+    gssh "rm -rf /tmp/$NAME.bundle && mkdir -p /tmp/$NAME.bundle/Contents/MacOS &&
+        cat > /tmp/$NAME.bundle/Contents/Info.plist" < "$root/gld/Info.plist"
+    gssh "cat > /tmp/$NAME.bundle/Contents/MacOS/$NAME && chmod 755 /tmp/$NAME.bundle/Contents/MacOS/$NAME &&
+        sudo rm -rf $SLE/$NAME.bundle && sudo cp -R /tmp/$NAME.bundle $SLE/ &&
+        sudo chown -R root:wheel $SLE/$NAME.bundle && sudo chmod -R go-w $SLE/$NAME.bundle &&
+        sudo sync && ls -l $SLE/$NAME.bundle/Contents/MacOS/" < "$bin"
     ;;
 uninstall)
     gssh "sudo rm -rf $SLE/$NAME.bundle && sudo sync && echo removed"

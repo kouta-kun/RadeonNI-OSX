@@ -61,10 +61,35 @@ Calls seen for an off-screen context, in order, with what the arguments are:
   `gldUpdateDispatch` time, works: the application's `glClear` reaches our
   function, and the entry was still ours after drawing.
 
+## Off-screen drawables [V]
+
+`gldAttachDrawable(ctx, 0x35, drawable, ...)` for `CGLSetOffScreen`: the
+third argument points at a record that begins with width, height, row
+bytes and base address, each a 32-bit word. The buffer holds 32-bit ARGB
+pixels in host byte order.
+
+## Giving a context to Mesa [V, 2026-10-05]
+
+- The application's table in 10.4.11 has **684** entries, two fewer than the
+  10.4u SDK's header declares (`program_env_parameters4fv_EXT` and
+  `program_local_parameters4fv_EXT` are not there). The CGL context's
+  private fields follow the table directly: writing entries 685 and 686
+  corrupts them, and `CGLDestroyContext` then crashes.
+- With every one of the 684 entries that Mesa has a function for (621)
+  replaced at `gldInitDispatch` time, an unmodified CGL program (create
+  context, `CGLSetOffScreen`, clear, `glFinish`, `glReadPixels`, destroy)
+  runs on Mesa's r600: `GL_RENDERER` is Mesa's, the buffer holds the
+  GPU's picture, and the program exits cleanly. The software renderer
+  underneath keeps receiving the engine's lifecycle calls.
+- The 63 entries Mesa lacks are Apple's own extensions (vertex array
+  range, element array, fences, texture range and the like) and stay the
+  engine's.
+
 ## Not known yet
 
-- Whether the engine rewrites entries of `disp` during longer use (state
-  changes, `glBegin`/`glEnd`), which would undo a takeover of all 686.
+- Whether the engine rewrites entries of `disp` during longer use. It
+  cannot do so from inside a GL call any more (none reaches it), but it
+  may at lifecycle events; only a short program has been run.
 - How to carry a renderer ID of our own through the pixel format: with word 1
   of the pixel format changed, `CGLCreateContext` fails with
   `kCGLBadPixelFormat` before any driver call.
