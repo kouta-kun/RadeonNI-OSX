@@ -26,8 +26,9 @@ are next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
 is blocked: the Tiger guest is ready (10.4.11, Xcode 2.5, snapshot
 `clean-install`, user `tiger` / password `tiger`, `scripts/tiger.sh ssh`),
 but the first passthrough run oopsed the host kernel during vfio INTx
-setup. The host needs a reboot, and the user has to decide how to keep the
-stock `radeon` driver off the card at boot. Read the last JOURNAL entry.
+setup. `radeon` is now blacklisted on the host
+(`/etc/modprobe.d/osx-gpu.conf`); the host still needs the reboot that makes
+that effective and clears the damaged kernel. Read the last JOURNAL entries.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -119,8 +120,8 @@ The host is the user's server, reached over ssh. Stop and ask before:
 - Writing to the card's flash. Nothing is ever flashed.
 - Abandoning a design decision below.
 
-Bind the 7570 at runtime with sysfs `driver_override`; no persistent host
-configuration. Tell the user as soon as something needs them physically.
+Bind the 7570 at runtime with sysfs `driver_override`. The only persistent
+host configuration is the user-approved `blacklist radeon` file. Tell the user as soon as something needs them physically.
 
 ## Design decisions (settled by the user)
 

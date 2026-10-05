@@ -405,3 +405,12 @@ needed for kexts, snapshotted, then `scripts/card-bind.sh vfio`,
   required). If it is wrong, INTx passthrough of this card is broken on its
   own and the guest should be started without the interrupt.
 - Milestone 1's passthrough test has not produced any result yet.
+
+## 2026-10-04 — radeon blacklisted on the host
+
+The user chose the blacklist. Wrote `/etc/modprobe.d/osx-gpu.conf`
+(`blacklist radeon`). `lsinitcpio` shows the initramfs contains `amdgpu.ko`
+but not `radeon.ko`, so no initramfs rebuild is involved. `modprobe -c`
+lists the blacklist. Takes effect at the next host boot, which is pending.
+To verify after boot: `radeon` not loaded, `0000:10:00.0` without a driver,
+card un-POSTed.

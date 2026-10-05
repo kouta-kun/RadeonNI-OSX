@@ -71,14 +71,24 @@ OpenBIOS prompt on serial and its PCI bus is `/pci@f2000000` with `mac-io`,
     scripts/card-bind.sh none      # driverless, for the milestone 2 tool
     scripts/card-bind.sh radeon    # back to the stock drivers
 
-No persistent host configuration: the script uses sysfs `driver_override` on
+One persistent host change exists, approved by the user on 2026-10-04:
+`/etc/modprobe.d/osx-gpu.conf` contains `blacklist radeon`, so the stock
+driver never binds to the card (unbinding it is the suspected cause of the
+host oops below). The initramfs holds `amdgpu` only, not `radeon`, so the
+blacklist takes effect through udev without regenerating it. Delete the file
+to undo. After a boot, check `lsmod | grep radeon` is empty before touching
+the card; `snd_hda_intel` still takes the audio function and is unbound by
+the script.
+
+Beyond that the script uses sysfs `driver_override` on
 both functions, releases fbcon first, and refuses to act on anything that is
 not `1002:675d` or that is the boot VGA. `vfio`, `none` and `status` have been run; `radeon` has not.
 
-At every host boot the stock `radeon` auto-binds about 60 s in, POSTs the
-card and puts fbcon on it. Unbinding it logs two kernel WARNs
-(`irq_domain_remove`, `msi_device_data_release`) and taints the kernel with
-W; nothing else was affected.
+Before the blacklist, the stock `radeon` auto-bound about 60 s into every
+host boot, POSTed the card and put fbcon on it. Unbinding it logged two kernel WARNs
+(`irq_domain_remove`, `msi_device_data_release`) and tainted the kernel with
+W. With the blacklist the card stays un-POSTed and driverless after boot,
+and the monitor shows nothing until our code drives it.
 
 ## Known host hazard: kernel oops on INTx setup (2026-10-04)
 
