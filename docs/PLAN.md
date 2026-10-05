@@ -10,7 +10,7 @@ wherever its criterion involves video output.
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | **Done 2026-10-04**: `IOPCIDevice` with BAR0/BAR2 assigned; a probe kext reads the registers through BAR2 (needs the QEMU PCI-hole patch) |
-| 2 | Cold POST and modeset from Linux userspace | In progress: cold POST works on the real card and VRAM is usable without microcode; EDID and modeset not started |
+| 2 | Cold POST and modeset from Linux userspace | In progress: cold POST and EDID over DDC work on the real card with our code; VRAM usable without microcode; modeset not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Skeleton only: probe kext builds in the guest, loads by hand, matches the card and reads registers |
 
 ## Needed from the user
@@ -96,7 +96,8 @@ monitor's native resolution (user confirms).
    - Done: interpreter (`hw/atom/`), bring-up (`hw/rdn_post.c`), verified
      against the reference trace without hardware and then on the card
      (`tools/rdn_tool.c`), with and without the I/O BAR.
-   - Next: EDID over DDC, then the DCE5 modeset for the DVI-I digital
+   - Done: EDID over DDC (`hw/rdn_i2c.c`), identical to the EDID Linux read.
+   - Next: the DCE5 modeset for the DVI-I digital
      output, validated by replay against trace phases `a3`/`a4` before it
      runs on the card. Then the test pattern and the user's visual check.
 4. Big-endian test: build for PowerPC Linux, run under `qemu-ppc` against the

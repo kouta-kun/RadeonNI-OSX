@@ -88,6 +88,13 @@ The memory behind the 256 MB aperture reads back correctly in this state,
 with no MC microcode loaded. The I/O BAR is not required: `ASIC_Init` also
 works with AtomBIOS indirect I/O routed through MMIO.
 
+## I2C lines (VBIOS GPIO_I2C_Info)
+
+Eight entries, ids 0x90-0x97, mask registers 0x6430, 0x6440, 0x6450, 0x6460,
+0x6470, 0x6480, 0x6560, 0x64d8. The DVI-I connector's DDC is id 0x93 (mask
+0x6460, enable 0x6468, read-back 0x646c; clock is bit 0, data bit 8). The
+DisplayPort connector uses id 0x92 with the AUX channel.
+
 ## Still unknown
 
 - Whether the panel is physically 1366x768 or 1920x1080.

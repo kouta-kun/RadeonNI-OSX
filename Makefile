@@ -18,10 +18,10 @@ CFLAGS_COMMON = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter
 CFLAGS_UPSTREAM = $(CFLAGS_COMMON) -Wno-sign-compare -Wno-type-limits \
 	-Wno-unused-variable -Wno-unused-but-set-variable
 
-HW_OBJS   = hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
+HW_OBJS   = hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
 HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h)
 
-TESTS     = atom_replay
+TESTS     = atom_replay i2c_edid
 
 X86_TESTS = $(addprefix build/x86/,$(TESTS))
 PPC_TESTS = $(addprefix build/ppc/,$(TESTS))
@@ -61,18 +61,22 @@ build/ppc/%: build/ppc/tests/%.o $(addprefix build/ppc/,$(HW_OBJS))
 .SECONDARY:
 
 # The inputs are not in the repository (VBIOS dump, reference trace). Without
-# them the test is skipped, loudly.
+# them the tests are skipped, loudly. Each test runs natively and under
+# qemu-ppc; the two outputs must be identical and end in a PASS line.
+run_test = \
+	x86=$$(build/x86/$(1) $(2)); ppc=$$($(QEMU_PPC) build/ppc/$(1) $(2)); \
+	echo "x86 $(1): $$(echo "$$x86" | tail -1)"; \
+	echo "ppc $(1): $$(echo "$$ppc" | tail -1)"; \
+	[ "$$x86" = "$$ppc" ] || { echo "FAIL $(1): x86 and ppc differ"; exit 1; }; \
+	case "$$(echo "$$x86" | tail -1)" in PASS*) ;; *) echo "$$x86"; exit 1 ;; esac
+
 test: all
 	@if [ ! -f $(VBIOS) ] || [ ! -f $(REF_PHASE) ]; then \
-		echo "SKIP atom_replay: need $(VBIOS) and $(REF_PHASE)"; \
+		echo "SKIP: need $(VBIOS) and $(REF_PHASE)"; \
 	else \
 		set -e; \
-		x86=$$(build/x86/atom_replay $(VBIOS) $(REF_PHASE)); \
-		echo "x86: $$x86"; \
-		ppc=$$($(QEMU_PPC) build/ppc/atom_replay $(VBIOS) $(REF_PHASE)); \
-		echo "ppc: $$ppc"; \
-		[ "$$x86" = "$$ppc" ] || { echo "FAIL: x86 and ppc differ"; exit 1; }; \
-		case "$$x86" in PASS*) ;; *) exit 1 ;; esac; \
+		$(call run_test,atom_replay,$(VBIOS) $(REF_PHASE)); \
+		$(call run_test,i2c_edid,$(VBIOS)); \
 	fi
 
 clean:

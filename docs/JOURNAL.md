@@ -514,3 +514,34 @@ Makefile (`scripts/kext.sh build`), loaded with `kextload` from `/tmp`.
   the BAR anyway. If something later depends on those, OpenBIOS and the
   bridge register need the matching change.
 - The in-guest build loop works and takes seconds.
+
+## 2026-10-04 — EDID over DDC with our code
+
+**Tried.** `hw/rdn_i2c.c`: I2C line lookup from the VBIOS `GPIO_I2C_Info`
+table (read with byte accessors, not through the packed struct), pin
+handling ported from Linux `radeon_i2c.c`, and a bit-banged I2C master
+written from the I2C specification (Linux's `i2c-algo-bit` is GPL and was
+not used). `tests/i2c_edid.c` attaches a simulated EDID EEPROM to each line.
+Then on the card: `card-bind.sh none`, `card-reset.sh`, `rdn_tool post`,
+`rdn_tool edid`.
+
+**Observed.**
+
+- The reference trace shows Linux bit-banging DDC on the DVI connector
+  through registers 0x6460-0x646c (22656 accesses to 0x6468 for one probe);
+  the DisplayPort connector uses the AUX channel at 0x62a0.
+- The VBIOS lists 8 I2C lines, ids 0x90-0x97, all marked hardware-capable.
+- Simulated test: 256-byte EDID read correctly on all 8 lines, a line with
+  no device fails with -ENXIO, pins are released afterwards. Same output on
+  x86 and PowerPC.
+- Real card, cold-POSTed by our code: line 3 (id 0x93, registers 0x6460)
+  returns a 256-byte EDID, preferred mode 1366x768. `cmp` against
+  `private/monitor-edid.bin`, which the Linux driver read: identical.
+- The other lines: -ENXIO (no acknowledge) on three, -ETIMEDOUT (clock never
+  rises) on four. The four that time out have no pull-up because nothing is
+  connected there.
+
+**Concluded.** DDC works with our code on the real hardware. The DVI
+connector's DDC line is id 0x93, matching the registers Linux reported for
+it. A probe of an unconnected line costs up to 50 ms in the clock-stretch
+timeout.

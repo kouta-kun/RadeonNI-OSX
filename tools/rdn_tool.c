@@ -5,6 +5,8 @@
  *   rdn_tool [options] status      report POST state (read-only)
  *   rdn_tool [options] post        bring the card up (ASIC_Init if needed)
  *   rdn_tool [options] vramtest    write/read patterns through the aperture
+ *   rdn_tool [options] edid [file] probe every DDC line for an EDID; save
+ *                                  the first one found to file
  *
  * Options:
  *   -s <addr>    PCI address (default 0000:10:00.0)
@@ -32,6 +34,7 @@
 #include <unistd.h>
 
 #include "../hw/rdn_card.h"
+#include "../hw/rdn_i2c.h"
 #include "../hw/rdn_reg.h"
 
 #define MMIO_SIZE	0x20000
@@ -328,6 +331,40 @@ static int vram_test(struct linux_card *lc)
 	return bad ? 1 : 0;
 }
 
+/* Probe every I2C line the VBIOS lists; a display answers with its EDID. */
+static int edid_probe(struct rdn_card *card, const char *save)
+{
+	uint8_t edid[RDN_EDID_MAX_SIZE];
+	struct rdn_i2c_bus bus;
+	int i, r, found = 0;
+	FILE *f;
+
+	for (i = 0; rdn_i2c_bus_by_index(card, i, &bus); i++) {
+		if (!bus.valid)
+			continue;
+		r = rdn_edid_read(card, &bus, edid);
+		if (r < 0) {
+			printf("line %d (id %02x, regs %04x): no EDID (%d)\n", i,
+			       bus.i2c_id, (unsigned)bus.mask_clk_reg, r);
+			continue;
+		}
+		printf("line %d (id %02x, regs %04x): EDID, %d bytes, "
+		       "preferred mode %ux%u\n", i, bus.i2c_id,
+		       (unsigned)bus.mask_clk_reg, r,
+		       edid[56] | ((edid[58] >> 4) << 8),
+		       edid[59] | ((edid[61] >> 4) << 8));
+		if (save && !found) {
+			f = fopen(save, "wb");
+			if (!f || fwrite(edid, 1, r, f) != (size_t)r)
+				perror(save);
+			if (f)
+				fclose(f);
+		}
+		found++;
+	}
+	return found ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
 	const char *addr = "0000:10:00.0", *bios_file = NULL, *trace = NULL;
@@ -350,7 +387,7 @@ int main(int argc, char **argv)
 	}
 	if (optind >= argc) {
 		fprintf(stderr, "usage: %s [-s addr] [-b vbios] [-t trace] [-n] "
-			"status|post|vramtest\n", argv[0]);
+			"status|post|vramtest|edid [file]\n", argv[0]);
 		return 2;
 	}
 	cmd = argv[optind];
@@ -425,6 +462,8 @@ int main(int argc, char **argv)
 		}
 		printf("post returned %d\n", ret);
 		print_status(&card);
+	} else if (!strcmp(cmd, "edid")) {
+		ret = edid_probe(&card, optind + 1 < argc ? argv[optind + 1] : NULL);
 	} else if (!strcmp(cmd, "vramtest")) {
 		print_status(&card);
 		ret = vram_test(&lc);
