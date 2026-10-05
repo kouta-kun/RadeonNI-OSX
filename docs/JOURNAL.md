@@ -754,3 +754,19 @@ one connection. Loaded with `kextload` into the running guest.
 **Concluded.** Mode switching works from System Preferences once the
 framebuffer memory range does not depend on the mode. What the monitor shows
 at 1920x1080 is for the user to confirm.
+
+## 2026-10-04 — 1080p confirmed; all six mode and depth combinations switched
+
+- The user confirms the desktop at 1920x1080 "looking perfect", with the
+  display settings window on it.
+- `tools/guest/cgmode.c`, built in the guest, lists and switches modes
+  through Quartz Display Services and can move the cursor to a display.
+  Quartz lists six modes for the 7570: 1366x768 and 1920x1080, each at 8, 16
+  and 32 bpp.
+- Switched through all six in turn (1366x768 at 32/16/8, 1920x1080 at
+  8/16/32): every `CGDisplaySwitchToMode` returned 0, every `rdn_modeset`
+  returned 0, the window server process survived throughout, host kernel
+  untainted. When a switch changes resolution and depth together the window
+  server goes through an intermediate 32 bpp mode.
+- What each of these looked like on the monitor, and whether the cursor is
+  visible there, is for the user to say.
