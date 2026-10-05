@@ -105,11 +105,14 @@ struct osmesa_buffer
    void *map;
 
    /*
-    * OSMesaMakeCurrentDirect: the front buffer is this surface of the
-    * device, imported with resource_from_handle, and nothing is copied.
+    * OSMesaMakeCurrentDirect: what is drawn is shown on this surface of
+    * the device, imported with resource_from_handle. The context draws on
+    * a texture of its own and the GPU copies from it when the context is
+    * flushed, so that nothing half drawn is ever shown.
     */
    bool direct;
    unsigned direct_handle, direct_stride, direct_offset;
+   struct pipe_resource *direct_res;
 
    struct osmesa_buffer *next;  /**< next in linked list */
 };
@@ -398,9 +401,33 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
    if (statt != ST_ATTACHMENT_FRONT_LEFT)
       return false;
 
-   /* Drawn where it is shown. */
-   if (osbuffer->direct)
+   if (osbuffer->direct) {
+      struct pipe_context *pipe = osmesa->st->pipe;
+      struct pipe_box box;
+
+      if (!osbuffer->direct_res)
+         return false;
+      if (osmesa->num_rects > 0) {
+         for (int i = 0; i < osmesa->num_rects; i++) {
+            const GLint *r = osmesa->rects + i * 4;
+            int x0 = MAX2(r[0], 0), y0 = MAX2(r[1], 0);
+            int x1 = MIN2(r[0] + r[2], (int)osbuffer->width);
+            int y1 = MIN2(r[1] + r[3], (int)osbuffer->height);
+
+            if (x1 <= x0 || y1 <= y0)
+               continue;
+            u_box_2d(x0, y0, x1 - x0, y1 - y0, &box);
+            pipe->resource_copy_region(pipe, osbuffer->direct_res, 0, x0, y0,
+                                       0, res, 0, &box);
+         }
+      } else {
+         u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
+         pipe->resource_copy_region(pipe, osbuffer->direct_res, 0, 0, 0, 0,
+                                    res, 0, &box);
+      }
+      pipe->flush(pipe, NULL, 0);
       return true;
+   }
 
    /* Snapshot the color buffer to the user's buffer. */
    bpp = util_format_get_blocksize(osbuffer->visual.color_format);
@@ -480,7 +507,8 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       templat.format = format;
       templat.bind = bind;
       pipe_resource_reference(&out[i], NULL);
-      if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT) {
+      if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT &&
+          !osbuffer->direct_res) {
          struct winsys_handle whandle;
 
          memset(&whandle, 0, sizeof(whandle));
@@ -488,10 +516,9 @@ osmesa_st_framebuffer_validate(struct st_context *st,
          whandle.handle = osbuffer->direct_handle;
          whandle.stride = osbuffer->direct_stride;
          whandle.offset = osbuffer->direct_offset;
-         out[i] = osbuffer->textures[statts[i]] =
+         osbuffer->direct_res =
             screen->resource_from_handle(screen, &templat, &whandle,
                                          PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
-         continue;
       }
       out[i] = osbuffer->textures[statts[i]] =
          screen->resource_create(screen, &templat);
@@ -536,6 +563,7 @@ osmesa_destroy_buffer(struct osmesa_buffer *osbuffer)
     * is no longer valid.
     */
    st_api_destroy_drawable(&osbuffer->base);
+   pipe_resource_reference(&osbuffer->direct_res, NULL);
 
    FREE(osbuffer);
 }

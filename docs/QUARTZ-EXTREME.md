@@ -115,15 +115,20 @@ call with its arguments; that is where the list above comes from.
   answers an application).
 - The kext keeps each surface's region; the accelerator user client hands
   it out (`RDN_UC_SURFACE_REGION`).
-- Mesa draws on the screen's own surface: the winsys imports it as a
-  linear render target (`RDN_WINSYS_HANDLE_SCREEN`), our copy of the
-  off-screen front end binds it with nothing to copy
-  (`OSMesaMakeCurrentDirect`), and because the window server's window
-  coordinates start at the corner of the region's bounding box, the
-  bundle adds that corner to x and y of `glViewport`, `glScissor`,
+- Mesa draws each update on a screen-sized surface of its own, and when
+  the window server flushes, the GPU copies the region's rectangles from
+  there to the screen's surface, which the winsys imports as a linear
+  render target (`RDN_WINSYS_HANDLE_SCREEN`, `OSMesaMakeCurrentDirect` in
+  our copy of the off-screen front end). Because the window server's
+  window coordinates start at the corner of the region's bounding box,
+  the bundle adds that corner to x and y of `glViewport`, `glScissor`,
   `glReadPixels`, `glCopyPixels` and the `glCopyTex*` calls
-  (`gld/gen_dispatch.py`). The window server draws only inside the
-  region, so nothing else is needed.
+  (`gld/gen_dispatch.py`).
+- Drawing on the visible surface itself also works and was tried first,
+  but the window server builds an update in steps (background, then each
+  window), and the steps showed: the user saw Exposé flicker, and a
+  recording had frames with a window in two places. `GL_FRONT` for the
+  window server means the surface, which is only shown on flush.
 - With `/tmp/rdngld.copy` in the guest the older way is used instead:
   Mesa draws a bounding box off-screen and the CPU copies the region's
   rectangles to the screen when the context is flushed

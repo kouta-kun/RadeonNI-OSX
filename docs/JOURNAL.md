@@ -1358,3 +1358,21 @@ change to Mesa was needed beyond the winsys import. The copying path
 stays behind `/tmp/rdngld.copy`. The cursor is the open question, and it
 needs the user's eyes.
 
+## 2026-10-05 — User on the monitor: Quartz Extreme works, Exposé flickered; fixed by copying on flush
+
+**Observed by the user.** Desktop and windows fine, a Finder window
+dragged from the emulated display onto the 7570's shows no corruption,
+Exposé works but flickers (recording, 60 fps). The cursor could not be
+tested: VNC only reaches the emulated display.
+
+**Analysis.** Frames of the recording show a window at its old and its new
+place at once: updates were visible while being built, because Mesa drew
+on the scanout surface.
+
+**Tried.** Mesa draws on its own screen-sized surface; at `glFlush` the
+GPU copies the region's rectangles to the scanout
+(`resource_copy_region`).
+
+**Observed.** Readback correct after eight window moves (337 command
+buffers in 5 s). Not yet seen by the user.
+

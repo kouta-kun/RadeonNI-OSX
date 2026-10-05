@@ -237,8 +237,9 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 		 * of the box around it must stay as it is on the screen.
 		 */
 		for (i = 0; i < count; i++) {
-			c->screen_rect[i][0] = rects[i][0] - b[0];
-			c->screen_rect[i][1] = rects[i][1] - b[1];
+			/* Screen coordinates when drawing direct. */
+			c->screen_rect[i][0] = rects[i][0] - (screen_direct() ? 0 : b[0]);
+			c->screen_rect[i][1] = rects[i][1] - (screen_direct() ? 0 : b[1]);
 			c->screen_rect[i][2] = rects[i][2];
 			c->screen_rect[i][3] = rects[i][3];
 		}
@@ -339,6 +340,20 @@ void rdn_make_current(void *rend)
 		}
 		rdn_origin_x = c->origin_x;
 		rdn_origin_y = c->origin_y;
+		/* What is shown when the context is flushed: the region. */
+		if (c->screen_rects) {
+			OSMesaReadbackRects(c->mesa, (GLint)c->screen_rects,
+					    &c->screen_rect[0][0]);
+		} else {
+			GLint box[4];
+
+			box[0] = c->origin_x;
+			box[1] = (GLint)c->screen_height - c->origin_y -
+				 (GLint)c->screen.height;
+			box[2] = (GLint)c->screen.width;
+			box[3] = (GLint)c->screen.height;
+			OSMesaReadbackRects(c->mesa, 1, box);
+		}
 		c->drawable = d;
 		c->bound = 1;
 		rdn_current_rend = rend;
