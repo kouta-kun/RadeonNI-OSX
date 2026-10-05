@@ -176,7 +176,7 @@ static int dev_submit(struct rdn_device *dev, uint64_t offset, uint32_t words,
 
 		/* The first words, as the bytes lie in video memory. */
 		fprintf(stderr, "rdn: submit %u words at 0x%llx, swap %d -> %d, fence %u\n   ",
-			(unsigned)words, (unsigned long long)offset, swap, r,
+			(unsigned)words, (unsigned long long)offset, (int)d->accel.swapped, r,
 			(unsigned)*fence);
 		for (i = 0; i < 32 && i < words * 4; i++)
 			fprintf(stderr, "%02x%s", p[i], (i & 3) == 3 ? " " : "");

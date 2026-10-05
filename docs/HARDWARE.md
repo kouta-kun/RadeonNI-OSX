@@ -115,3 +115,7 @@ DisplayPort connector uses id 0x92 with the AUX channel.
   scanout surface; without it half of the pixel columns are not written.
 - `evergreen_gpu_init()` gives tile_config 0x22, backend_map 0x1100, 6
   active SIMDs.
+- Command byte order: the ring (`BUF_SWAP_32BIT` in `CP_RB_CNTL`) and each
+  indirect buffer (swap field 2 in the low bits of its address) must be
+  swapped together or not at all. A mismatch hangs the command processor;
+  starting it again recovers.

@@ -1,7 +1,7 @@
 /*
  * First OpenGL through Mesa on the osx-gpu winsys (Linux host).
  *
- *   rdn_gltest [-n frames] [-a angle] [-b rrggbb] [-o file.ppm]
+ *   rdn_gltest [-n frames] [-a angle] [-b rrggbb] [-D] [-o file.ppm]
  *              [-s width height pitch]
  *
  * Renders with fixed-function OpenGL into an off-screen buffer: a clear to
@@ -58,6 +58,8 @@
 	X(void, BindTexture, (GLenum, GLuint)) \
 	X(void, TexParameteri, (GLenum, GLenum, GLint)) \
 	X(void, TexImage2D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *)) \
+	X(void, ReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *)) \
+	X(void, Scissor, (GLint, GLint, GLsizei, GLsizei)) \
 	X(void, Finish, (void))
 
 #define X(ret, name, args) static ret (*rgl##name) args;
@@ -76,6 +78,8 @@ static int load_gl(void)
 
 /* Background colour, 0xRRGGBB; -b changes it. */
 static unsigned background = 0x333333;
+/* -D: draw without the depth test. */
+static int no_depth;
 
 static void draw(float angle, GLuint tex)
 {
@@ -84,7 +88,10 @@ static void draw(float angle, GLuint tex)
 		      ((background >> 8) & 0xff) / 255.0f,
 		      (background & 0xff) / 255.0f, 1.0f);
 	rglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	rglEnable(GL_DEPTH_TEST);
+	if (no_depth)
+		rglDisable(GL_DEPTH_TEST);
+	else
+		rglEnable(GL_DEPTH_TEST);
 
 	rglMatrixMode(GL_PROJECTION);
 	rglLoadIdentity();
@@ -118,15 +125,36 @@ static void draw(float angle, GLuint tex)
 	rglTexCoord2f(1, 1); rglVertex3f(0.35f, 0.35f, 0);
 	rglTexCoord2f(0, 1); rglVertex3f(-0.35f, 0.35f, 0);
 	rglEnd();
+
+	/* A green patch made with a scissored clear: no vertices of ours. */
+	rglEnable(GL_SCISSOR_TEST);
+	rglScissor(16, 16, 48, 48);
+	rglClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+	rglClear(GL_COLOR_BUFFER_BIT);
+	rglDisable(GL_SCISSOR_TEST);
 	rglFinish();
 }
 
-/* The buffer is BGRA bytes, bottom row first. */
+/* The same pixel as pixel() but asked of GL, which knows the surface. */
+static uint32_t gl_pixel(int x, int y)
+{
+	uint8_t p[4] = { 0, 0, 0, 0 };
+
+	rglReadPixels(x, H - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+	return ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | p[2];
+}
+
+/*
+ * The buffer holds one 32-bit word per pixel, 0xAARRGGBB in the host's
+ * byte order (what OSMESA_BGRA with GL_UNSIGNED_BYTE means), bottom row
+ * first.
+ */
 static uint32_t pixel(const uint8_t *buf, int x, int y)
 {
-	const uint8_t *p = buf + ((H - 1 - y) * W + x) * 4;
+	uint32_t v;
 
-	return ((uint32_t)p[2] << 16) | ((uint32_t)p[1] << 8) | p[0];
+	memcpy(&v, buf + ((H - 1 - y) * W + x) * 4, 4);
+	return v & 0xffffff;
 }
 
 int main(int argc, char **argv)
@@ -139,10 +167,11 @@ int main(int argc, char **argv)
 	OSMesaContext ctx;
 	GLuint tex;
 
-	while ((opt = getopt(argc, argv, "n:o:sa:b:")) != -1) {
+	while ((opt = getopt(argc, argv, "n:o:sa:b:D")) != -1) {
 		switch (opt) {
 		case 'n': frames = atoi(optarg); break;
 		case 'o': out = optarg; break;
+		case 'D': no_depth = 1; break;
 		case 'a': start_angle = (float)atof(optarg); break;
 		case 'b': background = (unsigned)strtoul(optarg, NULL, 16); break;
 		case 's':
@@ -207,7 +236,20 @@ int main(int argc, char **argv)
 	for (f = 0; f < frames; f++) {
 		draw(start_angle + f * 2.0f, tex);
 		if (f == 0) {
+			static const int probe[][2] = {
+				{ 10, 10 }, { 154, 200 }, { 250, 120 }, { 180, 220 },
+				{ 371, 371 }, { 40, 471 },
+			};
+			unsigned i;
+
 			printf("GL error 0x%x\n", (unsigned)rglGetError());
+			printf("glReadPixels:");
+			for (i = 0; i < sizeof(probe) / sizeof(probe[0]); i++)
+				printf(" (%d,%d)=%06x", probe[i][0], probe[i][1],
+				       (unsigned)gl_pixel(probe[i][0], probe[i][1]));
+			printf("\n");
+			printf("pixel (40,471)  = %06x  (scissored clear, 00ff00)\n",
+			       (unsigned)pixel(buf, 40, 471));
 			printf("pixel (10,10)   = %06x  (background, %06x)\n",
 			       (unsigned)pixel(buf, 10, 10), background);
 			printf("pixel (154,200) = %06x  (front triangle alone, mixed colours)\n",

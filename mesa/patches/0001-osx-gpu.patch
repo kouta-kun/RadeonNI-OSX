@@ -38,7 +38,7 @@ index a717491..59bdf40 100644
  if with_tests
    subdir('sfn/tests')
 diff --git a/src/gallium/drivers/r600/r600_pipe.c b/src/gallium/drivers/r600/r600_pipe.c
-index f9320ec..73d0e00 100644
+index f9320ec..08b3ef0 100644
 --- a/src/gallium/drivers/r600/r600_pipe.c
 +++ b/src/gallium/drivers/r600/r600_pipe.c
 @@ -384,12 +384,10 @@ r600_version_simple(const unsigned version_major,
@@ -58,6 +58,18 @@ index f9320ec..73d0e00 100644
  
  	return drm_version;
  }
+@@ -404,7 +402,10 @@ static void r600_init_screen_caps(struct r600_screen *rscreen)
+ 	enum radeon_family family = rscreen->b.family;
+ 
+ 	/* Supported features (boolean caps). */
+-	caps->prefer_real_buffer_in_constbuf0 = true;
++	/* osx-gpu: constants reach the GPU byte-swapped only when they come as
++	 * a user buffer (r600_set_constant_buffer); on big-endian, ask for that.
++	 */
++	caps->prefer_real_buffer_in_constbuf0 = !UTIL_ARCH_BIG_ENDIAN;
+ 	caps->npot_textures = true;
+ 	caps->mixed_framebuffer_sizes = true;
+ 	caps->mixed_color_depth_bits = true;
 diff --git a/src/gallium/meson.build b/src/gallium/meson.build
 index 67011f5..cdc82d9 100644
 --- a/src/gallium/meson.build

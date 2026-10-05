@@ -56,12 +56,11 @@ been planned in detail.
   the user: `hw/rdn_gpu.c`, `hw/rdn_cp.c` and `hw/rdn_selftest.c` start the
   3D engine and the command processor and draw a textured square and
   triangle, from `rdn_tool accel` on the x86 host.
-- A2's x86 half works by readback (2026-10-05): Mesa 26.2.4's `r600`
-  renders fixed-function GL on the card through `mesa/winsys` and `hw/`,
-  with no Linux DRM (`scripts/build-mesa.sh`, `build/x86/rdn_gltest`). The
-  big-endian run under `qemu-ppc` starts the command processor but draws
-  nothing, and the host reset during those tests (see the journal,
-  2026-10-05, and the host safety rules below).
+- A2 works by readback (2026-10-05): Mesa 26.2.4's `r600` renders
+  fixed-function GL on the card through `mesa/winsys` and `hw/`, with no
+  Linux DRM, on x86 and, pixel-identical, as a big-endian PowerPC build
+  under `qemu-ppc` (`scripts/build-mesa.sh x86|ppc`). Not confirmed on the
+  monitor.
 - A3 to A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` installed in
   `/System/Library/Extensions`; the snapshots do not. It is inert unless
@@ -107,6 +106,8 @@ Keep these current as part of the work, and commit small and often.
   card through sysfs; `-t file` logs accesses in the trace format, `-n`
   avoids the I/O BAR. Needs `scripts/card-bind.sh none` first.
 - `scripts/card-reset.sh`: back to the un-POSTed state (bus reset).
+- `scripts/card-quiet.sh {apply|status}`: stop the card and its root port
+  from escalating PCIe errors (see the host safety rules).
 - `sudo scripts/card-state.py`: is the card POSTed (read-only).
 - `scripts/host-inventory.sh`: read-only host inspection (GPUs, drivers,
   IOMMU groups, tools). Re-run after any hardware or kernel change.
@@ -150,8 +151,11 @@ Keep these current as part of the work, and commit small and often.
   `mesa/patches/`, copy `mesa/` and `hw/` into its tree and build
   `librdngl.so` for the host. Run it again after editing `mesa/` or `hw/`.
   Then (card posted and mode set with `rdn_tool`):
-  `sudo build/x86/rdn_gltest -n 90 -s 1366 768 1408 -o build/gltest.ppm`
-  after `make build/x86/rdn_gltest`.
+  `sudo third_party/mesa-26.2.4/build-x86/src/gallium/targets/rdn/rdn_gltest
+  -n 90 -s 1366 768 1408 -o build/gltest.ppm`. `scripts/build-mesa.sh ppc`
+  builds the same test static for big-endian PowerPC; run it with
+  `sudo third_party/qemu/qemu-ppc -cpu 7447a .../build-ppc/.../rdn_gltest`.
+  `-a`, `-b` and `-D` vary the scene so that runs can be told apart.
 - `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
   with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
   `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.
@@ -207,11 +211,13 @@ The host is the user's server, reached over ssh. Stop and ask before:
 - Enabling `mmiotrace` (it takes all CPUs but one offline).
 - Starting a `mac99` passthrough guest in a host boot where `radeon` has
   been bound to the 7570: that combination oopsed the host kernel once.
-- Running anything that drives the card's command processor from the host
-  (`rdn_tool accel`, `rdn_gltest`, natively or under `qemu-ppc`): on
-  2026-10-05 the host reset with "an uncorrected error caused a data fabric
-  sync flood event" during big-endian tests of that kind. Until the user
-  has decided how such tests are to be contained, do not run them.
+- Driving the card's command processor (`rdn_tool accel`, `rdn_gltest`, a
+  guest with the accelerator) without `scripts/card-quiet.sh apply` first.
+  On 2026-10-05 the host reset with "an uncorrected error caused a data
+  fabric sync flood event" during such tests; the user then approved
+  masking the card's PCIe error escalation at runtime. A host reboot undoes
+  the masking, and a reset of the card undoes the card's half: apply again.
+  `sync` before a test that has never run before.
 - Writing to the card's flash. Nothing is ever flashed.
 - Abandoning a design decision below.
 

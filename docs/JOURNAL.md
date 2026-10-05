@@ -1053,3 +1053,52 @@ No hardware test has been run since; the user decides how to go on.
 **Also learned.** In the big-endian Mesa run the readback matched the
 previous x86 run pixel for pixel, including a background colour the
 big-endian run was told to change: on big-endian nothing is drawn yet.
+
+## 2026-10-05 — A2 (big-endian): the PowerPC build renders the same picture as x86
+
+**Decision (user).** After the host reset: mask PCIe error escalation for
+the card at runtime and continue. `scripts/card-quiet.sh apply` turns off
+the card's error reporting enables and AER masks and the root port's SERR
+forwarding; nothing persistent. The server had come back by itself.
+
+**Tried, one test at a time, syncing before each.**
+1. The drawing self-test on x86 with the indirect buffer stored big-endian
+   and the swap flag in its address, the ring unchanged: the command
+   processor hangs (`GRBM_STATUS 0xA0003828`, fence not reached). Starting
+   the accelerator again recovers it.
+2. Ring swapped (`BUF_SWAP_32BIT`, big-endian ring words), indirect buffer
+   little-endian without the flag: ring test passes, the buffer hangs it.
+3. Both swapped, which is what Linux does on big-endian: works.
+4. After making one setting govern both (`rdn_accel.swapped`,
+   `RDN_BIG_ENDIAN` by default, `rdn_tool -R` for the other order): the
+   self-test draws correctly in both orders on x86 and in both orders in
+   the big-endian build under `qemu-ppc`.
+5. Mesa big-endian under `qemu-ppc -cpu 7447a`: now draws, but only
+   clears; no geometry, and a scissored clear came out black.
+6. Cause in Mesa: `r600_set_constant_buffer()` byte-swaps constants only
+   when they arrive as a user buffer, and r600 asks the state tracker for
+   real buffers (`prefer_real_buffer_in_constbuf0`). With that request
+   turned off on big-endian, geometry and colours are right.
+
+**Observed at the end.** The same scene (`-a 75 -b 402000`) rendered by
+the x86 build and by the big-endian build under `qemu-ppc`, both on the
+card: all 262144 pixels identical, and `glReadPixels` agrees at six probe
+points. The big-endian build reports GL 3.2 where x86 reports 4.6. No host
+reset during any of this; whether the masking or the absence of the bad
+mix is why, is not known.
+
+**Concluded.**
+- The swap flag of an indirect buffer and the ring's swap setting must
+  agree; a mismatch hangs the command processor. The earlier big-endian
+  Mesa run was such a mismatch, and is the likeliest trigger of the host
+  reset, not proven.
+- Mesa 26.2.4's r600 needs one fix for big-endian fixed-function drawing
+  (constants). It is in `mesa/patches/0001-osx-gpu.patch`; whether it is
+  also wrong on big-endian Linux was not checked, and it is worth
+  reporting upstream once confirmed there.
+- The frontend's buffer format `OSMESA_BGRA` is a 32-bit ARGB word in host
+  byte order, which is what Mac OS X uses for its surfaces.
+- Under `qemu-ppc` the test needs `-cpu 7447a` and a static link that
+  names three pthread functions Mesa declares weak.
+A2 is complete by readback. Nothing on the monitor has been confirmed by
+the user since phase 1.
