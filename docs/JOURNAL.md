@@ -1661,3 +1661,42 @@ the white box and the white shadow band of the earlier entry are gone.
 **Not measured.** Every frame of a program now goes through the window
 server, which is slower than writing to the screen.
 
+## 2026-10-05 — Two surface windows: the wrong picture in one; how the window server means it to work
+
+**Seen by the user.** Dragging and making moves in Chess work, no flicker
+or trails. While `glwin` ran next to Chess, its window showed a part of
+the Chess board.
+
+**Cause.** A placeholder quad says which part of a surface it stands for,
+not which surface. The bundle took the first registered surface the quad
+fits in. Now: of those it fits, the one whose corner is nearest to where
+that surface was drawn last or to where the kext has it. Chess and
+`glwin` together are both right (readback).
+
+**How the window server means it to work** (asked by the user; from
+`CGXNextSurface` in CoreGraphics, read to understand the interface):
+1. It read-locks the surface and looks at the answer
+   (`IOAccelSurfaceInformation`).
+2. No address in the answer: the overlay case. It looks at the flags
+   (bit 1, key colour), the pixel format (1 to 4) and `typeDependent[0]`
+   and paints a colour for hardware to show the surface through.
+3. An address, and the surface's accelerator is the display's own:
+   `CGXGLCreateSurfaceTextureReference`, which sets a private parameter
+   on its GL context, `cglsSetInteger(ctx, 997, eight words)` with
+   `GL_TEXTURE_RECTANGLE` among them (the public sibling is
+   `kCGLCPSurfaceTexture`, 228: surface ID, target, internal format),
+   checks for a GL error, and then draws the surface as an ordinary
+   textured quad. The driver is told which surface a texture is; nothing
+   is guessed.
+4. An address, another accelerator: `CGXGLCreateSurfaceTexture`, a copy.
+With us it ends up drawing the quad untextured and white. Which step
+fails is not known: no `gldSetInteger` reaches the bundle in the window
+server, and two attempts to watch `cglsSetInteger` in the debugger were
+inconclusive (the first left the window server stopped for some seconds).
+A suspect: the check for a GL error right after, since Mesa leaves
+`GL_INVALID_ENUM` behind for Apple's own enums (`/var/log/windowserver.log`
+is full of "GL error 0500"; that log exists and is worth reading).
+
+**So.** Matching by position is a stopgap. The real fix is to make step 3
+work, so that the window server names the surface.
+
