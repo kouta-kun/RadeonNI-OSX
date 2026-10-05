@@ -425,13 +425,16 @@ int rdn_windows_top_down(void)
  * alone (the record's fourth word is 2, and no buffer follows). The
  * bundle cannot draw on that yet, so such a context has to stay with the
  * software renderer, and so no context may be given to Mesa before its
- * drawable is known. RDN_GLD_EARLY=1 does it anyway: right for programs
+ * drawable is known. RDN_GLD_EARLY=1, or a file /tmp/rdngld.early, does it
+ * anyway: right for programs
  * whose record names a buffer (those started from an ssh session), which
  * otherwise lose what they set up before their window existed.
  */
 static int early_takeover(void)
 {
-	return getenv("RDN_GLD_EARLY") != NULL;
+	/* The file is for programs whose environment is not ours to set. */
+	return getenv("RDN_GLD_EARLY") != NULL ||
+	       access("/tmp/rdngld.early", F_OK) == 0;
 }
 
 /* gldCreateContext's sixth argument, less this, is the engine's context. */
