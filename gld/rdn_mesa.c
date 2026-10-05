@@ -23,6 +23,8 @@
 #include <GL/gl.h>
 #include <GL/osmesa.h>
 
+#include <unistd.h>
+
 #include "rdn_glue.h"
 #include "rdn_target.h"
 
@@ -89,6 +91,14 @@ struct context {
 	struct drawable screen;
 	uint32_t screen_rects;
 	GLint screen_rect[MAX_SCREEN_RECTS][4];
+	/*
+	 * Or, for DRAWABLE_SCREEN, Mesa draws on the whole screen's own
+	 * surface and the context's window coordinates are moved by this
+	 * much, to the bottom left corner of that part (rdn_origin_x).
+	 */
+	int direct;
+	uint32_t screen_width, screen_height, screen_pitch;
+	int origin_x, origin_y;
 	int bound;
 };
 
@@ -97,6 +107,20 @@ static struct context contexts[MAX_CONTEXTS];
 static int resolved, usable = -1;
 
 void *rdn_current_rend;
+int rdn_origin_x, rdn_origin_y;
+
+/*
+ * Draw on the screen's surface itself, unless /tmp/rdngld.copy exists:
+ * then, as for windows, off-screen with a copy for every flush.
+ */
+static int screen_direct(void)
+{
+	static int known = -1;
+
+	if (known < 0)
+		known = access("/tmp/rdngld.copy", F_OK) != 0;
+	return known;
+}
 static void (*mesa_finish)(void);
 
 static struct context *find(void *gld_ctx)
@@ -220,15 +244,21 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 		}
 		c->screen_rects = count;
 	}
+	c->direct = screen_direct();
+	c->screen_width = width;
+	c->screen_height = height;
+	c->screen_pitch = pitch;
+	c->origin_x = b[0];
+	c->origin_y = (int)height - (b[1] + b[3]);
 	c->screen.width = (uint32_t)b[2];
 	c->screen.height = (uint32_t)b[3];
 	c->screen.rowbytes = pitch * 4;
 	c->screen.base = (void *)(pixels + (uint32_t)b[1] * pitch + (uint32_t)b[0]);
 	if (c->rend && c->rend == rdn_current_rend)
 		rdn_current_rend = NULL;
-	rdn_log("attach: context %p draws on the screen at %d,%d %dx%d (surface %lu, %u rectangles)",
+	rdn_log("attach: context %p draws on the screen at %d,%d %dx%d (surface %lu, %u rectangles, %s)",
 		gld_ctx, (int)b[0], (int)b[1], (int)b[2], (int)b[3], surface,
-		(unsigned)count);
+		(unsigned)count, c->direct ? "direct" : "copied");
 	return 1;
 }
 
@@ -297,6 +327,23 @@ void rdn_make_current(void *rend)
 		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
 	if (!c->mesa)
 		return;
+	rdn_origin_x = rdn_origin_y = 0;
+	if (c->type == DRAWABLE_SCREEN && c->direct) {
+		if (!OSMesaMakeCurrentDirect(c->mesa, RDN_TARGET_SCREEN_HANDLE,
+					     (GLsizei)c->screen_width,
+					     (GLsizei)c->screen_height,
+					     (GLsizei)(c->screen_pitch * 4), 0)) {
+			rdn_log("OSMesaMakeCurrentDirect failed for context %p",
+				c->gld_ctx);
+			return;
+		}
+		rdn_origin_x = c->origin_x;
+		rdn_origin_y = c->origin_y;
+		c->drawable = d;
+		c->bound = 1;
+		rdn_current_rend = rend;
+		return;
+	}
 	/*
 	 * 32-bit ARGB words in the host's byte order, which is what both
 	 * CGL's buffers and OSMESA_BGRA with GL_UNSIGNED_BYTE are.

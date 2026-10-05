@@ -85,6 +85,7 @@
 
 
 #include "frontend/api.h"
+#include "frontend/winsys_handle.h"
 
 
 
@@ -102,6 +103,13 @@ struct osmesa_buffer
    struct pipe_resource *textures[ST_ATTACHMENT_COUNT];
 
    void *map;
+
+   /*
+    * OSMesaMakeCurrentDirect: the front buffer is this surface of the
+    * device, imported with resource_from_handle, and nothing is copied.
+    */
+   bool direct;
+   unsigned direct_handle, direct_stride, direct_offset;
 
    struct osmesa_buffer *next;  /**< next in linked list */
 };
@@ -390,6 +398,10 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
    if (statt != ST_ATTACHMENT_FRONT_LEFT)
       return false;
 
+   /* Drawn where it is shown. */
+   if (osbuffer->direct)
+      return true;
+
    /* Snapshot the color buffer to the user's buffer. */
    bpp = util_format_get_blocksize(osbuffer->visual.color_format);
    if (osmesa->user_row_length)
@@ -468,6 +480,19 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       templat.format = format;
       templat.bind = bind;
       pipe_resource_reference(&out[i], NULL);
+      if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT) {
+         struct winsys_handle whandle;
+
+         memset(&whandle, 0, sizeof(whandle));
+         whandle.type = WINSYS_HANDLE_TYPE_KMS;
+         whandle.handle = osbuffer->direct_handle;
+         whandle.stride = osbuffer->direct_stride;
+         whandle.offset = osbuffer->direct_offset;
+         out[i] = osbuffer->textures[statts[i]] =
+            screen->resource_from_handle(screen, &templat, &whandle,
+                                         PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+         continue;
+      }
       out[i] = osbuffer->textures[statts[i]] =
          screen->resource_create(screen, &templat);
    }
@@ -765,7 +790,8 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
 
    /* See if we already have a buffer that uses these pixel formats */
    if (osmesa->current_buffer &&
-       (osmesa->current_buffer->visual.color_format != color_format ||
+       (osmesa->current_buffer->direct ||
+        osmesa->current_buffer->visual.color_format != color_format ||
         osmesa->current_buffer->visual.depth_stencil_format != osmesa->depth_stencil_format ||
         osmesa->current_buffer->visual.accum_format != osmesa->accum_format ||
         osmesa->current_buffer->width != width ||
@@ -800,6 +826,54 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
    return GL_TRUE;
 }
 
+
+
+GLAPI GLboolean GLAPIENTRY
+OSMesaMakeCurrentDirect(OSMesaContext osmesa, GLuint handle, GLsizei width,
+                        GLsizei height, GLsizei stride, GLuint offset)
+{
+   enum pipe_format color_format;
+   struct osmesa_buffer *osbuffer;
+
+   if (!osmesa || width < 1 || height < 1)
+      return GL_FALSE;
+   color_format = osmesa_choose_format(osmesa->format, GL_UNSIGNED_BYTE);
+   if (color_format == PIPE_FORMAT_NONE)
+      return GL_FALSE;
+
+   osbuffer = osmesa->current_buffer;
+   if (osbuffer &&
+       (!osbuffer->direct ||
+        osbuffer->visual.color_format != color_format ||
+        osbuffer->width != (unsigned)width ||
+        osbuffer->height != (unsigned)height ||
+        osbuffer->direct_handle != handle ||
+        osbuffer->direct_stride != (unsigned)stride ||
+        osbuffer->direct_offset != offset)) {
+      osmesa_destroy_buffer(osbuffer);
+      osmesa->current_buffer = NULL;
+   }
+   if (!osmesa->current_buffer) {
+      osmesa->current_buffer = osmesa_create_buffer(color_format,
+                                      osmesa->depth_stencil_format,
+                                      osmesa->accum_format);
+      if (!osmesa->current_buffer)
+         return GL_FALSE;
+   }
+   osbuffer = osmesa->current_buffer;
+   osbuffer->width = width;
+   osbuffer->height = height;
+   osbuffer->map = NULL;
+   osbuffer->direct = true;
+   osbuffer->direct_handle = handle;
+   osbuffer->direct_stride = stride;
+   osbuffer->direct_offset = offset;
+   osmesa->type = GL_UNSIGNED_BYTE;
+
+   st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base);
+   osmesa->ever_used = true;
+   return GL_TRUE;
+}
 
 
 GLAPI OSMesaContext GLAPIENTRY

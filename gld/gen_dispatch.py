@@ -53,6 +53,12 @@ def trace_call(name, params, names):
                                     ''.join(', ' + a for a in args))
 
 
+# Entries whose x and y arguments are window coordinates.
+WINDOW_XY = ('viewport', 'scissor', 'read_pixels', 'copy_pixels',
+             'copy_tex_image1D', 'copy_tex_image2D', 'copy_tex_sub_image1D',
+             'copy_tex_sub_image2D', 'copy_tex_sub_image3D')
+
+
 def main():
     text = open(sys.argv[1]).read()
     body = text[text.index('__GLIFunctionDispatchRec'):]
@@ -80,6 +86,11 @@ def main():
         out.append('\tRDN_ENTER(ctx);')
         out.append('\tif (__builtin_expect(rdn_trace, 0))')
         out.append('\t\t%s;' % trace_call(name, params, names))
+        if name in WINDOW_XY:
+            if 'x' not in names or 'y' not in names:
+                sys.exit('%s has no x and y' % name)
+            out.append('\tx += rdn_origin_x;')
+            out.append('\ty += rdn_origin_y;')
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
         out.append('}')
         out.append('')

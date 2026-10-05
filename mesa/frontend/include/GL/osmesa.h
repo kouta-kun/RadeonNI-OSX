@@ -248,6 +248,18 @@ GLAPI void APIENTRY
 OSMesaReadbackRects( OSMesaContext ctx, GLint count, const GLint *rects );
 
 
+/*
+ * osx-gpu: bind the context to a surface that already exists in the
+ * device, named by `handle` for the driver's resource_from_handle, of the
+ * given size in pixels, row length in bytes and byte offset. The context
+ * draws on that surface itself, top row first; nothing is copied anywhere
+ * and there is no user buffer.
+ */
+GLAPI GLboolean APIENTRY
+OSMesaMakeCurrentDirect( OSMesaContext ctx, GLuint handle, GLsizei width,
+                         GLsizei height, GLsizei stride, GLuint offset );
+
+
 
 /*
  * Return an integer value like glGetIntegerv.

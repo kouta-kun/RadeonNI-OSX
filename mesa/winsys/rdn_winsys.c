@@ -55,6 +55,8 @@ struct rdn_bo {
    /* The last submissions that use it at all, and that write to it. */
    struct rdn_fence *last_use;
    struct rdn_fence *last_write;
+   /* Memory that is not from the allocator (the screen). */
+   bool foreign;
 };
 
 struct rdn_cs_buffer {
@@ -189,10 +191,12 @@ static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean 
    rdn_fence_set(&bo->last_use, NULL);
    rdn_fence_set(&bo->last_write, NULL);
 
-   simple_mtx_lock(&ws->lock);
-   ws->dev->free(ws->dev, bo->offset);
-   ws->allocated_bytes -= bo->base.size;
-   simple_mtx_unlock(&ws->lock);
+   if (!bo->foreign) {
+      simple_mtx_lock(&ws->lock);
+      ws->dev->free(ws->dev, bo->offset);
+      ws->allocated_bytes -= bo->base.size;
+      simple_mtx_unlock(&ws->lock);
+   }
    FREE(bo);
 }
 
@@ -281,7 +285,26 @@ static struct pb_buffer_lean *
 rdn_buffer_from_handle(struct radeon_winsys *rws, struct winsys_handle *whandle,
                        unsigned vm_alignment, bool is_prime_linear_buffer)
 {
-   return NULL;
+   struct radeon_drm_winsys *ws = rdn_winsys(rws);
+   struct rdn_bo *bo;
+
+   /* The screen is the only memory with a name. */
+   if (whandle->type != WINSYS_HANDLE_TYPE_KMS ||
+       whandle->handle != RDN_WINSYS_HANDLE_SCREEN || !ws->dev->screen.width)
+      return NULL;
+   bo = CALLOC_STRUCT(rdn_bo);
+   if (!bo)
+      return NULL;
+   pipe_reference_init(&bo->base.reference, 1);
+   bo->base.alignment_log2 = 8;
+   bo->base.usage = 0;
+   bo->base.size = (uint64_t)ws->dev->screen.pitch_pixels * 4 *
+                   ws->dev->screen.height;
+   bo->offset = ws->dev->screen.offset;
+   bo->domain = RADEON_DOMAIN_VRAM;
+   bo->flags = 0;
+   bo->foreign = true;
+   return &bo->base;
 }
 
 static struct pb_buffer_lean *

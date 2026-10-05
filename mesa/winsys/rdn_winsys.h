@@ -13,6 +13,13 @@
 
 struct pipe_screen_config;
 
+/*
+ * resource_from_handle with a winsys_handle of type WINSYS_HANDLE_TYPE_KMS
+ * and this handle gives the surface the display shows (rdn_device's
+ * screen), linear, not owned by the resource.
+ */
+#define RDN_WINSYS_HANDLE_SCREEN 0x7570
+
 typedef struct pipe_screen *(*rdn_screen_create_t)(struct radeon_winsys *,
                                                    const struct pipe_screen_config *);
 

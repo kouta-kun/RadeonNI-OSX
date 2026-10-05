@@ -30,6 +30,14 @@ void rdn_make_current(void *rend);
 void rdn_mesa_context_created(void *gld_ctx);
 void rdn_mesa_context_destroyed(void *gld_ctx);
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
+/*
+ * Where the current context's window coordinates start on Mesa's drawable,
+ * when that is bigger than what the context was given (the window server
+ * draws on a part of the screen and Mesa on the screen). Added to x and y
+ * of the GL calls that take window coordinates.
+ */
+extern int rdn_origin_x, rdn_origin_y;
+
 /* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
 extern int rdn_trace;
 

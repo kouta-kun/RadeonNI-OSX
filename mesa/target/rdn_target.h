@@ -29,4 +29,7 @@ bool rdn_target_surface_region(uint32_t id, int32_t bounds[4],
                                int16_t (*rects)[4], uint32_t max,
                                uint32_t *count);
 
+/* The `handle` that names the screen to OSMesaMakeCurrentDirect. */
+#define RDN_TARGET_SCREEN_HANDLE 0x7570
+
 #endif /* RDN_TARGET_H */
