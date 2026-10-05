@@ -75,7 +75,7 @@ if host_machine.system() == 'darwin'
   )
   shared_module(
     'RadeonNIGLDriver',
-    files('gld/RadeonNIGLDriver.c', 'gld/rdn_mesa.c'), rdn_dispatch_c,
+    files('gld/RadeonNIGLDriver.c', 'gld/rdn_mesa.c', 'gld/rdn_hook.c'), rdn_dispatch_c,
     rdn_sources,
     c_args : ['-DRDN_MESA'],
     gnu_symbol_visibility : 'hidden',

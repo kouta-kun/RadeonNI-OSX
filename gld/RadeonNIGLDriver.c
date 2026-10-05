@@ -181,6 +181,11 @@ static void setup(void)
 	}
 	if (logf)
 		fflush(logf);
+#ifdef RDN_MESA
+	/* See rdn_hook.c. The window server's context always has a drawable. */
+	if (strcmp(getprogname(), "WindowServer") != 0)
+		rdn_hook_set_current(rdn_mesa_early_all);
+#endif
 }
 
 static void dump(const char *what, long addr, int bytes)
@@ -388,6 +393,9 @@ static void present_hook(void *gld_ctx, long table)
 /* The context of the window server that draws on the screen, if any. */
 static void *screen_ctx;
 
+/* gldCreateContext's sixth argument, less this, is the engine's context. */
+#define ENGINE_CTX_CREATE_ARG	0x360
+
 static int in_window_server(void)
 {
 	static int known = -1;
@@ -527,6 +535,8 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	/* Mesa's context goes before the software renderer's own. */
 	if (idx == IDX_gldDestroyContext)
 		rdn_mesa_context_destroyed((void *)a);
+	else if (idx != IDX_gldCreateContext && !in_window_server())
+		rdn_mesa_early((void *)a);
 	/*
 	 * Inside the window server the software renderer cannot attach a
 	 * drawable (it waits on the window server, that is, on itself). The
@@ -582,6 +592,17 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			 */
 			if (*in == 20 || *in == 21 || *in == 22) {
 				in += in[1] ? 2 : 1;
+				continue;
+			}
+			/*
+			 * kCGLPFASampleBuffers and kCGLPFASamples, each with
+			 * a value: the software renderer answers them with a
+			 * buffer twice the window's size each way, which the
+			 * copy from Mesa does not handle. No multisampling
+			 * until Mesa does it on the card.
+			 */
+			if (*in == 55 || *in == 56) {
+				in += 2;
 				continue;
 			}
 			if (*in != 73 && *in != 72)
@@ -640,6 +661,17 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	}
 	describe(idx, a, b, c, d, ret);
 	ret = adjust(idx, a, b, c, d, ret);
+#ifdef RDN_MESA
+	/*
+	 * The sixth argument of gldCreateContext points 0x360 bytes into
+	 * the engine's context (10.4.11, by comparison with the table
+	 * gldInitDispatch is given later).
+	 */
+	if (idx == IDX_gldCreateContext && ret == 0 && a && f &&
+	    !in_window_server())
+		rdn_mesa_context_engine(*(void **)a,
+					(char *)f - ENGINE_CTX_CREATE_ARG);
+#endif
 	return ret;
 }
 

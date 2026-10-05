@@ -29,6 +29,17 @@ void rdn_make_current(void *rend);
 /* rdn_mesa.c: what the bundle tells it about, as the gld* calls go by. */
 void rdn_mesa_context_created(void *gld_ctx);
 void rdn_mesa_context_destroyed(void *gld_ctx);
+/*
+ * The engine's context that goes with a new driver context, and the
+ * moment to try giving the program's GL entry points to Mesa before any
+ * drawable is attached (any later driver call for the context will do).
+ */
+void rdn_mesa_context_engine(void *gld_ctx, void *rend);
+void rdn_mesa_early(void *gld_ctx);
+/* The same for every context that has no drawable yet. */
+void rdn_mesa_early_all(void *cgl_ctx);
+/* rdn_hook.c: call `after` whenever a context has been made current. */
+void rdn_hook_set_current(void (*after)(void *cgl_ctx));
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
 /*
  * Where the current context's window coordinates start on Mesa's drawable,

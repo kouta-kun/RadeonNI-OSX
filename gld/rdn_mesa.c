@@ -100,6 +100,15 @@ struct context {
 	uint32_t screen_width, screen_height, screen_pitch;
 	int origin_x, origin_y;
 	int bound;
+	/*
+	 * The engine's context as gldCreateContext was told, so that the
+	 * program's GL calls can be given to Mesa before the first drawable
+	 * is attached; and whether they have been.
+	 */
+	void *early_rend;
+	int dispatched;
+	/* Bound to nothing that is shown (no drawable yet). */
+	int nowhere;
 };
 
 #define MAX_CONTEXTS 64
@@ -273,16 +282,11 @@ static void missing(const char *name)
 	rdn_log("Mesa has no %s; the engine keeps that entry", name);
 }
 
-int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
+/* Mesa's functions looked up, once. False if there is no card to use. */
+static int mesa_ready(void)
 {
-	struct context *c = find(gld_ctx);
-	void *app_table;
 	unsigned n;
 
-	struct drawable d;
-
-	if (!c || !read_record(c, &d))
-		return 0;
 	if (usable < 0) {
 		/* A context to find out whether the card is there at all. */
 		OSMesaContext probe = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
@@ -301,14 +305,97 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
 			rdn_dispatch_entries);
 		resolved = 1;
 	}
-	c->rend = (char *)engine_table - ENGINE_CTX_TABLE_OFFSET;
-	app_table = *(void **)((char *)engine_table - APP_DISPATCH_BACK);
-	if (!app_table)
-		return 0;
-	n = rdn_dispatch_install(app_table, APP_DISPATCH_ENTRIES);
-	rdn_log("context %p (engine %p): %u entries of table %p are Mesa's",
-		gld_ctx, c->rend, n, app_table);
 	return 1;
+}
+
+static int install(struct context *c, void *engine_table, const char *when)
+{
+	void *app_table = *(void **)((char *)engine_table - APP_DISPATCH_BACK);
+	unsigned n;
+
+	if (!app_table || !mesa_ready())
+		return 0;
+	c->rend = (char *)engine_table - ENGINE_CTX_TABLE_OFFSET;
+	if (getenv("RDN_GLD_MASTER")) {
+		/*
+		 * Experiment: does the engine keep, inside its context, the
+		 * table it fills the program's from? Look for the program's
+		 * first entries there.
+		 */
+		void **t = app_table, **r = (void **)c->rend;
+		unsigned i;
+
+		rdn_log("table %p starts %p %p %p %p (%s)", app_table, t[0], t[1],
+			t[2], t[3], when);
+		for (i = 0; i + 4 <= (ENGINE_CTX_TABLE_OFFSET + 0x80) / 4; i++)
+			if (r[i] == t[0] && r[i + 1] == t[1] && r[i + 2] == t[2] &&
+			    r[i + 3] == t[3] && (void **)&r[i] != t)
+				rdn_log("  the same four at engine context + 0x%x", i * 4);
+	}
+	if (c->dispatched && getenv("RDN_GLD_MASTER")) {
+		/* Experiment: which entries has the engine taken back? */
+		static void *before[APP_DISPATCH_ENTRIES];
+		void **t = app_table;
+		unsigned i, changed = 0, first = 0;
+
+		memcpy(before, t, sizeof(before));
+		rdn_dispatch_install(app_table, APP_DISPATCH_ENTRIES);
+		for (i = 0; i < APP_DISPATCH_ENTRIES; i++)
+			if (before[i] != t[i] && !changed++)
+				first = i;
+		if (changed)
+			rdn_log("  the engine had taken back %u entries, the first at index %u (%s)",
+				changed, first, when);
+	}
+	n = rdn_dispatch_install(app_table, APP_DISPATCH_ENTRIES);
+	if (!c->dispatched || rdn_trace)
+		rdn_log("context %p (engine %p): %u entries of table %p are Mesa's (%s)",
+			c->gld_ctx, c->rend, n, app_table, when);
+	c->dispatched = 1;
+	return 1;
+}
+
+int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
+{
+	struct context *c = find(gld_ctx);
+	struct drawable d;
+
+	/* A context taken over early stays Mesa's whatever its drawable. */
+	if (!c || (!c->dispatched && !read_record(c, &d)))
+		return 0;
+	return install(c, engine_table, "dispatch set-up");
+}
+
+void rdn_mesa_context_engine(void *gld_ctx, void *rend)
+{
+	struct context *c = find(gld_ctx);
+
+	if (c && !c->early_rend)
+		c->early_rend = rend;
+}
+
+void rdn_mesa_early_all(void *cgl_ctx)
+{
+	int i;
+
+	(void)cgl_ctx;
+	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx)
+			rdn_mesa_early(contexts[i].gld_ctx);
+}
+
+void rdn_mesa_early(void *gld_ctx)
+{
+	struct context *c = find(gld_ctx);
+
+	/*
+	 * Again at every call until a drawable is attached: the engine is
+	 * still filling the program's table while the context is being
+	 * made.
+	 */
+	if (!c || !c->early_rend || c->type)
+		return;
+	install(c, (char *)c->early_rend + ENGINE_CTX_TABLE_OFFSET, "before a drawable");
 }
 
 void rdn_make_current(void *rend)
@@ -320,14 +407,50 @@ void rdn_make_current(void *rend)
 	for (i = 0; i < MAX_CONTEXTS; i++)
 		if (contexts[i].gld_ctx && contexts[i].rend == rend)
 			c = &contexts[i];
-	if (!c || !read_record(c, &d)) {
-		rdn_log("GL call on engine context %p, which has no drawable of ours", rend);
+	if (!c) {
+		rdn_log("GL call on engine context %p, which is not ours", rend);
 		return;
 	}
 	if (!c->mesa)
 		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
 	if (!c->mesa)
 		return;
+	if (!read_record(c, &d)) {
+		/*
+		 * No drawable yet: programs load textures and build display
+		 * lists before their window exists. Mesa needs something
+		 * to be bound to; nothing drawn now is ever shown.
+		 */
+		static uint32_t *nowhere;
+		static int side = 16;
+
+		if (!nowhere) {
+			/* Experiment: RDN_GLD_DUMMY=n makes it n pixels a side. */
+			if (getenv("RDN_GLD_DUMMY"))
+				side = atoi(getenv("RDN_GLD_DUMMY"));
+			nowhere = calloc((size_t)side * side, 4);
+			if (!nowhere)
+				return;
+		}
+
+		/*
+		 * rdn_current_rend stays as it is, so that every GL call
+		 * comes back here and finds the drawable as soon as there
+		 * is one (the engine fills an off-screen record only after
+		 * gldAttachDrawable has returned).
+		 */
+		if (c->nowhere && OSMesaGetCurrentContext() == c->mesa)
+			return;
+		rdn_origin_x = rdn_origin_y = 0;
+		rdn_current_rend = NULL;
+		if (!OSMesaMakeCurrent(c->mesa, nowhere, GL_UNSIGNED_BYTE, side, side))
+			return;
+		OSMesaPixelStore(OSMESA_ROW_LENGTH, side);
+		OSMesaReadbackRects(c->mesa, 0, NULL);
+		c->bound = 0;
+		c->nowhere = 1;
+		return;
+	}
 	rdn_origin_x = rdn_origin_y = 0;
 	if (c->type == DRAWABLE_SCREEN && c->direct) {
 		if (!OSMesaMakeCurrentDirect(c->mesa, RDN_TARGET_SCREEN_HANDLE,
@@ -356,6 +479,7 @@ void rdn_make_current(void *rend)
 		}
 		c->drawable = d;
 		c->bound = 1;
+		c->nowhere = 0;
 		rdn_current_rend = rend;
 		return;
 	}
@@ -376,6 +500,7 @@ void rdn_make_current(void *rend)
 			    &c->screen_rect[0][0]);
 	c->drawable = d;
 	c->bound = 1;
+	c->nowhere = 0;
 	rdn_current_rend = rend;
 }
 
