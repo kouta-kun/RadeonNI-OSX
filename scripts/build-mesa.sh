@@ -136,6 +136,12 @@ cpu = 'ppc7400'
 endian = 'big'
 INI
     shift || true
+    # GCC 14.2 for powerpc-apple-darwin8 miscompiles the display-list
+    # compiler at -Os: lists lose primitives (journal, 2026-10-05; in the
+    # guest, ~/gl/listwin and rdn_gltest -L). That one file is built at
+    # -O1. A whole build at -O1 did not help and is too big to link.
+    grep -q 'pragma GCC optimize' src/mesa/vbo/vbo_save_api.c ||
+        sed -i '1i #pragma GCC optimize ("O1")' src/mesa/vbo/vbo_save_api.c
     [ -f build-darwin/build.ninja ] || "$root/scripts/darwin.sh" meson setup build-darwin \
         "${common[@]}" --cross-file "$tp/mesa-darwin-cross.ini" \
         -Dxmlconfig=disabled -Dshader-cache=disabled \

@@ -1464,3 +1464,30 @@ mode), Quartz Extreme in use, Finder and Dock up; `cgmode set 0 1920 1080
 from. A Dock process of the display-less session stayed behind next to
 the new one.
 
+
+
+## 2026-10-05 — Chess: three causes found, two fixed, not yet re-tested as a whole
+
+1. Chess asks for a multisampled format; Apple's side answers with a
+   buffer twice the window's size. The bundle now takes
+   kCGLPFASampleBuffers/Samples out of the request.
+2. Chess loads textures and builds display lists before its window
+   exists. OpenGL fills a new context's dispatch table itself when the
+   context is complete, with no driver call, so those calls stayed with
+   Apple's engine. `gld/rdn_hook.c` hooks CGLSetCurrentContext (symbol
+   pointers of every image) and the bundle gives the table to Mesa then,
+   bound to a placeholder until a drawable exists.
+3. With that, the pieces were garbage. `tools/guest/listwin.c` and
+   `rdn_gltest -L mode`: display lists with some vertex formats draw
+   nothing, in Tiger only (x86 and big-endian Linux builds are right).
+   Cause: GCC 14.2 for powerpc-apple-darwin8 miscompiles
+   `src/mesa/vbo/vbo_save_api.c` at -Os. With that file at -O1 both tests
+   pass (`scripts/build-mesa.sh` now does this). A whole build at -O1
+   still failed the windowed test and its test program does not link
+   (branch range); not understood.
+
+Not done: Chess itself has not been run on the fixed build. Off-screen
+contexts on our renderer read back nothing since the Quartz Extreme
+changes (`glprobe draw 0x21a00`, `prelist`); the record is of another
+form. The guest was started with the emulated display again.
+\n

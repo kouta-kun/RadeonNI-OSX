@@ -2,7 +2,7 @@
  * First OpenGL through Mesa on the osx-gpu winsys (Linux host).
  *
  *   rdn_gltest [-n frames] [-a angle] [-b rrggbb] [-D] [-o file.ppm]
- *              [-s]
+ *              [-s] [-L mode]
  *
  * Renders with fixed-function OpenGL into an off-screen buffer: a clear to
  * dark grey, a depth-tested pair of triangles (the red-green-blue one in
@@ -59,6 +59,11 @@
 	X(void, TexImage2D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *)) \
 	X(void, ReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *)) \
 	X(void, Scissor, (GLint, GLint, GLsizei, GLsizei)) \
+	X(GLuint, GenLists, (GLsizei)) \
+	X(void, NewList, (GLuint, GLenum)) \
+	X(void, EndList, (void)) \
+	X(void, CallList, (GLuint)) \
+	X(void, Normal3f, (GLfloat, GLfloat, GLfloat)) \
 	X(void, Finish, (void))
 
 #define X(ret, name, args) static ret (*rgl##name) args;
@@ -134,6 +139,56 @@ static void draw(float angle, GLuint tex)
 	rglFinish();
 }
 
+/*
+ * -L mode: a display list with mixed vertex formats (what Apple's Chess
+ * builds its pieces from) instead of the usual scene. A red square in the
+ * middle of the view, its left half a quad strip, its right half a plain
+ * quad. Bits of mode: 1 the strip, 2 the quad, 4 normals and 8 texture
+ * coordinates in the strip.
+ */
+static void draw_list(int mode)
+{
+	GLuint list = rglGenLists(1);
+
+	rglNewList(list, GL_COMPILE);
+	rglColor3f(1, 0, 0);
+	if (mode & 1) {
+		rglBegin(GL_QUAD_STRIP);
+		if (mode & 4) rglNormal3f(0, 0, 1);
+		if (mode & 8) rglTexCoord2f(0, 0);
+		rglVertex3f(-0.5f, -0.5f, 0);
+		if (mode & 8) rglTexCoord2f(0, 1);
+		rglVertex3f(-0.5f, 0.5f, 0);
+		if (mode & 4) rglNormal3f(0, 0, 1);
+		if (mode & 8) rglTexCoord2f(1, 0);
+		rglVertex3f(0, -0.5f, 0);
+		if (mode & 8) rglTexCoord2f(1, 1);
+		rglVertex3f(0, 0.5f, 0);
+		rglEnd();
+	}
+	if (mode & 2) {
+		rglBegin(GL_QUADS);
+		rglVertex3f(0, -0.5f, 0);
+		rglVertex3f(0.5f, -0.5f, 0);
+		rglVertex3f(0.5f, 0.5f, 0);
+		rglVertex3f(0, 0.5f, 0);
+		rglEnd();
+	}
+	rglEndList();
+
+	rglViewport(0, 0, W, H);
+	rglDisable(GL_DEPTH_TEST);
+	rglDisable(GL_TEXTURE_2D);
+	rglMatrixMode(GL_PROJECTION);
+	rglLoadIdentity();
+	rglMatrixMode(GL_MODELVIEW);
+	rglLoadIdentity();
+	rglClearColor(0, 0, 1, 1);
+	rglClear(GL_COLOR_BUFFER_BIT);
+	rglCallList(list);
+	rglFinish();
+}
+
 /* The same pixel as pixel() but asked of GL, which knows the surface. */
 static uint32_t gl_pixel(int x, int y)
 {
@@ -159,15 +214,16 @@ static uint32_t pixel(const uint8_t *buf, int x, int y)
 int main(int argc, char **argv)
 {
 	const char *out = NULL;
-	int frames = 1, to_screen = 0, spitch = 0, opt, f, x, y;
+	int frames = 1, to_screen = 0, spitch = 0, opt, f, x, y, list_mode = 0;
 	float start_angle = 0.0f;
 	volatile uint32_t *scan = NULL;
 	uint8_t *buf, tex_data[8 * 8 * 4];
 	OSMesaContext ctx;
 	GLuint tex;
 
-	while ((opt = getopt(argc, argv, "n:o:sa:b:D")) != -1) {
+	while ((opt = getopt(argc, argv, "n:o:sa:b:DL:")) != -1) {
 		switch (opt) {
+		case 'L': list_mode = atoi(optarg); break;
 		case 'n': frames = atoi(optarg); break;
 		case 'o': out = optarg; break;
 		case 'D': no_depth = 1; break;
@@ -189,6 +245,15 @@ int main(int argc, char **argv)
 	printf("GL_VENDOR:   %s\n", rglGetString(GL_VENDOR));
 	printf("GL_RENDERER: %s\n", rglGetString(GL_RENDERER));
 	printf("GL_VERSION:  %s\n", rglGetString(GL_VERSION));
+
+	if (list_mode) {
+		draw_list(list_mode);
+		printf("list mode %d: left half %06x, right half %06x (want ff0000 where drawn), outside %06x (want 0000ff)\n",
+		       list_mode, (unsigned)gl_pixel(180, 256), (unsigned)gl_pixel(330, 256),
+		       (unsigned)gl_pixel(40, 40));
+		OSMesaDestroyContext(ctx);
+		return 0;
+	}
 
 	if (to_screen) {
 		uint32_t w, h, pitch;
