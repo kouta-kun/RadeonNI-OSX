@@ -78,7 +78,8 @@ been planned in detail.
   RDN_SURFACES=1 scripts/kext.sh up` the window server composites the
   7570's display with OpenGL through Mesa on the card.
   `docs/QUARTZ-EXTREME.md` has the gates, what the window server does and
-  what is not done (each update is copied to the screen by the CPU).
+  what is not done. Mesa draws on the screen's surface directly;
+  `/tmp/rdngld.copy` in the guest selects the older CPU copy.
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the

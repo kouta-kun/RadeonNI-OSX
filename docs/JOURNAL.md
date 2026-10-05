@@ -1337,3 +1337,24 @@ window server does is in `docs/QUARTZ-EXTREME.md`. Next: draw on the
 screen's surface directly instead of copying, and see what the cursor
 does.
 
+## 2026-10-05 — Quartz Extreme without the copy: Mesa draws on the screen's surface
+
+Host rebooted by the user in between (unrelated); card bound to `vfio-pci`
+and error masking applied again before the guest started.
+
+**Tried.** The window server's context bound to the screen's surface
+itself (imported by the winsys as a linear render target at the scanout's
+offset and pitch), with window coordinates shifted to the corner of the
+surface's region.
+
+**Observed.** Worked on the first run. `rdnuc grab` shows the same
+pictures as with the copy: desktop, window with shadow at 100,78, eight
+moves without trails (304 command buffers in 5 s, 8 AppleScript moves in
+5 s), Exposé dimming and back. The window server's CPU time after all of
+that: 4.3 s, against 19 s at the same point with the copy.
+
+**Concluded.** r600 renders to the linear scanout surface as it is; no
+change to Mesa was needed beyond the winsys import. The copying path
+stays behind `/tmp/rdngld.copy`. The cursor is the open question, and it
+needs the user's eyes.
+

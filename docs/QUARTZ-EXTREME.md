@@ -114,30 +114,42 @@ call with its arguments; that is where the list above comes from.
   there; it answers them itself (2, 4 and 0, what the software renderer
   answers an application).
 - The kext keeps each surface's region; the accelerator user client hands
-  it out (`RDN_UC_SURFACE_REGION`). The bundle gives Mesa a drawable the
-  size of the bounding box and, when the context is flushed, copies only
-  the region's rectangles to that place on the screen, top row first
-  (`OSMesaReadbackRects`, added to our copy of the off-screen front end).
+  it out (`RDN_UC_SURFACE_REGION`).
+- Mesa draws on the screen's own surface: the winsys imports it as a
+  linear render target (`RDN_WINSYS_HANDLE_SCREEN`), our copy of the
+  off-screen front end binds it with nothing to copy
+  (`OSMesaMakeCurrentDirect`), and because the window server's window
+  coordinates start at the corner of the region's bounding box, the
+  bundle adds that corner to x and y of `glViewport`, `glScissor`,
+  `glReadPixels`, `glCopyPixels` and the `glCopyTex*` calls
+  (`gld/gen_dispatch.py`). The window server draws only inside the
+  region, so nothing else is needed.
+- With `/tmp/rdngld.copy` in the guest the older way is used instead:
+  Mesa draws a bounding box off-screen and the CPU copies the region's
+  rectangles to the screen when the context is flushed
+  (`OSMesaReadbackRects`).
 - The other 16 surface methods succeed without doing anything; the locks
   and `read` are refused. The window server has not called them.
 
-Checked by reading the screen back in the guest (`rdnuc grab`): desktop
-picture, Finder windows with shadows, a window moved in steps, Exposé's
-dimming, all in the right place, while `fences` counts some 40 command
-buffers a second during a move. **Not yet seen on the monitor by the
+Checked by reading the screen back in the guest (`rdnuc grab`), both
+ways: desktop picture, Finder windows with shadows, a window moved in
+steps, Exposé's dimming and its return, all in the right place. Drawing
+directly, a window moved in eight steps took 304 command buffers in 5 s
+and the window server 1.3 s of CPU time for the whole session's drawing,
+against some 14 s with the copy. **Not yet seen on the monitor by the
 user.**
 
 ## Not done
 
-- Each update is drawn off-screen on the GPU and copied to the screen by
-  the CPU, into a buffer made anew for every update. Drawing straight on
-  the screen's surface would remove both.
 - Texture uploads copy; `GL_UNPACK_CLIENT_STORAGE_APPLE` is ignored
   (correct, slower).
 - Applications' OpenGL windows are still drawn into their windows' buffers
   (A4), not into surfaces of their own.
-- The software cursor is drawn by `IOFramebuffer` into the same screen
-  the copies go to; whether it survives has to be seen on the monitor.
+- The software cursor is drawn by `IOFramebuffer` with the CPU into the
+  screen the GPU now draws on; whether it leaves marks has to be seen on
+  the monitor. A hardware cursor would settle it.
+- `glGetIntegerv(GL_VIEWPORT)` and the raster position are not moved to
+  the region's corner. The window server has not used them.
 
 ## Not known
 
