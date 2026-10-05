@@ -13,8 +13,11 @@
 #   scripts/kext.sh uninstall  remove a copy installed in the guest's
 #                              /System/Library/Extensions (see below)
 #
-# With RDN_ACCEL=1, load (and so up) also makes the kext announce its
-# accelerator service, which names the OpenGL driver bundle (phase 2).
+# With RDN_ACCEL=1, load (and so up) also makes the kext start the 3D
+# engine (the microcode comes from firmware/ on the host) and announce its
+# accelerator service, which names the OpenGL driver bundle and serves user
+# clients. RDN_SELFTEST=1 adds a drawing self-test on the screen at start.
+# Apply scripts/card-quiet.sh first.
 #
 # Under QEMU the kext is always loaded from the temporary directory, freshly
 # built, so that what runs is never a stale installed copy. Installing into
@@ -44,6 +47,16 @@ assert marker in plist
 extra = "\t\t\t<key>VBIOS</key>\n\t\t\t<data>" + data + "</data>\n"
 if os.environ.get("RDN_ACCEL") == "1":
     extra += "\t\t\t<key>Accelerator</key>\n\t\t\t<true/>\n"
+    # The command processor's microcode, like the VBIOS: from the host's
+    # git-ignored firmware/ into the personality, never into the repository.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[1])))
+    root = os.path.dirname(root)
+    for key, name in (("FW_PFP", "TURKS_pfp.bin"), ("FW_ME", "TURKS_me.bin")):
+        blob = open(os.path.join(root, "firmware", name), "rb").read()
+        extra += "\t\t\t<key>%s</key>\n\t\t\t<data>%s</data>\n" % (
+            key, base64.b64encode(blob).decode())
+    if os.environ.get("RDN_SELFTEST") == "1":
+        extra += "\t\t\t<key>AccelSelfTest</key>\n\t\t\t<true/>\n"
 sys.stdout.write(plist.replace(marker, extra + marker))
 PY
 }

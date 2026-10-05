@@ -17,6 +17,7 @@
 #include <IOKit/pci/IOPCIDevice.h>
 
 extern "C" {
+#include "rdn_accel.h"
 #include "rdn_card.h"
 #include "rdn_i2c.h"
 #include "rdn_mode.h"
@@ -76,6 +77,16 @@ public:
 	UInt32 readReg(UInt32 offset);
 	void writeReg(UInt32 offset, UInt32 value);
 	IOPCIDevice *device() { return fDevice; }
+
+	/* For the accelerator. */
+	struct rdn_card *card() { return &fCard; }
+	struct rdn_os *os() { return &fOS; }
+	volatile void *aperture();
+	UInt32 apertureSize();
+	IOMemoryDescriptor *apertureDescriptor();
+	/* The screen as a render target; false unless it is 32 bits deep. */
+	bool selftestTarget(struct rdn_accel *accel,
+			    struct rdn_selftest_target *target);
 
 private:
 	IOPCIDevice *fDevice;

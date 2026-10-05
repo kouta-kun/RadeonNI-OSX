@@ -374,6 +374,39 @@ void RadeonNI::stop(IOService *provider)
 }
 
 /*
+ * For the accelerator
+ */
+
+volatile void *RadeonNI::aperture()
+{
+	return fFbMap ? (volatile void *)fFbMap->getVirtualAddress() : 0;
+}
+
+UInt32 RadeonNI::apertureSize()
+{
+	return fFbMap ? (UInt32)fFbMap->getLength() : 0;
+}
+
+IOMemoryDescriptor *RadeonNI::apertureDescriptor()
+{
+	return fDevice->getDeviceMemoryWithRegister(FB_BAR);
+}
+
+bool RadeonNI::selftestTarget(struct rdn_accel *accel,
+			      struct rdn_selftest_target *target)
+{
+	if (!fModeSet || fFb.bpp != 32)
+		return false;
+	bzero(target, sizeof(*target));
+	target->gpu_addr = rdn_vram_addr(accel, fFb.aperture_offset);
+	target->width = fFb.width;
+	target->height = fFb.height;
+	target->pitch_pixels = fFb.pitch_pixels;
+	target->big_endian_pixels = fFb.big_endian_pixels;
+	return true;
+}
+
+/*
  * IOFramebuffer
  */
 
