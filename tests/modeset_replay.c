@@ -13,7 +13,10 @@
  * scanout address (Linux relocates the framebuffer address range, we do
  * not) and the read of that range's location.
  *
- * Usage: modeset_replay <vbios.rom> <edid.bin> <modeset-phase> [init-phase]
+ * Usage: modeset_replay <vbios.rom> <edid.bin> <modeset-phase> <prev> <new>
+ *                       [init-phase]
+ * <new> is the EDID detailed timing to set (0 is the preferred one); <prev>
+ * is the timing that is active beforehand, or - for a CRTC that is off.
  *
  * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
@@ -193,9 +196,9 @@ int main(int argc, char **argv)
 	FILE *f;
 	int r;
 
-	if (argc != 4 && argc != 5) {
-		fprintf(stderr, "usage: %s <vbios.rom> <edid.bin> <phase-file>\n",
-			argv[0]);
+	if (argc != 6 && argc != 7) {
+		fprintf(stderr, "usage: %s <vbios.rom> <edid.bin> <phase> <prev|-> "
+			"<new> [init-phase]\n", argv[0]);
 		return 2;
 	}
 	f = fopen(argv[1], "rb");
@@ -226,7 +229,7 @@ int main(int argc, char **argv)
 	os.log = os_log;
 
 	if (rdn_card_init(&card, &os, bios) ||
-	    !rdn_edid_preferred_mode(edid, &mode))
+	    !rdn_edid_detailed_mode(edid, atoi(argv[5]), &mode))
 		return 2;
 
 	memset(&fb, 0, sizeof(fb));
@@ -245,11 +248,11 @@ int main(int argc, char **argv)
 	 * With a fourth argument, first check the one-time display setup
 	 * against the phase that holds Linux's driver start.
 	 */
-	if (argc == 5) {
+	if (argc == 7) {
 		struct access *modeset_trace = m.trace;
 		size_t modeset_len = m.trace_len;
 
-		m.trace = load_trace(argv[4], &m.trace_len);
+		m.trace = load_trace(argv[6], &m.trace_len);
 		if (!m.trace)
 			return 2;
 		r = rdn_display_init(&card);
@@ -264,6 +267,7 @@ int main(int argc, char **argv)
 		m.pos = 0;
 	}
 
+	card.crtc_on = strcmp(argv[4], "-") != 0;
 	r = rdn_modeset(&card, &mode, &fb, rdn_edid_is_hdmi(edid, (int)edid_len));
 	rdn_card_fini(&card);
 

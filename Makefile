@@ -13,6 +13,9 @@ REF_PHASE  ?= traces/ref-radeon-2.phase-a1.txt
 EDID       ?= private/monitor-edid.bin
 # A Linux modeset to the EDID's preferred mode (phase a4 of the trace guest)
 REF_MODESET ?= traces/ref-radeon-3.phase-a4.txt
+# The modeset before it in the same run: from the preferred mode to the
+# EDID's second detailed timing (phase a3)
+REF_MODESET2 ?= traces/ref-radeon-3.phase-a3.txt
 # The same guest's driver start, for the one-time display setup
 REF_INIT   ?= traces/ref-radeon-3.phase-a1.txt
 
@@ -83,7 +86,8 @@ test: all
 		$(call run_test,atom_replay,$(VBIOS) $(REF_PHASE)); \
 		$(call run_test,i2c_edid,$(VBIOS)); \
 		if [ -f $(REF_MODESET) ] && [ -f $(EDID) ]; then \
-			$(call run_test,modeset_replay,$(VBIOS) $(EDID) $(REF_MODESET) $(REF_INIT)); \
+			$(call run_test,modeset_replay,$(VBIOS) $(EDID) $(REF_MODESET) - 0 $(REF_INIT)); \
+			$(call run_test,modeset_replay,$(VBIOS) $(EDID) $(REF_MODESET2) 0 1); \
 		else echo "SKIP modeset_replay: need $(EDID) and $(REF_MODESET)"; fi; \
 	fi
 

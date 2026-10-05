@@ -9,16 +9,28 @@
 #include "rdn_mode.h"
 
 #define EDID_DTD_OFFSET		54
+#define EDID_DTD_SIZE		18
+#define EDID_DTD_COUNT		4
 #define EDID_BLOCK		128
 #define CEA_EXT_TAG		0x02
 #define CEA_VENDOR_BLOCK	3
 
 bool rdn_edid_preferred_mode(const uint8_t *edid, struct rdn_mode *mode)
 {
-	const uint8_t *d = edid + EDID_DTD_OFFSET;
-	uint32_t clock = (uint32_t)(d[0] | (d[1] << 8)) * 10;
+	return rdn_edid_detailed_mode(edid, 0, mode);
+}
+
+bool rdn_edid_detailed_mode(const uint8_t *edid, int index,
+			    struct rdn_mode *mode)
+{
+	const uint8_t *d = edid + EDID_DTD_OFFSET + index * EDID_DTD_SIZE;
+	uint32_t clock;
 	uint16_t hact, hblank, vact, vblank, hso, hsw, vso, vsw;
 
+	if (index < 0 || index >= EDID_DTD_COUNT)
+		return false;
+	/* A descriptor that is not a timing has a zero pixel clock. */
+	clock = (uint32_t)(d[0] | (d[1] << 8)) * 10;
 	if (!clock)
 		return false;
 

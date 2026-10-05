@@ -526,12 +526,29 @@ static int scaler_setup(struct rdn_card *card)
 static void set_base(struct rdn_card *card, const struct rdn_mode *mode,
 		     const struct rdn_fb *fb)
 {
-	uint32_t fb_format = EVERGREEN_GRPH_DEPTH(EVERGREEN_GRPH_DEPTH_32BPP) |
-		EVERGREEN_GRPH_FORMAT(EVERGREEN_GRPH_FORMAT_ARGB8888);
-	uint32_t fb_swap = EVERGREEN_GRPH_ENDIAN_SWAP(fb->big_endian_pixels ?
-		EVERGREEN_GRPH_ENDIAN_8IN32 : EVERGREEN_GRPH_ENDIAN_NONE);
+	uint32_t fb_format, fb_swap = EVERGREEN_GRPH_ENDIAN_NONE;
 	uint64_t fb_location;
 	uint32_t tmp;
+
+	switch (fb->bpp) {
+	case 8:
+		fb_format = EVERGREEN_GRPH_DEPTH(EVERGREEN_GRPH_DEPTH_8BPP) |
+			EVERGREEN_GRPH_FORMAT(EVERGREEN_GRPH_FORMAT_INDEXED);
+		break;
+	case 16:
+		fb_format = EVERGREEN_GRPH_DEPTH(EVERGREEN_GRPH_DEPTH_16BPP) |
+			EVERGREEN_GRPH_FORMAT(EVERGREEN_GRPH_FORMAT_ARGB1555);
+		if (fb->big_endian_pixels)
+			fb_swap = EVERGREEN_GRPH_ENDIAN_8IN16;
+		break;
+	default:
+		fb_format = EVERGREEN_GRPH_DEPTH(EVERGREEN_GRPH_DEPTH_32BPP) |
+			EVERGREEN_GRPH_FORMAT(EVERGREEN_GRPH_FORMAT_ARGB8888);
+		if (fb->big_endian_pixels)
+			fb_swap = EVERGREEN_GRPH_ENDIAN_8IN32;
+		break;
+	}
+	fb_swap = EVERGREEN_GRPH_ENDIAN_SWAP(fb_swap);
 
 	/*
 	 * The aperture shows the start of the card's framebuffer address
@@ -579,6 +596,27 @@ static void set_base(struct rdn_card *card, const struct rdn_mode *mode,
 
 	/* set pageflip to happen anywhere in vblank interval */
 	rdn_wreg(card, EVERGREEN_MASTER_UPDATE_MODE, 0);
+}
+
+void rdn_lut_set(struct rdn_card *card, uint32_t start, uint32_t count,
+		 const struct rdn_lut_entry *entries)
+{
+	uint32_t i;
+
+	if (start >= 256)
+		return;
+	if (count > 256 - start)
+		count = 256 - start;
+
+	rdn_wreg(card, EVERGREEN_DC_LUT_RW_MODE, 0);
+	rdn_wreg(card, EVERGREEN_DC_LUT_WRITE_EN_MASK, 0x00000007);
+	/* The index advances by itself after each colour written. */
+	rdn_wreg(card, EVERGREEN_DC_LUT_RW_INDEX, start);
+	for (i = 0; i < count; i++)
+		rdn_wreg(card, EVERGREEN_DC_LUT_30_COLOR,
+			 ((uint32_t)(entries[i].red & 0x3ff) << 20) |
+			 ((uint32_t)(entries[i].green & 0x3ff) << 10) |
+			 (uint32_t)(entries[i].blue & 0x3ff));
 }
 
 /* dce5_crtc_load_lut(), with a linear ramp: colours pass through unchanged */
@@ -765,6 +803,10 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 	r = lock_crtc(card, ATOM_ENABLE);
 	if (r)
 		return r;
+	/* Changing mode on a running CRTC: blank it first, as Linux does. */
+	if (card->crtc_on)
+		blank_crtc(card, ATOM_ENABLE);
+	card->crtc_on = false;
 	enable_crtc_memreq(card, ATOM_DISABLE);
 	enable_crtc(card, ATOM_DISABLE);
 
@@ -796,6 +838,7 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 	enable_crtc_memreq(card, ATOM_ENABLE);
 	blank_crtc(card, ATOM_DISABLE);
 	load_lut(card);
+	card->crtc_on = true;
 unlock:
 	lock_crtc(card, ATOM_DISABLE);
 	if (r)

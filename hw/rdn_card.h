@@ -17,6 +17,8 @@
 struct rdn_card {
 	struct rdn_os *os;
 	struct rdn_atom atom;
+	/* CRTC 0 is scanning out; kept up to date by POST and modeset. */
+	bool crtc_on;
 };
 
 static inline uint32_t rdn_rreg(struct rdn_card *card, uint32_t reg)

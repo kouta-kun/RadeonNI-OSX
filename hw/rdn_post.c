@@ -62,12 +62,16 @@ void rdn_card_fini(struct rdn_card *card)
 
 bool rdn_card_posted(struct rdn_card *card)
 {
-	uint32_t reg = 0;
+	uint32_t reg = 0, v;
 	int i;
 
 	/* first check CRTCs */
-	for (i = 0; i < RDN_NUM_CRTC; i++)
-		reg |= rdn_rreg(card, EVERGREEN_CRTC_CONTROL + crtc_offsets[i]);
+	for (i = 0; i < RDN_NUM_CRTC; i++) {
+		v = rdn_rreg(card, EVERGREEN_CRTC_CONTROL + crtc_offsets[i]);
+		if (i == 0)
+			card->crtc_on = (v & EVERGREEN_CRTC_MASTER_EN) != 0;
+		reg |= v;
+	}
 	if (reg & EVERGREEN_CRTC_MASTER_EN)
 		return true;
 

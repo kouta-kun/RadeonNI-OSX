@@ -20,17 +20,33 @@ struct rdn_mode {
 	uint32_t flags;
 };
 
-/* The scanout surface: 32 bits per pixel, XRGB. */
+/*
+ * The scanout surface. 32 bpp is XRGB8888, 16 bpp is XRGB1555, 8 bpp is
+ * indexed through the colour table (rdn_lut_set).
+ */
 struct rdn_fb {
 	uint32_t aperture_offset;	/* byte offset of pixel (0,0) in BAR0 */
 	uint32_t width, height;
 	uint32_t pitch_pixels;
+	uint32_t bpp;			/* 8, 16 or 32; 0 means 32 */
 	/*
-	 * True when the host writes pixels as big-endian 32-bit words; the
-	 * card then swaps the bytes of each pixel on scanout.
+	 * True when the host writes pixels as big-endian words; the card
+	 * then swaps the bytes of each pixel on scanout.
 	 */
 	bool big_endian_pixels;
 };
+
+/* One entry of the 256-entry colour table, 10 bits per channel. */
+struct rdn_lut_entry {
+	uint16_t red, green, blue;
+};
+
+/*
+ * Detailed timing number `index` (0 to 3) of the EDID's base block. False
+ * if that descriptor is not a timing. Index 0 is the preferred mode.
+ */
+bool rdn_edid_detailed_mode(const uint8_t *edid, int index,
+			    struct rdn_mode *mode);
 
 /* The preferred (first detailed) timing of an EDID. False if there is none. */
 bool rdn_edid_preferred_mode(const uint8_t *edid, struct rdn_mode *mode);
@@ -55,5 +71,13 @@ int rdn_display_init(struct rdn_card *card);
  */
 int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 		const struct rdn_fb *fb, bool hdmi);
+
+/*
+ * Write `count` entries of the colour table of CRTC 0 starting at `start`.
+ * The table maps 8-bit indices (8 bpp) or channel values (16 and 32 bpp) to
+ * colours; rdn_modeset() loads a linear ramp.
+ */
+void rdn_lut_set(struct rdn_card *card, uint32_t start, uint32_t count,
+		 const struct rdn_lut_entry *entries);
 
 #endif /* RDN_MODE_H */
