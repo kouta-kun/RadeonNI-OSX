@@ -276,11 +276,16 @@ With a passthrough guest running:
 
     scripts/kext.sh build     # tar hw/ and kext/ to the guest, make there
     scripts/kext.sh load      # root-owned copy in /tmp/rdnkext, kextload
+    scripts/kext.sh activate  # restart the window server so it uses the screen
+    scripts/kext.sh up        # build + load + activate
     scripts/kext.sh log       # the driver's lines from the kernel log
     scripts/kext.sh unload
 
 After `load`, Tiger's window server has to be restarted before it uses the
-new screen: `scripts/tiger.sh ssh 'sudo killall WindowServer'`.
+new screen: `scripts/kext.sh activate` does that and waits until the display
+is attached (about 15 s; the login session ends and the guest logs in
+again). `scripts/kext.sh up` is build, load and activate in one. Asking the
+framebuffers to re-probe (`tools/guest/fbprobe.c`) does not help.
 
 Changing the 7570's resolution from the GUI without seeing its monitor:
 `open /System/Library/PreferencePanes/Displays.prefPane` over ssh, click

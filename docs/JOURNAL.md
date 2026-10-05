@@ -785,3 +785,27 @@ resolution on a monitor connected to the real card.
 
 Not individually confirmed by eye: each of the 8 and 16 bpp states. The
 cursor is the software one drawn by IOGraphics.
+
+## 2026-10-04 — The window server restart cannot be avoided from a running session
+
+**Tried.** In a freshly booted guest with the kext loaded and the window
+server not restarted: `tools/guest/fbprobe.c`, which calls
+`IOServiceRequestProbe(fb, kIOFBUserRequestProbe)` on every `IOFramebuffer`
+(what "Detect Displays" does).
+
+**Observed.** Both framebuffers return success. Nothing attaches to
+`RadeonNI`, and the window server's log shows no new display. `scripts/
+kext.sh activate` (restart the window server, wait for an
+`IODisplayConnect` under `RadeonNI`) takes 14 s; the screen came back at
+1920x1080, the resolution chosen earlier, so Tiger remembers the setting per
+display. Tiger's `/etc/rc` runs `/etc/rc.local`, if it exists, at line 294,
+after `SystemStarter` and before `loginwindow` is started from `/etc/ttys`.
+
+**Concluded.** The window server enumerates framebuffers once, when it
+starts; a re-probe only re-examines displays on framebuffers it already
+has. One experiment, so "cannot" means "not by this route". The restart is
+now one command. The way to not need it is to have the kext loaded before
+the window server starts, which is what an installed driver does anyway;
+in the harness that could be an `/etc/rc.local` that runs `kextload` from a
+directory outside `/System/Library/Extensions`. That touches the "always
+loaded by hand" decision and is the user's call. Not tried.

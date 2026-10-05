@@ -4,6 +4,9 @@
 #   scripts/kext.sh build      copy hw/ and kext/ to the guest and build
 #   scripts/kext.sh load       copy the bundle to a root-owned temporary
 #                              directory and kextload it from there
+#   scripts/kext.sh activate   restart the guest's window server so that it
+#                              uses the new screen (ends the login session)
+#   scripts/kext.sh up         build, load and activate
 #   scripts/kext.sh unload
 #   scripts/kext.sh log        kernel log lines from the driver
 #
@@ -39,6 +42,22 @@ PY
         sudo cp /tmp/rdn-Info.plist /tmp/rdnkext/RadeonNI.kext/Contents/Info.plist &&
         sudo chown -R root:wheel /tmp/rdnkext && sudo chmod -R go-w /tmp/rdnkext &&
         sudo sync && sudo kextload -t /tmp/rdnkext/RadeonNI.kext; kextstat | grep -i osxgpu' < "$root/build/kext-Info.plist"
+    ;;
+activate)
+    # Tiger's window server only looks for framebuffers when it starts, so a
+    # kext loaded afterwards drives the card but gets no desktop until the
+    # window server is restarted. That ends the login session; the guest
+    # logs in again by itself.
+    gssh 'sudo killall WindowServer; n=0
+        until ioreg -p IOService -w0 | grep -A2 "RadeonNI " | grep -q IODisplayConnect; do
+            n=$((n+1)); [ $n -gt 30 ] && { echo "the window server did not attach"; exit 1; }
+            sleep 2
+        done
+        sleep 4
+        system_profiler SPDisplaysDataType 2>/dev/null | grep -A12 "pci1002" | grep -E "Resolution|Depth"'
+    ;;
+up)
+    "$0" build && "$0" load && "$0" activate
     ;;
 unload)
     gssh "sudo kextunload -b $ID; kextstat | grep -ci osxgpu || true"

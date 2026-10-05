@@ -23,7 +23,9 @@ System Preferences and a software cursor.
 - `hw/` cold-POSTs the card, reads the EDID over DDC, starts the display
   engine clock and sets modes through AtomBIOS. No MC microcode is needed.
 - `kext/RadeonNI` is the `IOFramebuffer` subclass built on it. After
-  `kextload` the window server must be restarted to use the screen.
+  `kextload` the window server must be restarted to use the screen
+  (`scripts/kext.sh activate`); it only looks for framebuffers at startup.
+- The tag `working-framebuffer` marks the confirmed phase 1 state.
 - The guest: snapshot `clean-install`, user `tiger` / password `tiger`,
   `scripts/tiger.sh ssh`. QEMU must be the patched build (`patches/qemu/`).
 - `radeon` is blacklisted on the host (`/etc/modprobe.d/osx-gpu.conf`)
@@ -90,8 +92,10 @@ Keep these current as part of the work, and commit small and often.
 - `tools/guest/cgmode.c`: build in the guest (`gcc -o cgmode cgmode.c
   -framework ApplicationServices`) to list and switch display modes through
   Quartz and to put the cursor on a display.
-- `scripts/kext.sh {build|load|unload|log}`: build `kext/RadeonNI` inside the
-  running guest with its Makefile and load it from `/tmp` with `kextload`.
+- `scripts/kext.sh {build|load|activate|up|unload|log}`: build
+  `kext/RadeonNI` inside the running guest with its Makefile, load it from
+  `/tmp` with `kextload`, and (`activate`) restart the guest's window server
+  so that it uses the new screen. `up` does all three.
 
 ## Architecture
 
