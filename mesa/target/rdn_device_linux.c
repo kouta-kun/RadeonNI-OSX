@@ -276,6 +276,11 @@ struct rdn_device *rdn_device_open(void)
 	d->base.info.max_tile_pipes = d->accel.cfg.max_tile_pipes;
 	d->base.info.max_pipes = d->accel.cfg.max_pipes;
 	d->base.info.num_ses = d->accel.cfg.num_ses;
+	/* What CRTC 0 scans out, as rdn_tool modeset left it, at offset 0. */
+	d->base.screen.offset = 0;
+	d->base.screen.width = os_mmio_read32(d, 0x6834);	/* GRPH_X_END */
+	d->base.screen.height = os_mmio_read32(d, 0x6838);	/* GRPH_Y_END */
+	d->base.screen.pitch_pixels = os_mmio_read32(d, 0x6818);	/* GRPH_PITCH */
 	d->base.aperture = aperture;
 	d->base.aperture_size = aperture_size;
 	d->base.alloc = dev_alloc;

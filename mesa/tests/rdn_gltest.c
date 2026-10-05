@@ -2,7 +2,7 @@
  * First OpenGL through Mesa on the osx-gpu winsys (Linux host).
  *
  *   rdn_gltest [-n frames] [-a angle] [-b rrggbb] [-D] [-o file.ppm]
- *              [-s width height pitch]
+ *              [-s]
  *
  * Renders with fixed-function OpenGL into an off-screen buffer: a clear to
  * dark grey, a depth-tested pair of triangles (the red-green-blue one in
@@ -11,8 +11,8 @@
  * background, so that a run cannot be mistaken for an earlier one whose
  * picture is still in video memory. Prints the GL strings and a few
  * pixels of the first frame, saves the last frame with -o, and with -s
- * copies every frame to the scanout surface at aperture offset 0
- * (width, height and pitch as `rdn_tool accel` prints them).
+ * copies every frame to the screen, 400 pixels from its left edge and 128
+ * from its top.
  *
  * The library exports only the OSMesa calls; GL functions are looked up
  * with OSMesaGetProcAddress and called here as rglClear and so on.
@@ -21,17 +21,16 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <GL/gl.h>
 #include <GL/osmesa.h>
+
+#include "rdn_target.h"
 
 #define W 512
 #define H 512
@@ -159,8 +158,8 @@ static uint32_t pixel(const uint8_t *buf, int x, int y)
 
 int main(int argc, char **argv)
 {
-	const char *out = NULL, *addr = getenv("RDN_PCI_ADDR");
-	int frames = 1, sw = 0, sh = 0, spitch = 0, opt, f, x, y;
+	const char *out = NULL;
+	int frames = 1, to_screen = 0, spitch = 0, opt, f, x, y;
 	float start_angle = 0.0f;
 	volatile uint32_t *scan = NULL;
 	uint8_t *buf, tex_data[8 * 8 * 4];
@@ -174,14 +173,7 @@ int main(int argc, char **argv)
 		case 'D': no_depth = 1; break;
 		case 'a': start_angle = (float)atof(optarg); break;
 		case 'b': background = (unsigned)strtoul(optarg, NULL, 16); break;
-		case 's':
-			if (optind + 2 >= argc + 0 && optind + 3 > argc)
-				return 2;
-			sw = atoi(argv[optind]);
-			sh = atoi(argv[optind + 1]);
-			spitch = atoi(argv[optind + 2]);
-			optind += 3;
-			break;
+		case 's': to_screen = 1; break;
 		default: return 2;
 		}
 	}
@@ -198,22 +190,15 @@ int main(int argc, char **argv)
 	printf("GL_RENDERER: %s\n", rglGetString(GL_RENDERER));
 	printf("GL_VERSION:  %s\n", rglGetString(GL_VERSION));
 
-	if (sw) {
-		char path[256];
-		struct stat st;
-		int fd;
+	if (to_screen) {
+		uint32_t w, h, pitch;
 
-		snprintf(path, sizeof(path), "/sys/bus/pci/devices/%s/resource0",
-			 addr ? addr : "0000:10:00.0");
-		fd = open(path, O_RDWR);
-		if (fd < 0 || fstat(fd, &st) || sw < W + 400 || sh < H + 128 ||
-		    (uint64_t)spitch * sh * 4 > (uint64_t)st.st_size) {
-			fprintf(stderr, "cannot use the scanout surface\n");
+		if (!rdn_target_screen(&scan, &w, &h, &pitch) || w < W + 400 ||
+		    h < H + 128) {
+			fprintf(stderr, "cannot use the screen\n");
 			return 1;
 		}
-		scan = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-		if (scan == MAP_FAILED)
-			return 1;
+		spitch = (int)pitch;
 	}
 
 	/* 8x8 checkerboard, magenta and white. */

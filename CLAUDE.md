@@ -61,7 +61,14 @@ been planned in detail.
   Linux DRM, on x86 and, pixel-identical, as a big-endian PowerPC build
   under `qemu-ppc` (`scripts/build-mesa.sh x86|ppc`). Not confirmed on the
   monitor.
-- A3 to A7 have not started.
+- A3 is partly done (2026-10-05). In the guest the kext starts the 3D
+  engine and serves a user client (`RDN_ACCEL=1 scripts/kext.sh load`,
+  `tools/guest/rdnuc.c`), and Mesa 26.2.4 cross-built for Tiger
+  (`scripts/build-mesa.sh darwin`) renders through it, pixel-identical to
+  x86, from its own test program (`rdn_gltest`). Not done: CGL contexts
+  through the `gld*` bundle, which still forwards to Apple's software
+  renderer.
+- A4 to A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` installed in
   `/System/Library/Extensions`; the snapshots do not. It is inert unless
   the kext is loaded with `RDN_ACCEL=1`.
@@ -156,6 +163,12 @@ Keep these current as part of the work, and commit small and often.
   builds the same test static for big-endian PowerPC; run it with
   `sudo third_party/qemu/qemu-ppc -cpu 7447a .../build-ppc/.../rdn_gltest`.
   `-a`, `-b` and `-D` vary the scene so that runs can be told apart.
+- `scripts/darwin.sh image` once, then `scripts/darwin.sh <command>`: run
+  the cross toolchain for Tiger (GCC 14.2 for `powerpc-apple-darwin8`, the
+  10.4u SDK) in a container that sees only the repository.
+  `scripts/build-mesa.sh darwin [targets]` builds Mesa with it;
+  `.../build-darwin/src/gallium/targets/rdn/rdn_gltest` is the test program
+  to copy into the guest (`-s` draws on the screen).
 - `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
   with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
   `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.
@@ -195,6 +208,10 @@ Keep these current as part of the work, and commit small and often.
   `rdn_device.h`, no DRM), `frontend/` (off-screen GL contexts, from Mesa's
   former OSMesa), `target/` (the device for Linux and the library that ties
   it together), `patches/` (the only changes to Mesa itself).
+- `kext/RadeonNI/RadeonNIAccel.cpp` is the accelerator service and its user
+  client; `hw/rdn_user.h` is the interface user space sees.
+  `mesa/target/rdn_device_darwin.c` is Mesa's side of it. `mesa/darwin8/`
+  supplies what Tiger's C library lacks.
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.

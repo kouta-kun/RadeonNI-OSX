@@ -25,3 +25,7 @@ RUN real=$(readlink -f /usr/local/powerpc-apple-darwin8/bin/ld) && \
         'for a in "$@"; do [ "$a" = -v ] && echo "@(#)PROGRAM:ld  PROJECT:ld64-253.9" >&2; done' \
         "exec $real \"\$@\"" > /usr/local/powerpc-apple-darwin8/bin/ld && \
     chmod +x /usr/local/powerpc-apple-darwin8/bin/ld
+
+# Nothing of GCC's runtime exists on a Tiger machine. With the dynamic
+# libatomic out of the way, -latomic links the static one.
+RUN rm -f /usr/local/powerpc-apple-darwin8/lib/libatomic*.dylib

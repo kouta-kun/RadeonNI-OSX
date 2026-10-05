@@ -101,6 +101,8 @@ INI
 darwin)
     # Mac OS X 10.4 on PowerPC, with the toolchain container
     # (scripts/darwin.sh image). Extra arguments are ninja targets.
+    # Built for size and with long calls: a PowerPC branch reaches 16 MB,
+    # and Mesa's code is larger than that.
     compat=$tp/darwin8-compat
     mkdir -p "$compat"
     rsync -a --delete "$root/mesa/darwin8/" "$compat/src/"
@@ -119,12 +121,12 @@ ranlib = 'powerpc-apple-darwin8-ranlib'
 pkg-config = 'false'
 
 [built-in options]
-c_args = ['-mmacosx-version-min=10.4', '-isystem', '$compat/src/include']
-cpp_args = ['-mmacosx-version-min=10.4', '-isystem', '$compat/src/include', '-include', '$compat/src/tiger_compat.h']
-objc_args = ['-mmacosx-version-min=10.4', '-isystem', '$compat/src/include']
-objc_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '$compat/libtigercompat.a']
-c_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '$compat/libtigercompat.a']
-cpp_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-static-libstdc++', '$compat/libtigercompat.a']
+c_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-isystem', '$compat/src/include']
+cpp_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-isystem', '$compat/src/include', '-include', '$compat/src/tiger_compat.h']
+objc_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-isystem', '$compat/src/include']
+objc_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/libtigercompat.a']
+c_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/libtigercompat.a']
+cpp_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-static-libstdc++', '-Wl,-dead_strip', '$compat/libtigercompat.a']
 
 [host_machine]
 system = 'darwin'
@@ -137,6 +139,7 @@ INI
         "${common[@]}" --cross-file "$tp/mesa-darwin-cross.ini" \
         -Dxmlconfig=disabled -Dshader-cache=disabled \
         -Dzlib:default_library=static -Dexpat:default_library=static \
+        -Dbuildtype=minsize -Db_ndebug=true \
         --wrap-mode=nodownload
     "$root/scripts/darwin.sh" ninja -C build-darwin "$@"
     ;;

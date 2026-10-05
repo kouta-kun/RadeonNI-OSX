@@ -1102,3 +1102,54 @@ mix is why, is not known.
   names three pthread functions Mesa declares weak.
 A2 is complete by readback. Nothing on the monitor has been confirmed by
 the user since phase 1.
+
+## 2026-10-05 — A3 (part): Mesa's OpenGL runs in Tiger on the card
+
+**Tried.**
+- Cross toolchain for Tiger with C++17: the published container image of
+  GCC 14.2 for `powerpc-apple-darwin8` with the 10.4u SDK, plus meson and
+  Mesa's Python modules (`scripts/darwin-toolchain/Dockerfile`,
+  `scripts/darwin.sh`). The compiler runs in the container, without
+  network, seeing only the repository.
+- `scripts/build-mesa.sh darwin`: Mesa 26.2.4 for Tiger. What Tiger's C
+  library lacks is in `mesa/darwin8/` (`clock_gettime`, `posix_memalign`,
+  `strnlen`, `strndup`, `getline`, `open_memstream`, `pthread_setname_np`,
+  `sysconf(_SC_PHYS_PAGES)`, `static_assert`, and newer names for old
+  things), reaching Mesa through wrapper headers and a static library. No
+  further change to Mesa's sources.
+- Kext: `RadeonNIAccel` starts the 3D engine on the framebuffer's card
+  (microcode injected into the personality like the VBIOS), can draw the
+  self-test at start, and serves `RadeonNIUserClient` (`hw/rdn_user.h`):
+  map the aperture, allocate and free video memory, submit commands, wait
+  for fences. Allocations are freed when the client goes.
+- `tools/guest/rdnuc.c` for the user client; `mesa/target/rdn_device_darwin.c`
+  as Mesa's device.
+
+**Observed.**
+- A C++17 program with threads and thread-local storage, built in the
+  container, runs on 10.4.11 and depends only on libSystem.
+- Meson needed three accommodations: the linker has to print a
+  `PROJECT:ld64` line, an Objective-C compiler has to be named, and the
+  compat declarations must not be force-included for C (they clash with
+  meson's own function probes).
+- The linked test program exceeded what a PowerPC branch reaches (16 MB).
+  Built for size, with `-mlongcall` and dead-code stripping, its text is
+  15 MB and it links. GCC's libatomic has to be linked statically.
+- Kext log in the guest: "ring test succeeded", "3D engine up; 222 MB of
+  video memory for clients", "drawing self-test on 1366x768 returned 0".
+  `rdnuc probe` reads all eight self-test pixels right from user space, in
+  the screen's native byte order; `rdnuc alloc` passes.
+- `rdn_gltest` in Tiger: `GL_RENDERER: AMD TURKS (DRM 2.51.0 / 8.11.0)`,
+  GL 3.2, no error, in 1.4 s. Its picture is identical, all 262144 pixels,
+  to the x86 Linux run of the same scene. Sixty animated frames copied to
+  the screen took 17 s; the screen grabbed from video memory
+  (`build/guest-screen.png`) shows the test pattern, the kext's self-test
+  shapes and the GL scene on top.
+- No host reset. Error escalation was masked (`card-quiet.sh`) throughout,
+  re-applied after QEMU reset the card at guest start.
+
+**Concluded.** Every layer below Apple's OpenGL now works in Tiger on the
+real card: kext engine, user client, Mesa's r600 built for Tiger. What A3
+still needs is the top: the `gld*` bundle handing CGL contexts to Mesa
+instead of to Apple's software renderer. The user has not yet looked at
+the monitor for any of phase 2.

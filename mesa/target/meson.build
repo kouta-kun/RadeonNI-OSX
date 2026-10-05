@@ -6,19 +6,28 @@
 # this directory into the Mesa tree as src/gallium/targets/rdn, with a copy
 # of the hardware library in `hw` inside it.
 
-rdn_hw = files(
-  'hw/rdn_mem.c',
-  'hw/rdn_gpu.c',
-  'hw/rdn_cp.c',
-  'hw/rdn_selftest.c',
-)
+# The device: on Mac OS X the kext's user client, elsewhere (the Linux
+# host) the hardware library in this process.
+if host_machine.system() == 'darwin'
+  rdn_device = files('rdn_device_darwin.c')
+  rdn_device_link_args = ['-framework', 'IOKit', '-framework', 'CoreFoundation']
+else
+  rdn_device = files(
+    'rdn_device_linux.c',
+    'hw/rdn_mem.c',
+    'hw/rdn_gpu.c',
+    'hw/rdn_cp.c',
+    'hw/rdn_selftest.c',
+  )
+  rdn_device_link_args = []
+endif
 
 rdn_inc = [
   include_directories('.'), inc_rdn_winsys, inc_rdn_frontend,
   inc_include, inc_src, inc_gallium, inc_gallium_aux, inc_gallium_winsys,
   inc_gallium_drivers, inc_amd_common,
 ]
-rdn_sources = [files('rdn_target.c', 'rdn_device_linux.c'), rdn_hw]
+rdn_sources = [files('rdn_target.c'), rdn_device]
 rdn_link_whole = [librdn_st, libglapi]
 rdn_link_with = [libr600, libmesa, libgallium, libgalliumvl, librdnwinsys]
 rdn_deps = [dep_thread, idep_mesautil, idep_nir]
@@ -27,7 +36,7 @@ librdngl = shared_library(
   'rdngl',
   rdn_sources,
   gnu_symbol_visibility : 'hidden',
-  link_args : [ld_args_gc_sections],
+  link_args : [ld_args_gc_sections, rdn_device_link_args],
   include_directories : rdn_inc,
   link_whole : rdn_link_whole,
   link_with : rdn_link_with,
@@ -42,6 +51,7 @@ executable(
   'rdn_gltest',
   rdn_sources, files('tests/rdn_gltest.c'),
   include_directories : rdn_inc,
+  link_args : rdn_device_link_args,
   link_whole : rdn_link_whole,
   link_with : rdn_link_with,
   dependencies : rdn_deps,

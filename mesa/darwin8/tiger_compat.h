@@ -42,9 +42,54 @@ int posix_memalign(void **memptr, size_t alignment, size_t size);
 size_t strnlen(const char *s, size_t maxlen);
 char *strndup(const char *s, size_t n);
 ssize_t getline(char **lineptr, size_t *n, FILE *stream);
+/* 10.13. Writing only; *ptr and *size are current after every write. */
+FILE *open_memstream(char **ptr, size_t *size);
+
+/* 10.6. Threads have no names on Tiger; accepted and ignored. */
+int pthread_setname_np(const char *name);
+
+/* sysconf(_SC_PHYS_PAGES) does not exist; answer it from sysctl. */
+#include <unistd.h>
+#ifndef _SC_PHYS_PAGES
+#define _SC_PHYS_PAGES			0x7001
+long tiger_sysconf(int name);
+#define sysconf(name)			tiger_sysconf(name)
+#endif
 
 #ifdef __cplusplus
 }
+#endif
+
+/* Names that came later for things Tiger has under an older one. */
+#include <sys/mman.h>
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS			MAP_ANON
+#endif
+#ifndef MAP_JIT
+#define MAP_JIT				0
+#endif
+
+#include <fcntl.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC			0
+#endif
+
+#include <mach/host_info.h>
+#include <mach/vm_statistics.h>
+#ifndef HOST_VM_INFO64_COUNT
+typedef vm_statistics_data_t vm_statistics64_data_t;
+typedef host_info_t host_info64_t;
+#define HOST_VM_INFO64_COUNT		HOST_VM_INFO_COUNT
+#define host_statistics64		host_statistics
+#endif
+
+/*
+ * Tiger's qsort_r() is the BSD one (context first). Mesa's build probe
+ * takes it for the GNU one, because C lets the mismatched call compile.
+ */
+#undef HAVE_GNU_QSORT_R
+#ifndef HAVE_BSD_QSORT_R
+#define HAVE_BSD_QSORT_R 1
 #endif
 
 #endif /* __APPLE__ */

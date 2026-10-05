@@ -14,6 +14,7 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <mach/mach_time.h>
+#include <sys/sysctl.h>
 
 int clock_gettime(clockid_t clock, struct timespec *ts)
 {
@@ -136,4 +137,84 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream)
 		return -1;
 	(*lineptr)[len] = 0;
 	return (ssize_t)len;
+}
+
+/* open_memstream() on top of funopen(), which Tiger does have. */
+struct memstream {
+	char **ptr;
+	size_t *size;
+	size_t capacity;
+};
+
+static int memstream_write(void *cookie, const char *data, int len)
+{
+	struct memstream *m = cookie;
+	size_t need = *m->size + (size_t)len + 1;
+
+	if (need > m->capacity) {
+		size_t capacity = m->capacity ? m->capacity : 128;
+		char *p;
+
+		while (capacity < need)
+			capacity *= 2;
+		p = realloc(*m->ptr, capacity);
+		if (!p) {
+			errno = ENOMEM;
+			return -1;
+		}
+		*m->ptr = p;
+		m->capacity = capacity;
+	}
+	memcpy(*m->ptr + *m->size, data, (size_t)len);
+	*m->size += (size_t)len;
+	(*m->ptr)[*m->size] = 0;
+	return len;
+}
+
+static int memstream_close(void *cookie)
+{
+	free(cookie);
+	return 0;
+}
+
+FILE *open_memstream(char **ptr, size_t *size)
+{
+	struct memstream *m = calloc(1, sizeof(*m));
+	FILE *f;
+
+	if (!m)
+		return NULL;
+	*ptr = calloc(1, 1);
+	*size = 0;
+	m->ptr = ptr;
+	m->size = size;
+	m->capacity = 1;
+	f = funopen(m, NULL, memstream_write, NULL, memstream_close);
+	if (!f) {
+		free(*ptr);
+		free(m);
+	}
+	return f;
+}
+
+#undef sysconf
+
+long tiger_sysconf(int name)
+{
+	if (name == _SC_PHYS_PAGES) {
+		int mib[2] = { CTL_HW, HW_MEMSIZE };
+		uint64_t bytes = 0;
+		size_t len = sizeof(bytes);
+
+		if (sysctl(mib, 2, &bytes, &len, NULL, 0) || !bytes)
+			return -1;
+		return (long)(bytes / (uint64_t)getpagesize());
+	}
+	return sysconf(name);
+}
+
+int pthread_setname_np(const char *name)
+{
+	(void)name;
+	return 0;
 }

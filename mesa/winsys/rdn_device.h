@@ -43,6 +43,15 @@ struct rdn_device {
    void *aperture;
    uint64_t aperture_size;
 
+   /*
+    * The surface the display shows, if the device knows it: 32-bit pixels
+    * in the CPU's byte order at this aperture offset. Width 0 if unknown.
+    */
+   struct {
+      uint64_t offset;
+      uint32_t width, height, pitch_pixels;
+   } screen;
+
    /* Video memory. Offsets are byte offsets into the aperture. */
    int (*alloc)(struct rdn_device *dev, uint64_t size, uint64_t align,
                 uint64_t *offset);
