@@ -73,7 +73,7 @@ been planned in detail.
   off-screen and in windows; each frame is copied into the buffer Apple's
   code presents. Not done: full-screen contexts, presenting without the
   copy.
-- A5 (Quartz Extreme) works by readback (2026-10-05), not yet seen by the
+- A5 (Quartz Extreme) works (2026-10-05), not yet confirmed complete by the
   user: with `RDN_ACCEL=1 RDN_ACCELCAPS=3 RDN_AGPSHIM=3 RDN_GA=1
   RDN_SURFACES=1 scripts/kext.sh up` the window server composites the
   7570's display with OpenGL through Mesa on the card.
