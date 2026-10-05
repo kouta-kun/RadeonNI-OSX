@@ -156,6 +156,11 @@ Keep these current as part of the work, and commit small and often.
   `x-no-mmap=on` and writes the register trace to `traces/`, which makes
   framebuffer drawing extremely slow.
 
+- `TIGER_NOVGA=1` with `scripts/tiger.sh passthru`: no emulated display,
+  so that the 7570 is the only one (works, 2026-10-05; nothing on VNC,
+  wait for ssh rather than `guest-cycle.sh ready`, then `kext.sh up`).
+  The default keeps the emulated display. `~/gl/cgmode main N` in the
+  guest makes a display the main one; the 7570's is, since 2026-10-05.
 - `tools/guest/cgmode.c`: build in the guest (`gcc -o cgmode cgmode.c
   -framework ApplicationServices`) to list and switch display modes through
   Quartz and to put the cursor on a display.

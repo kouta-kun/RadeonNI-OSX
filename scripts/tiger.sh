@@ -20,6 +20,7 @@
 # guest an absolute pointer so clicks can be scripted.
 # Environment:  TIGER_MEM (MB, default 1024), TIGER_DISK, TIGER_USER,
 #               TIGER_BOOTARGS (kernel boot arguments, e.g. debug=0x100).
+#               TIGER_NOVGA=1 (no emulated display; experiment).
 
 set -euo pipefail
 
@@ -44,6 +45,12 @@ base_args() {
     )
     # TIGER_BOOTARGS="debug=0x100" makes a kernel panic print its text and
     # backtrace on the screen instead of the restart dialog.
+    # TIGER_NOVGA=1 leaves out the emulated display, so that a passed-through
+    # card is the only one. Nothing shows on VNC then, and boot messages
+    # only go to the serial log.
+    if [ "${TIGER_NOVGA:-0}" = 1 ]; then
+        args+=(-vga none)
+    fi
     if [ -n "${TIGER_BOOTARGS:-}" ]; then
         args+=(-prom-env "boot-args=$TIGER_BOOTARGS")
     fi

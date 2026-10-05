@@ -1440,3 +1440,27 @@ software. This is the unfinished half of A4 (windows as surfaces of their
 own). Not known: what decides between the two kinds of record (`glwin`
 is GLUT, Chess is Cocoa and asks for a multisampled format).
 
+## 2026-10-05 — The 7570 as main display, then as the only display
+
+Asked for by the user, who settled "emulated VGA stays primary" earlier
+and wanted both tried.
+
+**Main display.** `cgmode main 1` (new: `CGConfigureDisplayOrigin` puts
+the display at the origin, kept across logins). Menu bar, Dock and
+desktop icons moved to the 7570's display and are composited by Quartz
+Extreme (readback).
+
+**Only display.** `TIGER_NOVGA=1 scripts/tiger.sh passthru ...` adds
+`-vga none`. OpenBIOS complains on the serial log (`NULL ihandle`,
+`slw_update_keymap` failing) and boots anyway; Tiger reaches ssh in the
+usual time with WindowServer and loginwindow running and no screen.
+`scripts/guest-cycle.sh ready` cannot be used (it waits for the Finder,
+which only starts once there is a display); wait for ssh instead. After
+`scripts/kext.sh up` the card is display 0, main, 1366x768 (the start-up
+mode), Quartz Extreme in use, Finder and Dock up; `cgmode set 0 1920 1080
+32` switches it. Readback shows the complete desktop.
+
+**Costs seen.** No picture on VNC and no emulated screen to read a panic
+from. A Dock process of the display-less session stayed behind next to
+the new one.
+
