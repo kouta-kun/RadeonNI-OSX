@@ -22,12 +22,17 @@ System Preferences and a software cursor.
   GDDR5, monitor on the DVI-I connector. VBIOS dump in `private/vbios.rom`.
 - `hw/` cold-POSTs the card, reads the EDID over DDC, starts the display
   engine clock and sets modes through AtomBIOS. No MC microcode is needed.
-- `kext/RadeonNI` is the `IOFramebuffer` subclass built on it. It is
-  installed in the guest's `/System/Library/Extensions` and comes up at
-  boot. A kext loaded by hand later needs `scripts/kext.sh activate`,
-  because the window server only looks for framebuffers when it starts.
-- The tag `working-framebuffer` marks the confirmed phase 1 state.
-- The guest: snapshots `clean-install` and `pre-kext-install` (no kext), user `tiger` / password `tiger`,
+- `kext/RadeonNI` is the `IOFramebuffer` subclass built on it. In the guest
+  it is loaded by hand (`scripts/kext.sh up`); the window server only looks
+  for framebuffers when it starts, so `up` restarts it. Installed in
+  `/System/Library/Extensions` it comes up at boot by itself (verified in
+  the guest with the G5 package, then uninstalled).
+- `scripts/make-g5-package.sh` builds `build/RadeonNI-g5.tar.gz` for the
+  real Power Mac G5. It has never run on a real Mac.
+- The tag `working-framebuffer` marks the confirmed phase 1 state including
+  the G5 install package.
+- The guest: snapshots `clean-install` and `pre-kext-install` (no kext
+  installed in either), user `tiger` / password `tiger`,
   `scripts/tiger.sh ssh`. QEMU must be the patched build (`patches/qemu/`).
 - `radeon` is blacklisted on the host (`/etc/modprobe.d/osx-gpu.conf`)
   because unbinding it led to a host kernel oops.
@@ -93,12 +98,13 @@ Keep these current as part of the work, and commit small and often.
 - `tools/guest/cgmode.c`: build in the guest (`gcc -o cgmode cgmode.c
   -framework ApplicationServices`) to list and switch display modes through
   Quartz and to put the cursor on a display.
-- `scripts/kext.sh {build|install|uninstall|load|activate|up|unload|log}`:
-  build `kext/RadeonNI` inside the running guest with its Makefile.
-  `install` puts it in `/System/Library/Extensions` (effective at the next
-  guest boot). For a quick loop without rebooting, `load` runs it from
-  `/tmp` and `activate` restarts the window server so it uses the screen
-  (`up` = build, load, activate).
+- `scripts/kext.sh up`: build `kext/RadeonNI` inside the running guest, load
+  it from `/tmp` with `kextload`, and restart the guest's window server so
+  that it uses the screen. The steps are also available one by one
+  (`build`, `load`, `activate`), plus `unload`, `log` and `uninstall`.
+- `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
+  with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
+  `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.
 
 ## Architecture
 
@@ -165,13 +171,13 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
   "Deferred to the real G5").
 - Cold POST follows the Linux `radeon` initialisation order.
 - The kext is built inside the Tiger guest over ssh with Xcode 2.5 and
-  Apple's gcc. It is installed in `/System/Library/Extensions` like a real
-  driver (`scripts/kext.sh install`) so that it loads at boot, before the
-  window server. The original rule against installing it there was dropped
-  by the user on 2026-10-04. If an installed kext breaks boot, start the
-  guest without the card (`scripts/tiger.sh run`): it then matches nothing
-  and is not loaded, and `scripts/kext.sh uninstall` removes it. Snapshots
-  are the second way back.
+  Apple's gcc. Under QEMU it is always loaded from a temporary directory,
+  freshly built (`scripts/kext.sh up`), never from an installed copy, so
+  that what runs is never stale (user's decision, 2026-10-04). Installing
+  into `/System/Library/Extensions` is how it runs on the real Mac; that is
+  done by the package from `scripts/make-g5-package.sh` (`g5/install.sh`).
+  The package may be rehearsed in the guest, and must be uninstalled again
+  afterwards.
 - QEMU: emulated VGA stays primary; `vfio-pci` with `x-no-mmap=on` plus the
   `vfio_region_*` trace events gives the register trace to compare against
   the reference. No `x-vga`.

@@ -272,21 +272,10 @@ OpenBIOS is not patched.
 
 ## Building and loading the kext
 
-The normal way, as a real driver: with a passthrough guest running,
-
-    scripts/kext.sh build
-    scripts/kext.sh install    # into /System/Library/Extensions
-    # restart the guest: the kext loads at boot and the desktop comes up
-
-`scripts/kext.sh uninstall` removes it. If an installed kext keeps the guest
-from booting, boot without the card (`scripts/tiger.sh run`); the kext then
-matches nothing and is not loaded. Snapshot `pre-kext-install` is the guest
-just before the first install.
-
-The quick loop, without rebooting the guest (uninstall first, or the
-installed copy is already running):
-
-With a passthrough guest running:
+Under QEMU the kext is always built fresh and loaded from a temporary
+directory, never from an installed copy, so that what runs is never stale.
+With a passthrough guest running, `scripts/kext.sh up` does it all; the
+steps are:
 
     scripts/kext.sh build     # tar hw/ and kext/ to the guest, make there
     scripts/kext.sh load      # root-owned copy in /tmp/rdnkext, kextload
@@ -311,6 +300,22 @@ scripted pointer is off: to hit (X, Y) send roughly
 `scripts/tiger.sh passthru` does not trace by default, so that drawing is at
 normal speed. `TIGER_TRACE=1` adds `x-no-mmap=on` and the trace events; every
 framebuffer write is then trapped and the desktop takes minutes to draw.
+
+## Package for the real Mac
+
+    scripts/make-g5-package.sh --with-vbios    # build/RadeonNI-g5.tar.gz
+
+The package holds the kext as built in the guest, `install.sh`,
+`uninstall.sh`, a README and, with `--with-vbios`, the VBIOS dump (leave it
+out of anything published). On the Mac: unpack, `sudo ./install.sh`,
+restart. `install.sh` puts the VBIOS into the kext's Info.plist, validates
+the kext with `kextload -t -n`, copies it to `/System/Library/Extensions`
+and invalidates the extension caches.
+
+Rehearsed in the guest on 2026-10-04: after `install.sh` and a restart the
+kext loaded at boot, cold-POSTed the card and the window server used the
+screen without being restarted; after `uninstall.sh` and a restart the guest
+was clean again. It has never run on a real Mac.
 
 Notes for Apple gcc 4.0.1 on PowerPC: no `-mkernel`; link the objects before
 `-lkmodc++ -lkmod -lcc_kext`; `OSBundleLibraries` for `com.apple.kernel.*`

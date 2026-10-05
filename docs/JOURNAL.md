@@ -836,3 +836,30 @@ normal way to run it from now on; `load` + `activate` remains as the quick
 loop. Recovery if an installed kext breaks boot: start the guest without the
 card (`scripts/tiger.sh run`), where the kext matches nothing and is never
 loaded, then `scripts/kext.sh uninstall`; or restore a snapshot.
+
+## 2026-10-04 — Install package for the real Mac; QEMU work stays on the temporary kext
+
+**Decision (user).** For development under QEMU, keep loading the freshly
+built kext from a temporary directory so that it can never be stale.
+Installing into `/System/Library/Extensions` is for the real G5, through a
+script the user runs there.
+
+**Tried.** `g5/install.sh`, `g5/uninstall.sh`, `g5/README.txt` and
+`scripts/make-g5-package.sh`, which packs them with the guest-built kext
+into `build/RadeonNI-g5.tar.gz`. `install.sh` checks for root, 10.4 and
+PowerPC, validates the VBIOS image (55 AA, length, ATOMBIOS marker), injects
+it into the Info.plist with perl's MIME::Base64, validates the kext with
+`kextload -t -n` before touching the Extensions folder, installs, and
+prints the three ways to recover a Mac that does not boot. Rehearsed in the
+guest: removed the earlier install, ran the package's `install.sh`,
+restarted; then `uninstall.sh`, restarted.
+
+**Observed.** After install and restart: kext loaded, "GPU not posted.
+posting now...", framebuffer started, the window server set 1920x1080 by
+itself. After uninstall and restart: kext not loaded, not installed.
+`scripts/kext.sh install` was removed again; `up` refuses to run while an
+installed copy is present.
+
+**Concluded.** The install path works on Tiger 10.4.11. Nothing here has
+run on a real Mac: Open Firmware's BAR assignment, the interplay with the
+GeForce 6600 LE, and cold POST on the G5 are all untested.

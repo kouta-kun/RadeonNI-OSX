@@ -164,6 +164,14 @@ Harness:
   the guest.
 - With two displays the scripted pointer (`guest-ctl.py`) lands off target.
 
+## First run on the real G5 (not planned in detail yet)
+
+`scripts/make-g5-package.sh --with-vbios` produces the package; the user
+installs it with `sudo ./install.sh`. Things to look at first on the Mac:
+`ioreg -p IODeviceTree -n pci1002,675d -w0` (did Open Firmware assign BAR0
+and BAR2, and the ROM?), `sudo dmesg | grep RadeonNI`, and whether the
+6600 LE stays the console.
+
 ## Deferred to the real G5
 
 Things knowingly left untested under QEMU, to revisit once the driver runs

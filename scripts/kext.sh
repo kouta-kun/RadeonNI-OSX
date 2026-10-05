@@ -10,12 +10,14 @@
 #   scripts/kext.sh unload
 #   scripts/kext.sh log        kernel log lines from the driver
 #
-#   scripts/kext.sh install    install into /System/Library/Extensions so
-#                              that it loads at boot like a real driver
-#   scripts/kext.sh uninstall
+#   scripts/kext.sh uninstall  remove a copy installed in the guest's
+#                              /System/Library/Extensions (see below)
 #
-# load/activate is the quick loop while developing; install is how the
-# driver is meant to run.
+# Under QEMU the kext is always loaded from the temporary directory, freshly
+# built, so that what runs is never a stale installed copy. Installing into
+# /System/Library/Extensions is for the real Mac and is done by the package
+# from scripts/make-g5-package.sh; rehearsing that package in the guest is
+# the only reason an installed copy should ever be there.
 
 set -euo pipefail
 
@@ -53,21 +55,6 @@ load)
         sudo chown -R root:wheel /tmp/rdnkext && sudo chmod -R go-w /tmp/rdnkext &&
         sudo sync && sudo kextload -t /tmp/rdnkext/RadeonNI.kext; kextstat | grep -i osxgpu' < "$root/build/kext-Info.plist"
     ;;
-install)
-    # Install like a real driver: the system loads it at boot when it finds
-    # the card, before the window server starts. Takes effect at the next
-    # guest boot. If it ever stops the guest from booting, boot without the
-    # card (scripts/tiger.sh run): the kext then matches nothing and is not
-    # loaded, and "scripts/kext.sh uninstall" removes it.
-    make_plist
-    gssh "sudo rm -rf $SLE/RadeonNI.kext &&
-        sudo cp -R ~/osx-gpu/kext/RadeonNI/build/RadeonNI.kext $SLE/ && cat > /tmp/rdn-Info.plist &&
-        sudo cp /tmp/rdn-Info.plist $SLE/RadeonNI.kext/Contents/Info.plist &&
-        sudo chown -R root:wheel $SLE/RadeonNI.kext && sudo chmod -R go-w $SLE/RadeonNI.kext &&
-        sudo kextload -t -n $SLE/RadeonNI.kext &&
-        sudo rm -f /System/Library/Extensions.mkext /System/Library/Extensions.kextcache &&
-        sudo touch $SLE && sudo sync && ls -ld $SLE/RadeonNI.kext" < "$root/build/kext-Info.plist"
-    ;;
 uninstall)
     gssh "sudo rm -rf $SLE/RadeonNI.kext &&
         sudo rm -f /System/Library/Extensions.mkext /System/Library/Extensions.kextcache &&
@@ -87,6 +74,10 @@ activate)
         system_profiler SPDisplaysDataType 2>/dev/null | grep -A12 "pci1002" | grep -E "Resolution|Depth"'
     ;;
 up)
+    if gssh "test -d $SLE/RadeonNI.kext"; then
+        echo "an installed RadeonNI.kext is in the guest; run 'scripts/kext.sh uninstall' and restart the guest first" >&2
+        exit 1
+    fi
     "$0" build && "$0" load && "$0" activate
     ;;
 unload)
