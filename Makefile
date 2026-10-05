@@ -29,10 +29,10 @@ CFLAGS_COMMON = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter
 CFLAGS_UPSTREAM = $(CFLAGS_COMMON) -Wno-sign-compare -Wno-type-limits \
 	-Wno-unused-variable -Wno-unused-but-set-variable
 
-HW_OBJS   = hw/rdn_gpu.o hw/rdn_cp.o hw/rdn_selftest.o hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_mode.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
+HW_OBJS   = hw/rdn_mem.o hw/rdn_gpu.o hw/rdn_cp.o hw/rdn_selftest.o hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_mode.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
 HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h hw/linux/*.h)
 
-TESTS     = atom_replay i2c_edid modeset_replay accel_replay
+TESTS     = atom_replay i2c_edid modeset_replay accel_replay mem_alloc
 
 X86_TESTS = $(addprefix build/x86/,$(TESTS))
 PPC_TESTS = $(addprefix build/ppc/,$(TESTS))
@@ -86,6 +86,7 @@ test: all
 		echo "SKIP: need $(VBIOS) and $(REF_PHASE)"; \
 	else \
 		set -e; \
+		$(call run_test,mem_alloc,); \
 		$(call run_test,atom_replay,$(VBIOS) $(REF_PHASE)); \
 		$(call run_test,i2c_edid,$(VBIOS)); \
 		if [ -f $(REF_MODESET) ] && [ -f $(EDID) ]; then \
@@ -96,6 +97,12 @@ test: all
 			$(call run_test,accel_replay,$(VBIOS) $(FW_PFP) $(FW_ME) $(REF_INIT)); \
 		else echo "SKIP accel_replay: need $(FW_PFP), $(FW_ME) and $(REF_INIT)"; fi; \
 	fi
+
+# Mesa-based tests need scripts/build-mesa.sh to have run.
+MESA_BUILD ?= third_party/mesa-26.2.4/build-x86/src/gallium/targets/rdn
+build/x86/rdn_gltest: mesa/tests/rdn_gltest.c $(MESA_BUILD)/librdngl.so
+	$(CC) -O2 -Wall -Imesa/frontend/include -Ithird_party/mesa-26.2.4/include \
+		-o $@ $< -L$(MESA_BUILD) -lrdngl -Wl,-rpath,$(CURDIR)/$(MESA_BUILD)
 
 clean:
 	rm -rf build/x86 build/ppc

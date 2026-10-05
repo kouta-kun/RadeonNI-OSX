@@ -56,7 +56,11 @@ been planned in detail.
   the user: `hw/rdn_gpu.c`, `hw/rdn_cp.c` and `hw/rdn_selftest.c` start the
   3D engine and the command processor and draw a textured square and
   triangle, from `rdn_tool accel` on the x86 host.
-- A2 to A7 have not started.
+- A2's x86 half works by readback (2026-10-05): Mesa 26.2.4's `r600`
+  renders fixed-function GL on the card through `mesa/winsys` and `hw/`,
+  with no Linux DRM (`scripts/build-mesa.sh`, `build/x86/rdn_gltest`). The
+  big-endian run under `qemu-ppc` is not done.
+- A3 to A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` installed in
   `/System/Library/Extensions`; the snapshots do not. It is inert unless
   the kext is loaded with `RDN_ACCEL=1`.
@@ -140,6 +144,12 @@ Keep these current as part of the work, and commit small and often.
 - `tools/guest/glprobe.c`: build in the guest (command in its header) to
   list OpenGL renderers and to draw off-screen on a chosen renderer
   (`glprobe draw 0x20400` goes through our bundle).
+- `scripts/build-mesa.sh`: fetch Mesa 26.2.4 into `third_party/`, apply
+  `mesa/patches/`, copy `mesa/` and `hw/` into its tree and build
+  `librdngl.so` for the host. Run it again after editing `mesa/` or `hw/`.
+  Then (card posted and mode set with `rdn_tool`):
+  `sudo build/x86/rdn_gltest -n 90 -s 1366 768 1408 -o build/gltest.ppm`
+  after `make build/x86/rdn_gltest`.
 - `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
   with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
   `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.
@@ -175,6 +185,10 @@ Keep these current as part of the work, and commit small and often.
   call order recorded in `traces/ref-radeon-3.atomcalls.txt`.
 - `gld/` is the OpenGL driver bundle, built in the guest. Today it forwards
   every `gld*` call to `GLRendererFloat` and logs it.
+- `mesa/` is what this project adds to Mesa: `winsys/` (r600's winsys over
+  `rdn_device.h`, no DRM), `frontend/` (off-screen GL contexts, from Mesa's
+  former OSMesa), `target/` (the device for Linux and the library that ties
+  it together), `patches/` (the only changes to Mesa itself).
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.

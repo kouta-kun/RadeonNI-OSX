@@ -1,0 +1,52 @@
+diff --git a/meson.options b/meson.options
+index 93a60e3..9635578 100644
+--- a/meson.options
++++ b/meson.options
+@@ -915,3 +915,10 @@ option(
+   value : false,
+   description : 'Build panfrost Rust components.'
+ )
++
++option(
++  'rdn',
++  type : 'boolean',
++  value : false,
++  description : 'osx-gpu: build r600 on the rdn winsys (no DRM) with its off-screen frontend.'
++)
+diff --git a/src/gallium/drivers/r600/r600_pipe.c b/src/gallium/drivers/r600/r600_pipe.c
+index f9320ec..73d0e00 100644
+--- a/src/gallium/drivers/r600/r600_pipe.c
++++ b/src/gallium/drivers/r600/r600_pipe.c
+@@ -384,12 +384,10 @@ r600_version_simple(const unsigned version_major,
+ static inline unsigned
+ r600_get_drm_version(struct r600_screen *rscreen)
+ {
+-	drmVersionPtr version = drmGetVersion(rscreen->b.ws->get_fd(rscreen->b.ws));
+-	const unsigned drm_version = r600_version_simple(version->version_major,
+-							 version->version_minor,
+-							 version->version_patchlevel);
+-
+-	drmFreeVersion(version);
++	/* osx-gpu: from the winsys, which may have no DRM device behind it. */
++	const unsigned drm_version = r600_version_simple(rscreen->b.info.drm_major,
++							 rscreen->b.info.drm_minor,
++							 rscreen->b.info.drm_patchlevel);
+ 
+ 	return drm_version;
+ }
+diff --git a/src/gallium/meson.build b/src/gallium/meson.build
+index 67011f5..ac8cccc 100644
+--- a/src/gallium/meson.build
++++ b/src/gallium/meson.build
+@@ -260,3 +260,11 @@ if with_teflon
+   subdir('frontends/teflon')
+   subdir('targets/teflon')
+ endif
++
++# osx-gpu: r600 without the Linux DRM. The three directories are links
++# made by that project's scripts/build-mesa.sh.
++if get_option('rdn')
++  subdir('winsys/rdn')
++  subdir('frontends/rdn')
++  subdir('targets/rdn')
++endif

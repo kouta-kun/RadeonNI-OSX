@@ -987,3 +987,38 @@ code from libdrm is now inside Mesa's radeon winsys; `r600` needs C++17.
 
 **Concluded.** Mesa 26.2.4 is the base. The C++17 requirement lands on the
 Tiger cross-compile in A3.
+
+## 2026-10-05 — A2 (x86): Mesa 26.2.4's r600 renders on the card through our code
+
+**Tried.** `mesa/winsys/`: a winsys for r600 over a small device interface
+(`rdn_device.h`): buffers are ranges of video memory with fixed GPU
+addresses, a command stream is copied into video memory and run as one
+indirect buffer, fences are the hardware library's. The driver is told it
+has GPU virtual addressing, a mode Mesa already has (`RADEON_VA`), so it
+writes buffer addresses into the stream itself and nothing is patched or
+parsed. Mesa's own surface layout sources are built unchanged over two
+stand-in headers. `mesa/target/`: the device for Linux, the hardware
+library in the same process. `mesa/frontend/`: Mesa 25.0's OSMesa
+frontend, which current Mesa dropped, adapted. `hw/rdn_mem.c`: the video
+memory allocator. `scripts/build-mesa.sh` builds `librdngl.so`;
+`mesa/tests/rdn_gltest.c` draws with fixed-function GL.
+
+**Observed.**
+- Mesa needed one change in r600: it called libdrm's `drmGetVersion()` on
+  the winsys's file descriptor; it now takes the version from the winsys.
+  Plus the build hooks. Both are `mesa/patches/0001-osx-gpu.patch`.
+- `GL_RENDERER: AMD TURKS`, `GL_VERSION: 4.6 (Compatibility Profile) Mesa
+  26.2.4`, no GL error.
+- The picture, read back from the off-screen buffer and, after copying 90
+  frames to the scanout surface, from the framebuffer (`rdn_tool grab`):
+  grey background, a smoothly shaded red-green-blue triangle in front of a
+  yellow one drawn after it (so the depth test works), and a magenta and
+  white checkerboard texture on a square, all rotated as asked.
+- 90 frames in 7 s including start-up, with each frame read back and copied
+  to the screen by the CPU.
+
+**Concluded.** The whole path works on little-endian: GL state tracker,
+shader compilation, r600, our winsys, our command processor code, the card.
+Not yet done for A2: the same on big-endian under `qemu-ppc`. What the
+monitor showed is for the user to confirm; the framebuffer readback is
+right.
