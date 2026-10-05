@@ -6,6 +6,8 @@
  *   cgmode list
  *   cgmode set <display-index> <width> <height> <bits-per-pixel>
  *   cgmode cursor <display-index>       move the cursor to its centre
+ *   cgmode main <display-index>         make it the main display (menu
+ *                                       bar, Dock, new windows)
  *
  * Build in the guest: gcc -o cgmode cgmode.c -framework ApplicationServices
  *
@@ -35,7 +37,34 @@ int main(int argc, char **argv)
 	CGDisplayErr err;
 
 	if (argc < 2 || CGGetActiveDisplayList(8, displays, &count)) {
-		fprintf(stderr, "usage: cgmode list | set N W H BPP | cursor N\n");
+		if (!strcmp(argv[1], "main")) {
+		CGDisplayConfigRef config;
+		long x = CGDisplayPixelsWide(displays[i]);
+		CGDisplayCount j;
+
+		/*
+		 * The main display is the one at the origin: put this one
+		 * there and the others in a row to its right. Kept across
+		 * logins.
+		 */
+		err = CGBeginDisplayConfiguration(&config);
+		if (!err)
+			err = CGConfigureDisplayOrigin(config, displays[i], 0, 0);
+		for (j = 0; !err && j < count; j++) {
+			if (j == i)
+				continue;
+			err = CGConfigureDisplayOrigin(config, displays[j], x, 0);
+			x += CGDisplayPixelsWide(displays[j]);
+		}
+		if (!err)
+			err = CGCompleteDisplayConfiguration(config,
+							     kCGConfigurePermanently);
+		printf("making display %u the main one returned %d\n", (unsigned)i,
+		       (int)err);
+		return err ? 1 : 0;
+	}
+
+	fprintf(stderr, "usage: cgmode list | set N W H BPP | cursor N | main N\n");
 		return 2;
 	}
 
@@ -95,6 +124,33 @@ int main(int argc, char **argv)
 		return err ? 1 : 0;
 	}
 
-	fprintf(stderr, "usage: cgmode list | set N W H BPP | cursor N\n");
+	if (!strcmp(argv[1], "main")) {
+		CGDisplayConfigRef config;
+		long x = CGDisplayPixelsWide(displays[i]);
+		CGDisplayCount j;
+
+		/*
+		 * The main display is the one at the origin: put this one
+		 * there and the others in a row to its right. Kept across
+		 * logins.
+		 */
+		err = CGBeginDisplayConfiguration(&config);
+		if (!err)
+			err = CGConfigureDisplayOrigin(config, displays[i], 0, 0);
+		for (j = 0; !err && j < count; j++) {
+			if (j == i)
+				continue;
+			err = CGConfigureDisplayOrigin(config, displays[j], x, 0);
+			x += CGDisplayPixelsWide(displays[j]);
+		}
+		if (!err)
+			err = CGCompleteDisplayConfiguration(config,
+							     kCGConfigurePermanently);
+		printf("making display %u the main one returned %d\n", (unsigned)i,
+		       (int)err);
+		return err ? 1 : 0;
+	}
+
+	fprintf(stderr, "usage: cgmode list | set N W H BPP | cursor N | main N\n");
 	return 2;
 }
