@@ -11,7 +11,7 @@ wherever its criterion involves video output.
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | **Done 2026-10-04**: `IOPCIDevice` with BAR0/BAR2 assigned; a probe kext reads the registers through BAR2 (needs the QEMU PCI-hole patch) |
 | 2 | Cold POST and modeset from Linux userspace | **Done 2026-10-04**: test pattern at 1366x768 from an un-POSTed card, confirmed on screen by the user |
-| 3 | `IOFramebuffer` kext in Tiger on QEMU | Skeleton only: probe kext builds in the guest, loads by hand, matches the card and reads registers |
+| 3 | `IOFramebuffer` kext in Tiger on QEMU | In progress: the kext POSTs the card, reads the EDID and sets 1366x768 from inside Tiger, pattern confirmed by the user; the `IOFramebuffer` subclass itself is next |
 
 ## Needed from the user
 

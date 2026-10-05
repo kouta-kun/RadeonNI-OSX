@@ -40,6 +40,7 @@
 #include "../hw/rdn_card.h"
 #include "../hw/rdn_i2c.h"
 #include "../hw/rdn_mode.h"
+#include "../hw/rdn_pattern.h"
 #include "../hw/rdn_reg.h"
 
 #define MMIO_SIZE	0x20000
@@ -336,99 +337,7 @@ static int vram_test(struct linux_card *lc)
 	return bad ? 1 : 0;
 }
 
-/* 5x7 glyphs for the digits and 'x', one byte per row, bit 4 leftmost. */
-static const uint8_t font[11][7] = {
-	{ 0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e },	/* 0 */
-	{ 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e },	/* 1 */
-	{ 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f },	/* 2 */
-	{ 0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e },	/* 3 */
-	{ 0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02 },	/* 4 */
-	{ 0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e },	/* 5 */
-	{ 0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e },	/* 6 */
-	{ 0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 },	/* 7 */
-	{ 0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e },	/* 8 */
-	{ 0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c },	/* 9 */
-	{ 0x00, 0x00, 0x11, 0x0a, 0x04, 0x0a, 0x11 },	/* x */
-};
-
 static int force_dvi;
-
-struct canvas {
-	volatile uint32_t *pix;
-	uint32_t width, height, pitch;
-};
-
-/* Pixels are XRGB, stored little-endian (the card does no byte swap). */
-static void put(struct canvas *c, uint32_t x, uint32_t y, uint32_t rgb)
-{
-	if (x < c->width && y < c->height)
-		c->pix[y * c->pitch + x] = rdn_swap_le32(rgb);
-}
-
-static void fill(struct canvas *c, uint32_t x0, uint32_t y0, uint32_t w,
-		 uint32_t h, uint32_t rgb)
-{
-	uint32_t x, y;
-
-	for (y = y0; y < y0 + h; y++)
-		for (x = x0; x < x0 + w; x++)
-			put(c, x, y, rgb);
-}
-
-static void text(struct canvas *c, uint32_t x0, uint32_t y0, uint32_t scale,
-		 const char *str, uint32_t rgb)
-{
-	for (; *str; str++, x0 += 6 * scale) {
-		int g = *str == 'x' ? 10 : *str - '0', row, col;
-
-		if (g < 0 || g > 10)
-			continue;
-		for (row = 0; row < 7; row++)
-			for (col = 0; col < 5; col++)
-				if (font[g][row] & (0x10 >> col))
-					fill(c, x0 + col * scale, y0 + row * scale,
-					     scale, scale, rgb);
-	}
-}
-
-/*
- * The test pattern, made to be described unambiguously:
- *  - a one-pixel white line on all four edges of the screen;
- *  - inside it a black margin 15 pixels wide;
- *  - then eight vertical bars, left to right: white, yellow, cyan, green,
- *    magenta, red, blue, black;
- *  - in the middle a black box with the resolution in white digits.
- */
-static void draw_pattern(struct canvas *c)
-{
-	static const uint32_t bars[8] = {
-		0xffffff, 0xffff00, 0x00ffff, 0x00ff00,
-		0xff00ff, 0xff0000, 0x0000ff, 0x000000
-	};
-	const uint32_t m = 16, scale = 8;
-	uint32_t w = c->width, h = c->height, i, tw, th;
-	char label[32];
-
-	fill(c, 0, 0, w, h, 0x000000);
-	fill(c, 0, 0, w, 1, 0xffffff);
-	fill(c, 0, h - 1, w, 1, 0xffffff);
-	fill(c, 0, 0, 1, h, 0xffffff);
-	fill(c, w - 1, 0, 1, h, 0xffffff);
-
-	for (i = 0; i < 8; i++) {
-		uint32_t x0 = m + (w - 2 * m) * i / 8;
-		uint32_t x1 = m + (w - 2 * m) * (i + 1) / 8;
-
-		fill(c, x0, m, x1 - x0, h - 2 * m, bars[i]);
-	}
-
-	snprintf(label, sizeof(label), "%ux%u", w, h);
-	tw = (uint32_t)strlen(label) * 6 * scale;
-	th = 7 * scale;
-	fill(c, (w - tw) / 2 - 2 * scale, (h - th) / 2 - 2 * scale,
-	     tw + 3 * scale, th + 4 * scale, 0x000000);
-	text(c, (w - tw) / 2, (h - th) / 2, scale, label, 0xffffff);
-}
 
 static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 {
@@ -436,7 +345,7 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 	struct rdn_i2c_bus bus;
 	struct rdn_mode mode;
 	struct rdn_fb fb;
-	struct canvas c;
+	volatile uint32_t *pix;
 	struct stat st;
 	bool hdmi;
 	int len, fd, r;
@@ -462,21 +371,20 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 	fb.width = mode.hdisplay;
 	fb.height = mode.vdisplay;
 	fb.pitch_pixels = (mode.hdisplay + 63u) & ~63u;
+	/* The pattern is written as native words. */
+	fb.big_endian_pixels = RDN_BIG_ENDIAN;
 
 	fd = sysfs_open(lc, "resource0_wc", O_RDWR);
 	if (fd < 0)
 		fd = sysfs_open(lc, "resource0", O_RDWR);
 	if (fd < 0 || fstat(fd, &st))
 		return -1;
-	c.pix = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (c.pix == MAP_FAILED) {
+	pix = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (pix == MAP_FAILED) {
 		perror("mmap aperture");
 		return -1;
 	}
-	c.width = fb.width;
-	c.height = fb.height;
-	c.pitch = fb.pitch_pixels;
-	draw_pattern(&c);
+	rdn_pattern_draw(pix, fb.width, fb.height, fb.pitch_pixels);
 
 	r = rdn_display_init(card);
 	if (r) {
@@ -485,7 +393,7 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 	}
 	r = rdn_modeset(card, &mode, &fb, hdmi);
 	printf("modeset returned %d\n", r);
-	munmap((void *)c.pix, st.st_size);
+	munmap((void *)pix, st.st_size);
 	close(fd);
 	return r;
 }

@@ -33,8 +33,10 @@ BAR2 at `0xa0000000`, and the probe kext in `kext/RadeonNI` reads its
 registers. That needs the patched QEMU (`patches/qemu/`). OpenBIOS assigns
 neither the I/O BAR nor the expansion ROM. `radeon` is blacklisted on the
 host (`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host
-kernel oops; see the JOURNAL. Milestone 3 is next: the probe kext has to
-become an `IOFramebuffer` that links `hw/` and runs this same sequence.
+kernel oops; see the JOURNAL. Milestone 3 is in progress: `kext/RadeonNI`
+links `hw/`, and in `start()` POSTs the card, reads the EDID, sets the mode
+and draws the pattern (confirmed on screen). It is still an `IOService`;
+making it an `IOFramebuffer` subclass is the next step.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -111,8 +113,10 @@ Keep these current as part of the work, and commit small and often.
 - `tools/rdn_tool.c` is the Linux sysfs implementation of the OS layer and
   the milestone 2 front end.
 - `kext/RadeonNI/` is the Tiger kext, built in the guest by a plain Makefile
-  (no Xcode project). Today it is a probe `IOService`; it will become the
-  `IOFramebuffer` subclass and link the `hw/` library.
+  (no Xcode project) that compiles `hw/` into it unchanged. `compat/` holds
+  the two standard headers Kernel.framework lacks. The VBIOS reaches it as a
+  `VBIOS` data property injected into the personality by `scripts/kext.sh
+  load`; it is never part of the built bundle or the repository.
 - `hw/rdn_modeset.c` builds AtomBIOS parameter blocks byte by byte in
   little-endian layout (no structs, no bitfields) and follows the Linux
   call order recorded in `traces/ref-radeon-3.atomcalls.txt`.

@@ -642,3 +642,36 @@ monitor, candidates are HDMI signalling without an AVI infoframe (the
 monitor may assume a different colour encoding or range) and the unported
 parts of the colour pipeline. `rdn_tool -d modeset` (DVI signalling) is a
 quick way to tell.
+
+## 2026-10-04 — The kext brings the card up from inside Tiger; pattern confirmed by the user
+
+**Tried.** The test pattern moved into `hw/rdn_pattern.c`. `kext/RadeonNI`
+now links the whole `hw/` library, supplies the OS layer for IOKit, takes the
+VBIOS from a `VBIOS` data property that `scripts/kext.sh load` injects into
+the personality from `private/vbios.rom`, and in `start()` runs POST, EDID,
+display init and modeset, with the pattern drawn through BAR0. Loaded in a
+passthrough guest whose card QEMU had just reset to un-POSTed.
+
+**Observed.**
+
+- Apple gcc 4.0.1 compiles the library unchanged. Kernel.framework has no
+  `<stddef.h>` or `<stdbool.h>`; `kext/RadeonNI/compat/` provides them. The
+  kernel exports everything else the kext needs, including `vsnprintf`.
+- First load, kernel log: "GPU not posted. posting now...", `CONFIG_MEMSIZE`
+  1024 MB, EDID 256 bytes with 1366x768 preferred, display engine clock,
+  PLL fb 76.0 ref 2 post 12, "modeset returned 0, CRTC0_CONTROL 00410311".
+- The user confirms the monitor shows the same pattern as with the Linux
+  tool. The colour bars being in the right order means the pixel byte order
+  is right: the kext writes big-endian XRGB words and the card swaps them
+  (`GRPH_SWAP_CONTROL` = 2).
+- Host trace: the kext's first 1754 register writes (the POST) equal those
+  of the x86 tool's MMIO-only run except two writes to register 0x3c that
+  differ in one bit, a read-modify-write of a value the card returned
+  differently. 2.08 million aperture writes for the pattern.
+- Host kernel untainted.
+
+**Concluded.** The design goal holds end to end: the code validated in
+userspace on x86 is the code that runs in the big-endian Tiger kernel, and it
+worked on the first load. Milestone 3's "single fixed mode" step is reached
+in the sense that the kext drives the display; it is not yet an
+`IOFramebuffer`, so Tiger does not know the screen exists.
