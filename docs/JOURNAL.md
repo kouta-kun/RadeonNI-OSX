@@ -770,3 +770,18 @@ at 1920x1080 is for the user to confirm.
   server goes through an intermediate 32 bpp mode.
 - What each of these looked like on the monitor, and whether the cursor is
   visible there, is for the user to say.
+
+## 2026-10-04 — Milestone 3 and phase 1 confirmed by the user
+
+The user reports on the mode and depth cycle: the monitor took time to
+re-sync at each step, so not every state was seen for long, but everything
+seen looked good and "input not supported" never appeared. The mouse cursor
+is visible on the 7570's screen.
+
+With the earlier confirmations (desktop at 1366x768, then at 1920x1080 after
+a change made in System Preferences), milestone 3's criterion is met, and
+with it the goal of phase 1: Tiger in QEMU shows its desktop at native
+resolution on a monitor connected to the real card.
+
+Not individually confirmed by eye: each of the 8 and 16 bpp states. The
+cursor is the software one drawn by IOGraphics.

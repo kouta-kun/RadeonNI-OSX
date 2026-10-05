@@ -6,12 +6,15 @@ native resolution on a monitor connected to the real Radeon HD 7570.
 A milestone is not done until the user has confirmed what is on the screen
 wherever its criterion involves video output.
 
+**Phase 1 is complete (2026-10-04).** The sections "Known gaps" and
+"Deferred to the real G5" at the end list what was left out on purpose.
+
 | # | Milestone | State |
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | **Done 2026-10-04**: `IOPCIDevice` with BAR0/BAR2 assigned; a probe kext reads the registers through BAR2 (needs the QEMU PCI-hole patch) |
 | 2 | Cold POST and modeset from Linux userspace | **Done 2026-10-04**: test pattern at 1366x768 from an un-POSTed card, confirmed on screen by the user |
-| 3 | `IOFramebuffer` kext in Tiger on QEMU | In progress: single fixed mode works, Tiger draws its desktop on the 7570 at 1366x768 (seen by the user); mode list, switching, depth and cursor still to do |
+| 3 | `IOFramebuffer` kext in Tiger on QEMU | **Done 2026-10-04**: desktop on the 7570 at 1366x768, resolution change from System Preferences to 1920x1080, depth switching and cursor, confirmed on screen by the user |
 
 ## Needed from the user
 
@@ -114,6 +117,51 @@ resolution change from System Preferences (user confirms).
 1. Kext skeleton matching on `IOPCIMatch`, built in the guest, loaded by hand.
 2. Single fixed mode.
 3. Modes from EDID, resolution and depth switching, cursor.
+
+## Known gaps after phase 1
+
+None of these blocks the phase 1 goal; each is a deliberate omission or an
+unexplained observation.
+
+Driver:
+
+- **Topology is hard-coded** in `hw/rdn_modeset.c`: CRTC 0, pixel PLL 1,
+  digital encoder 0, UNIPHY link A, hot-plug line 1, DDC line 0x93. It must
+  come from the VBIOS object table before any other connector or card works.
+  The DisplayPort connector is not driven at all.
+- **Modes** are only the EDID's detailed timings (two on the test monitor).
+  No standard or established timings, no CEA modes, no scaling.
+- **HDMI** signalling is used when the EDID asks for it, without infoframes
+  or audio. The user saw white looking slightly yellow; untested whether
+  that is the monitor or this. `rdn_tool -d modeset` forces DVI signalling.
+- **Line buffer and watermark setup** (Linux's `radeon_bandwidth_update`) is
+  not ported.
+- **Cursor** is IOGraphics' software cursor; the hardware cursor is not
+  implemented.
+- **8 and 16 bpp** were switched without error but not each inspected by
+  eye for long.
+- **No power management**: no DPMS, sleep or wake handling, no display
+  hot-plug detection. The EDID is read once at start.
+- **Unloading** the `IOFramebuffer` kext while the window server uses it has
+  not been tried.
+- **The MC microcode is not loaded.** Memory works through the 256 MB
+  aperture after `ASIC_Init`; only a sparse test and normal desktop use
+  back that.
+- **Framebuffer address range** is left where the BIOS put it
+  (`0xF00000000`); Linux relocates it. Fine for scanout, to revisit for
+  acceleration.
+
+Harness:
+
+- A framebuffer loaded with `kextload` is only used after the window server
+  restarts.
+- QEMU needs `patches/qemu/0001-...`; OpenBIOS's `ranges` property and the
+  bridge's address-select register still describe 256 MB.
+- Unbinding the host's `radeon` from the card led to a host kernel oops;
+  `radeon` is blacklisted on the host as a result.
+- Apple's `installer` hangs after "Assembling receipt" on large packages in
+  the guest.
+- With two displays the scripted pointer (`guest-ctl.py`) lands off target.
 
 ## Deferred to the real G5
 

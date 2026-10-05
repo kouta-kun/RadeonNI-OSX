@@ -13,35 +13,25 @@ for this phase. `PROMPT.md` is the user's original brief.
 
 ## Current state
 
-Milestone 0 is done: the card is Turks PRO `1002:675d` at `0000:10:00.0`
-(audio at `10:00.1`) with GDDR5 memory (not DDR3 as the brief assumed), the
-VBIOS is in `private/vbios.rom`, and the reference trace of the stock Linux
-driver is in `traces/` and described in `docs/REFERENCE-TRACE.md`. The
-monitor is on the DVI-I connector; its EDID prefers 1366x768.
+**Phase 1 is complete (2026-10-04), every milestone confirmed on screen by
+the user.** Tiger 10.4.11 in QEMU shows its desktop on the real card at
+1366x768 and 1920x1080, at 8, 16 and 32 bpp, with resolution changes from
+System Preferences and a software cursor.
 
-Milestone 2 is done and confirmed on screen by the user: from an un-POSTed
-card, `rdn_tool post` and `rdn_tool modeset` show the test pattern at
-1366x768 on the DVI-I output. The library does POST (`rdn_card_post`), DDC
-and EDID (`rdn_i2c.c`), one-time display setup (`rdn_display_init`: the
-display engine clock is required) and the modeset (`rdn_modeset`, fixed
-topology: CRTC 0, PLL 1, UNIPHY link A). No MC microcode is needed.
-The target mode is the EDID's preferred one, 1366x768. Milestone 1
-is done: the Tiger guest (10.4.11, Xcode 2.5, snapshot `clean-install`,
-user `tiger` / password `tiger`, `scripts/tiger.sh ssh`) boots with the card
-passed through, sees it as an `IOPCIDevice` with BAR0 at `0x90000000` and
-BAR2 at `0xa0000000`, and the probe kext in `kext/RadeonNI` reads its
-registers. That needs the patched QEMU (`patches/qemu/`). OpenBIOS assigns
-neither the I/O BAR nor the expansion ROM. `radeon` is blacklisted on the
-host (`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host
-kernel oops; see the JOURNAL. Milestone 3 is in progress: `kext/RadeonNI`
-is an `IOFramebuffer` subclass that links `hw/`. Tiger draws its desktop on
-the 7570; the modes come from the EDID (1366x768, 1920x1080) at 8, 16 and
-32 bpp, and a resolution change from System Preferences works. Pending:
-the user's confirmation of mode and depth changes on screen, and the
-cursor (software for now). After `kextload` the window server must be
-restarted to pick the screen up.
-`docs/PLAN.md` has the milestone states and the list of things needed from
-the user; check it first.
+- The card is Turks PRO `1002:675d` at `0000:10:00.0` (audio at `10:00.1`),
+  GDDR5, monitor on the DVI-I connector. VBIOS dump in `private/vbios.rom`.
+- `hw/` cold-POSTs the card, reads the EDID over DDC, starts the display
+  engine clock and sets modes through AtomBIOS. No MC microcode is needed.
+- `kext/RadeonNI` is the `IOFramebuffer` subclass built on it. After
+  `kextload` the window server must be restarted to use the screen.
+- The guest: snapshot `clean-install`, user `tiger` / password `tiger`,
+  `scripts/tiger.sh ssh`. QEMU must be the patched build (`patches/qemu/`).
+- `radeon` is blacklisted on the host (`/etc/modprobe.d/osx-gpu.conf`)
+  because unbinding it led to a host kernel oops.
+
+What was left out on purpose is listed in `docs/PLAN.md` under "Known gaps
+after phase 1" and "Deferred to the real G5". The next phase (real G5,
+acceleration) has not been planned with the user yet.
 
 ## Documents
 
@@ -97,6 +87,9 @@ Keep these current as part of the work, and commit small and often.
   `x-no-mmap=on` and writes the register trace to `traces/`, which makes
   framebuffer drawing extremely slow.
 
+- `tools/guest/cgmode.c`: build in the guest (`gcc -o cgmode cgmode.c
+  -framework ApplicationServices`) to list and switch display modes through
+  Quartz and to put the cursor on a display.
 - `scripts/kext.sh {build|load|unload|log}`: build `kext/RadeonNI` inside the
   running guest with its Makefile and load it from `/tmp` with `kextload`.
 
