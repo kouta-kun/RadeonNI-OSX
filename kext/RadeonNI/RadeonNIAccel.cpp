@@ -11,6 +11,7 @@
 
 #include "RadeonNI.h"
 #include "RadeonNIAccel.h"
+#include "RadeonNISurface.h"
 
 OSDefineMetaClassAndStructors(RadeonNIAGPShim, IOAGPDevice)
 
@@ -121,6 +122,7 @@ RadeonNIAccel *RadeonNIAccel::withFramebuffer(RadeonNI *fb, IOService *provider)
 	if (caps)
 		accel->setProperty("AccelCaps", caps);
 
+	accel->fSurfaces = fb->getProperty("Surfaces") == kOSBooleanTrue;
 	accel->fEngineUp = accel->startEngine();
 	accel->setProperty("RadeonNIEngine", accel->fEngineUp);
 
@@ -256,6 +258,25 @@ IOReturn RadeonNIAccel::newUserClient(task_t owningTask, void *securityID,
 {
 	RadeonNIUserClient *client;
 
+	/* The public surface client the window server asks for. */
+	if (type == kIOAccelSurfaceClientType && fSurfaces) {
+		RadeonNISurfaceClient *surface = new RadeonNISurfaceClient;
+
+		if (!surface)
+			return kIOReturnNoMemory;
+		if (!surface->initWithTask(owningTask, securityID, type) ||
+		    !surface->attach(this)) {
+			surface->release();
+			return kIOReturnError;
+		}
+		if (!surface->start(this)) {
+			surface->detach(this);
+			surface->release();
+			return kIOReturnError;
+		}
+		*handler = surface;
+		return kIOReturnSuccess;
+	}
 	if (type != RDN_UC_TYPE) {
 		IOLog("RadeonNI: accelerator user client type %lu requested, not ours\n",
 		      (unsigned long)type);

@@ -84,6 +84,8 @@ private:
 	struct rdn_mem fMem;
 	void *fPfp, *fMe;
 	bool fEngineUp;
+	/* Hand out surface clients (RadeonNISurface.h)? */
+	bool fSurfaces;
 	/* See RadeonNIAGPShim. */
 	IOAGPDevice *fAncestor;
 	RadeonNIAGPShim *fShim;

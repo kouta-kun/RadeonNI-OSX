@@ -20,6 +20,8 @@
 # RDN_AGPSHIM=n adds the registry objects Tiger's window server looks for
 # before it considers Quartz Extreme (see RadeonNIAccel.h): 1 the ancestor,
 # 2 the registered shim, 3 both.
+# RDN_SURFACES=1 makes the accelerator hand out surface user clients, which
+# for now only accept and log what they are asked.
 # RDN_GA=1 names the 2D accelerator plug-in (scripts/ga.sh) on the
 # framebuffer.
 # RDN_ACCELCAPS=n publishes an AccelCaps property of that value on the
@@ -68,6 +70,8 @@ if os.environ.get("RDN_ACCEL") == "1":
     if os.environ.get("RDN_AGPSHIM"):
         extra += "\t\t\t<key>AGPShim</key>\n\t\t\t<integer>%d</integer>\n" % int(
             os.environ["RDN_AGPSHIM"])
+    if os.environ.get("RDN_SURFACES") == "1":
+        extra += "\t\t\t<key>Surfaces</key>\n\t\t\t<true/>\n"
     if os.environ.get("RDN_GA") == "1":
         extra += "\t\t\t<key>GAPlugin</key>\n\t\t\t<true/>\n"
     if os.environ.get("RDN_SELFTEST") == "1":

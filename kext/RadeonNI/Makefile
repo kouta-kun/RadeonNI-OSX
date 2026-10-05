@@ -20,11 +20,11 @@ HWCFLAGS = $(CFLAGS) -std=gnu99 -Wno-unused -Wno-sign-compare
 HW_SRCS  = rdn_mem.c rdn_gpu.c rdn_cp.c rdn_selftest.c rdn_post.c rdn_atom.c rdn_i2c.c rdn_mode.c rdn_modeset.c \
 	rdn_pattern.c atom/atom.c
 HW_OBJS  = $(addprefix $(BUILD)/hw/,$(HW_SRCS:.c=.o))
-OBJS     = $(BUILD)/RadeonNI.o $(BUILD)/RadeonNIAccel.o $(BUILD)/kmod_info.o $(HW_OBJS)
+OBJS     = $(BUILD)/RadeonNI.o $(BUILD)/RadeonNIAccel.o $(BUILD)/RadeonNISurface.o $(BUILD)/kmod_info.o $(HW_OBJS)
 
 all: $(BUNDLE)
 
-$(BUILD)/%.o: %.cpp RadeonNI.h RadeonNIAccel.h $(wildcard $(HW)/*.h $(HW)/atom/*.h)
+$(BUILD)/%.o: %.cpp RadeonNI.h RadeonNIAccel.h RadeonNISurface.h $(wildcard $(HW)/*.h $(HW)/atom/*.h)
 	@mkdir -p $(dir $@)
 	g++ $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $<
 
