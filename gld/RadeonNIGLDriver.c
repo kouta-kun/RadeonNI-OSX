@@ -54,6 +54,9 @@
 #define RDN_CLAIMS_ACCELERATED	0
 #endif
 
+/* What the card's aperture holds; the kext hands out most of it. */
+#define RDN_REPORTED_MEMORY	(256ul << 20)
+
 /* The entry of the driver's own table the engine calls to present. */
 #define DRIVER_TABLE_PRESENT	24
 
@@ -144,8 +147,20 @@ static void setup(void)
 	if (getenv("RDN_GLD_PATCH"))
 		patch = atoi(getenv("RDN_GLD_PATCH"));
 #ifdef RDN_MESA
-	/* Logging every call is slow; with Mesa only when asked for. */
-	logf = path ? fopen(path, "a") : NULL;
+	/*
+	 * Logging every call is slow; with Mesa only when asked for, by the
+	 * environment or, for processes whose environment is not ours to
+	 * set (the window server), by the existence of /tmp/rdngld.on,
+	 * which gives each process its own /tmp/rdngld.<pid>.log.
+	 */
+	if (path) {
+		logf = fopen(path, "a");
+	} else if (access("/tmp/rdngld.on", F_OK) == 0) {
+		char name[64];
+
+		snprintf(name, sizeof(name), "/tmp/rdngld.%d.log", (int)getpid());
+		logf = fopen(name, "a");
+	}
 #else
 	logf = fopen(path ? path : DEFAULT_LOG, "a");
 #endif
@@ -378,8 +393,12 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 		/* Word 1 is the low half of the renderer ID. */
 		if (ret == 0 && a && (patch & 1))
 			((long *)a)[1] = RDN_RENDERER_ID & 0xffff;
-		if (ret == 0 && a && RDN_CLAIMS_ACCELERATED)
+		if (ret == 0 && a && RDN_CLAIMS_ACCELERATED) {
 			((unsigned long *)a)[2] |= RECORD_ACCELERATED;
+			/* Words 12 and 13: video and texture memory, in bytes. */
+			((unsigned long *)a)[12] = RDN_REPORTED_MEMORY;
+			((unsigned long *)a)[13] = RDN_REPORTED_MEMORY;
+		}
 		/* Experiment: RDN_GLD_INFO="word:xor[,word:xor]" flips bits. */
 		if (ret == 0 && a && getenv("RDN_GLD_INFO")) {
 			const char *p = getenv("RDN_GLD_INFO");

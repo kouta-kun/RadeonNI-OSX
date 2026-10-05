@@ -17,6 +17,11 @@
 # engine (the microcode comes from firmware/ on the host) and announce its
 # accelerator service, which names the OpenGL driver bundle and serves user
 # clients. RDN_SELFTEST=1 adds a drawing self-test on the screen at start.
+# RDN_AGPSHIM=n adds the registry objects Tiger's window server looks for
+# before it considers Quartz Extreme (see RadeonNIAccel.h): 1 the ancestor,
+# 2 the registered shim, 3 both.
+# RDN_ACCELCAPS=n publishes an AccelCaps property of that value on the
+# accelerator (experiments with the window server).
 # Apply scripts/card-quiet.sh first.
 #
 # Under QEMU the kext is always loaded from the temporary directory, freshly
@@ -55,6 +60,12 @@ if os.environ.get("RDN_ACCEL") == "1":
         blob = open(os.path.join(root, "firmware", name), "rb").read()
         extra += "\t\t\t<key>%s</key>\n\t\t\t<data>%s</data>\n" % (
             key, base64.b64encode(blob).decode())
+    if os.environ.get("RDN_ACCELCAPS"):
+        extra += "\t\t\t<key>AccelCaps</key>\n\t\t\t<integer>%d</integer>\n" % int(
+            os.environ["RDN_ACCELCAPS"], 0)
+    if os.environ.get("RDN_AGPSHIM"):
+        extra += "\t\t\t<key>AGPShim</key>\n\t\t\t<integer>%d</integer>\n" % int(
+            os.environ["RDN_AGPSHIM"])
     if os.environ.get("RDN_SELFTEST") == "1":
         extra += "\t\t\t<key>AccelSelfTest</key>\n\t\t\t<true/>\n"
 sys.stdout.write(plist.replace(marker, extra + marker))

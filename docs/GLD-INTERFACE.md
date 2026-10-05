@@ -99,7 +99,8 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
   3 backing store, 4 MP safe, 6 robust, 8 accelerated, 9 multi-screen,
   10 compliant. Word 3 is buffer modes, 4 colour modes, 5 accumulation
   modes, 6 depth modes, 7 stencil modes; word 9 holds aux buffers (high
-  half) and sample buffers (low half), word 10 samples (high half).
+  half) and sample buffers (low half), word 10 samples (high half); word
+  12 is video memory and word 13 texture memory, in bytes.
 - Pixel format word 2 has the accelerated flag at bit 8 too.
 - CGL removes `kCGLPFAAccelerated` and the renderer ID from the attribute
   list before the plug-in sees it, and decides acceptance from the flags in

@@ -18,6 +18,7 @@
 #include <IOKit/IOLocks.h>
 #include <IOKit/IOUserClient.h>
 #include <IOKit/graphics/IOAccelerator.h>
+#include <IOKit/pci/IOAGPDevice.h>
 
 extern "C" {
 #include "rdn_accel.h"
@@ -26,6 +27,34 @@ extern "C" {
 }
 
 class RadeonNI;
+
+/*
+ * What Tiger's window server wants to see before it considers compositing
+ * with OpenGL (Quartz Extreme), found by reading its checks:
+ *  - some registered service that is an IOAGPDevice, with a "model"
+ *    property that does not start with "ATY,Rage128";
+ *  - an object whose class name is exactly IOAGPDevice among the
+ *    accelerator's ancestors in the registry (the stock configuration's
+ *    GLCompositorRequiredClasses).
+ * A PCI or PCI Express card has neither. RadeonNIAGPShim is the first: a
+ * registered nub that no driver can match. The second is a bare
+ * IOAGPDevice the accelerator is attached under; it is never registered,
+ * so nothing ever probes or calls it.
+ */
+class RadeonNIAGPShim : public IOAGPDevice
+{
+	OSDeclareDefaultStructors(RadeonNIAGPShim)
+
+public:
+	/*
+	 * Everything IOKit's generic code calls on a registered nub that
+	 * IOPCIDevice would pass to its PCI bridge. The shim has none.
+	 */
+	virtual bool matchPropertyTable(OSDictionary *table, SInt32 *score);
+	virtual bool matchPropertyTable(OSDictionary *table);
+	virtual bool compareName(OSString *name, OSString **matched = 0) const;
+	virtual IOReturn getResources(void);
+};
 
 class RadeonNIAccel : public IOAccelerator
 {
@@ -55,6 +84,9 @@ private:
 	struct rdn_mem fMem;
 	void *fPfp, *fMe;
 	bool fEngineUp;
+	/* See RadeonNIAGPShim. */
+	IOAGPDevice *fAncestor;
+	RadeonNIAGPShim *fShim;
 
 	bool startEngine(void);
 	void *copyFirmware(const char *key, UInt32 *size);

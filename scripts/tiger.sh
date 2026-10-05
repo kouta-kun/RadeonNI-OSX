@@ -18,7 +18,8 @@
 # Guest ssh:    127.0.0.1:2222.  QEMU monitor: build/qemu-mon.sock.
 # QMP for scripts/guest-ctl.py: build/qemu-qmp.sock. A USB tablet gives the
 # guest an absolute pointer so clicks can be scripted.
-# Environment:  TIGER_MEM (MB, default 1024), TIGER_DISK, TIGER_USER.
+# Environment:  TIGER_MEM (MB, default 1024), TIGER_DISK, TIGER_USER,
+#               TIGER_BOOTARGS (kernel boot arguments, e.g. debug=0x100).
 
 set -euo pipefail
 
@@ -41,6 +42,11 @@ base_args() {
         -device usb-tablet
         -serial "file:$root/build/guest-serial.log"
     )
+    # TIGER_BOOTARGS="debug=0x100" makes a kernel panic print its text and
+    # backtrace on the screen instead of the restart dialog.
+    if [ -n "${TIGER_BOOTARGS:-}" ]; then
+        args+=(-prom-env "boot-args=$TIGER_BOOTARGS")
+    fi
 }
 
 need_qemu() {

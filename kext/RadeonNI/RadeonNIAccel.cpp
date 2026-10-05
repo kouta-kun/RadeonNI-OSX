@@ -12,6 +12,29 @@
 #include "RadeonNI.h"
 #include "RadeonNIAccel.h"
 
+OSDefineMetaClassAndStructors(RadeonNIAGPShim, IOAGPDevice)
+
+/* No driver is to be matched against the shim. */
+bool RadeonNIAGPShim::matchPropertyTable(OSDictionary *table, SInt32 *score)
+{
+	return false;
+}
+
+bool RadeonNIAGPShim::matchPropertyTable(OSDictionary *table)
+{
+	return false;
+}
+
+bool RadeonNIAGPShim::compareName(OSString *name, OSString **matched) const
+{
+	return false;
+}
+
+IOReturn RadeonNIAGPShim::getResources(void)
+{
+	return kIOReturnSuccess;
+}
+
 #define super IOAccelerator
 OSDefineMetaClassAndStructors(RadeonNIAccel, IOAccelerator)
 
@@ -35,9 +58,49 @@ RadeonNIAccel *RadeonNIAccel::withFramebuffer(RadeonNI *fb, IOService *provider)
 	char path[512];
 	int len = sizeof(path);
 
+	IOService *parent = provider;
+
 	if (!accel)
 		return 0;
-	if (!accel->init() || !accel->attach(provider)) {
+	if (!accel->init()) {
+		accel->release();
+		return 0;
+	}
+	OSNumber *shim = OSDynamicCast(OSNumber, fb->getProperty("AGPShim"));
+	UInt32 which = shim ? shim->unsigned32BitValue() : 0;
+
+	/* Bit 0: the ancestor. Bit 1: the registered shim. */
+	if (which & 1) {
+		OSDictionary *none = OSDictionary::withCapacity(1);
+
+		accel->fAncestor = new IOAGPDevice;
+		/*
+		 * Into the registry only: IOPCIDevice::attach() expects a
+		 * PCI bridge for a provider and panics on anything else.
+		 */
+		if (accel->fAncestor && accel->fAncestor->init(none) &&
+		    accel->fAncestor->attachToParent(provider, gIOServicePlane)) {
+			accel->fAncestor->setName("RadeonNIAGPAncestor");
+			parent = accel->fAncestor;
+		}
+		if (none)
+			none->release();
+	}
+	if (which & 2) {
+		static const char model[] = "RadeonNI";
+		OSDictionary *none = OSDictionary::withCapacity(1);
+
+		accel->fShim = new RadeonNIAGPShim;
+		if (accel->fShim && accel->fShim->init(none) &&
+		    accel->fShim->attachToParent(provider, gIOServicePlane)) {
+			accel->fShim->setName("RadeonNIAGPShim");
+			accel->fShim->setProperty("model", (void *)model, sizeof(model));
+			accel->fShim->registerService();
+		}
+		if (none)
+			none->release();
+	}
+	if (!accel->attach(parent)) {
 		accel->release();
 		return 0;
 	}
@@ -48,6 +111,15 @@ RadeonNIAccel *RadeonNIAccel::withFramebuffer(RadeonNI *fb, IOService *provider)
 	accel->setProperty("IOGLBundleName", GL_BUNDLE_NAME);
 	accel->setProperty(kIOAccelRevisionKey,
 			   (UInt64)kCurrentGraphicsInterfaceRevision, 32);
+
+	/*
+	 * What the window server reads to decide about Quartz Extreme, as
+	 * VMsvga2 sets it; only when the personality asks, while this is
+	 * being found out.
+	 */
+	OSNumber *caps = OSDynamicCast(OSNumber, fb->getProperty("AccelCaps"));
+	if (caps)
+		accel->setProperty("AccelCaps", caps);
 
 	accel->fEngineUp = accel->startEngine();
 	accel->setProperty("RadeonNIEngine", accel->fEngineUp);
@@ -140,7 +212,20 @@ void RadeonNIAccel::retire(IOService *provider)
 		fEngineUp = false;
 		IOLockUnlock(fLock);
 	}
-	detach(provider);
+	if (fAncestor) {
+		detach(fAncestor);
+		fAncestor->detachFromParent(provider, gIOServicePlane);
+		fAncestor->release();
+		fAncestor = 0;
+	} else {
+		detach(provider);
+	}
+	if (fShim) {
+		fShim->terminate(kIOServiceRequired | kIOServiceSynchronous);
+		fShim->detachFromParent(provider, gIOServicePlane);
+		fShim->release();
+		fShim = 0;
+	}
 	fFramebuffer = 0;
 	if (fLock) {
 		IOLockFree(fLock);

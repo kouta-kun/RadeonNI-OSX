@@ -436,7 +436,21 @@ IODeviceMemory *RadeonNI::getApertureRange(IOPixelAperture aperture)
 
 IODeviceMemory *RadeonNI::getVRAMRange(void)
 {
-	return getApertureRange(kIOFBSystemAperture);
+	IODeviceMemory *bar;
+
+	/*
+	 * With the accelerator, all of the aperture is video memory the
+	 * system can count on; the window server wants to see at least
+	 * 16 MB before it considers Quartz Extreme. Without it, only the
+	 * screen's surfaces are ours.
+	 */
+	if (getProperty("Accelerator") != kOSBooleanTrue)
+		return getApertureRange(kIOFBSystemAperture);
+	bar = fDevice->getDeviceMemoryWithRegister(FB_BAR);
+	if (!bar)
+		return 0;
+	bar->retain();
+	return bar;
 }
 
 const char *RadeonNI::getPixelFormats(void)
