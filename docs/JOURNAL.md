@@ -545,3 +545,56 @@ Then on the card: `card-bind.sh none`, `card-reset.sh`, `rdn_tool post`,
 connector's DDC line is id 0x93, matching the registers Linux reported for
 it. A probe of an unconnected line costs up to 50 ms in the clock-stretch
 timeout.
+
+## 2026-10-04 — Modeset: AtomBIOS call log, port, replay test, first run on the card
+
+**Tried.**
+
+- `scripts/x86-trace-guest.sh` now puts a kprobe on `atom_execute_table`
+  and logs every table call with its first eight parameter words
+  (`traces/ref-radeon-3.*`; decoded list in
+  `traces/ref-radeon-3.atomcalls.txt`).
+- `hw/rdn_mode.c` (EDID preferred timing, HDMI detection) and
+  `hw/rdn_modeset.c` (PLL info and divider computation, AdjustDisplayPll,
+  SelectCRTC_Source, SetPixelClock v6, DTD timing, scanout surface, LUT,
+  DIG encoder v4, UNIPHY transmitter v4), ported from the Linux sources named
+  in the file. Parameter blocks are built byte by byte.
+- `tests/modeset_replay.c`, then `rdn_tool modeset` on the cold-POSTed card
+  with a test pattern drawn through the aperture.
+
+**Observed.**
+
+- Linux's cold modeset to 1366x768, in table calls: AdjustDisplayPll
+  (`031e2166 00000020`), SelectCRTC_Source (`00030300`),
+  UpdateCRTC_DoubleBufferRegisters lock, EnableCRTCMemReq/EnableCRTC off,
+  EnableSpreadSpectrumOnPPLL off, SetPixelClock (`00002166 020c004c
+  00031e00`: fb 76, post 12, ref 2, PLL 1, UNIPHY, HDMI),
+  SetCRTC_UsingDTDTiming, SetCRTC_OverScan, EnableScaler,
+  DIG1TransmitterControl disable, EnableCRTC/MemReq on, BlankCRTC off,
+  unlock, DIGxEncoderControl setup and panel mode, DIG1TransmitterControl
+  enable. Linux drives this monitor in HDMI mode because its EDID has an HDMI
+  vendor block.
+- Our PLL computation gives the same dividers (fb 76.0, ref 2, post 12).
+- After BIOS POST the card's framebuffer address range starts at
+  `0xF00000000` (`MC_VM_FB_LOCATION` = `0x0f3f0f00`, `HDP_NONSURFACE_BASE` =
+  `0x0f000000`). Linux moves it to 0; we leave it and program the scanout
+  address accordingly.
+- Linux pads the pitch of a 1366-wide buffer to 1408 pixels; we do the same.
+- Replay test: all 620 register accesses of `rdn_modeset()` occur in order
+  in Linux's trace of the same modeset (5 exempt: scanout address and the
+  read of `MC_VM_FB_LOCATION`), identical on x86 and PowerPC. The rule is
+  weaker than in `atom_replay`: extra accesses on Linux's side are skipped.
+- On the card: `modeset returned 0`. Readback: `CRTC0_CONTROL` =
+  `0x00410311` (the value Linux leaves), `H_TOTAL` = 0x6ff, the CRTC position
+  and frame counters advance, viewport 1366x768, pitch 1408, surface high
+  address 0xf.
+- Compared with the readback taken while Linux drove the same mode, 70 of
+  1408 display registers differ. Expected ones: scanout address, counters.
+  Not ported: the HDMI block at 0x7028-0x7124 (infoframes, audio), line
+  buffer and watermark setup at 0x6b00-0x6bd0, hot-plug and AUX state.
+
+**Concluded.** The CRTC is running the right timing with our code. Whether
+the monitor shows the pattern is for the user to say. If HDMI signalling
+without infoframes is a problem for the monitor, DVI signalling is the
+obvious thing to try next; the unported watermark setup is the other
+candidate.

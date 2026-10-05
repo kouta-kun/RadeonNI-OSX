@@ -21,8 +21,10 @@ monitor is on the DVI-I connector; its EDID prefers 1366x768.
 
 Milestone 2 is in progress: our library cold-POSTs the real card (same
 register sequence as Linux, with or without the I/O BAR), the video memory
-works without the MC microcode, and `hw/rdn_i2c.c` reads the monitor's EDID
-over DDC. The DCE5 modeset is next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
+works without the MC microcode, `hw/rdn_i2c.c` reads the monitor's EDID
+over DDC, and `hw/rdn_modeset.c` sets the mode (fixed topology: CRTC 0,
+PLL 1, UNIPHY link A, DVI-I connector). The CRTC runs; the user's visual
+confirmation of the test pattern is pending. The target mode is the EDID's preferred one, 1366x768. Milestone 1
 is done: the Tiger guest (10.4.11, Xcode 2.5, snapshot `clean-install`,
 user `tiger` / password `tiger`, `scripts/tiger.sh ssh`) boots with the card
 passed through, sees it as an `IOPCIDevice` with BAR0 at `0x90000000` and
@@ -62,7 +64,7 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/fetch-deps.sh`: PowerPC cross toolchain and Linux radeon sources
   into `third_party/`. Run once, with `scripts/build-qemu.sh`, on a fresh
   checkout.
-- `sudo build/x86/rdn_tool {status|post|vramtest|edid}`: our code on the real
+- `sudo build/x86/rdn_tool {status|post|vramtest|edid|modeset|peek}`: our code on the real
   card through sysfs; `-t file` logs accesses in the trace format, `-n`
   avoids the I/O BAR. Needs `scripts/card-bind.sh none` first.
 - `scripts/card-reset.sh`: back to the un-POSTed state (bus reset).
@@ -109,6 +111,9 @@ Keep these current as part of the work, and commit small and often.
 - `kext/RadeonNI/` is the Tiger kext, built in the guest by a plain Makefile
   (no Xcode project). Today it is a probe `IOService`; it will become the
   `IOFramebuffer` subclass and link the `hw/` library.
+- `hw/rdn_modeset.c` builds AtomBIOS parameter blocks byte by byte in
+  little-endian layout (no structs, no bitfields) and follows the Linux
+  call order recorded in `traces/ref-radeon-3.atomcalls.txt`.
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.

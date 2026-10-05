@@ -580,6 +580,62 @@ static void set_base(struct rdn_card *card, const struct rdn_mode *mode,
 	rdn_wreg(card, EVERGREEN_MASTER_UPDATE_MODE, 0);
 }
 
+/* dce5_crtc_load_lut(), with a linear ramp: colours pass through unchanged */
+static void load_lut(struct rdn_card *card)
+{
+	uint32_t i;
+
+	card->os->delay_us(card->os->cookie, 10000);
+
+	rdn_wreg(card, NI_INPUT_CSC_CONTROL,
+		 (NI_INPUT_CSC_GRPH_MODE(NI_INPUT_CSC_BYPASS) |
+		  NI_INPUT_CSC_OVL_MODE(NI_INPUT_CSC_BYPASS)));
+	rdn_wreg(card, NI_PRESCALE_GRPH_CONTROL, NI_GRPH_PRESCALE_BYPASS);
+	rdn_wreg(card, NI_PRESCALE_OVL_CONTROL, NI_OVL_PRESCALE_BYPASS);
+	rdn_wreg(card, NI_INPUT_GAMMA_CONTROL,
+		 (NI_GRPH_INPUT_GAMMA_MODE(NI_INPUT_GAMMA_USE_LUT) |
+		  NI_OVL_INPUT_GAMMA_MODE(NI_INPUT_GAMMA_USE_LUT)));
+
+	rdn_wreg(card, EVERGREEN_DC_LUT_CONTROL, 0);
+
+	rdn_wreg(card, EVERGREEN_DC_LUT_BLACK_OFFSET_BLUE, 0);
+	rdn_wreg(card, EVERGREEN_DC_LUT_BLACK_OFFSET_GREEN, 0);
+	rdn_wreg(card, EVERGREEN_DC_LUT_BLACK_OFFSET_RED, 0);
+
+	rdn_wreg(card, EVERGREEN_DC_LUT_WHITE_OFFSET_BLUE, 0xffff);
+	rdn_wreg(card, EVERGREEN_DC_LUT_WHITE_OFFSET_GREEN, 0xffff);
+	rdn_wreg(card, EVERGREEN_DC_LUT_WHITE_OFFSET_RED, 0xffff);
+
+	rdn_wreg(card, EVERGREEN_DC_LUT_RW_MODE, 0);
+	rdn_wreg(card, EVERGREEN_DC_LUT_WRITE_EN_MASK, 0x00000007);
+
+	rdn_wreg(card, EVERGREEN_DC_LUT_RW_INDEX, 0);
+	for (i = 0; i < 256; i++) {
+		/* 10 bits per channel: red, green, blue */
+		uint32_t v = i << 2;
+
+		rdn_wreg(card, EVERGREEN_DC_LUT_30_COLOR,
+			 (v << 20) | (v << 10) | v);
+	}
+
+	rdn_wreg(card, NI_DEGAMMA_CONTROL,
+		 (NI_GRPH_DEGAMMA_MODE(NI_DEGAMMA_BYPASS) |
+		  NI_OVL_DEGAMMA_MODE(NI_DEGAMMA_BYPASS) |
+		  NI_ICON_DEGAMMA_MODE(NI_DEGAMMA_BYPASS) |
+		  NI_CURSOR_DEGAMMA_MODE(NI_DEGAMMA_BYPASS)));
+	rdn_wreg(card, NI_GAMUT_REMAP_CONTROL,
+		 (NI_GRPH_GAMUT_REMAP_MODE(NI_GAMUT_REMAP_BYPASS) |
+		  NI_OVL_GAMUT_REMAP_MODE(NI_GAMUT_REMAP_BYPASS)));
+	rdn_wreg(card, NI_REGAMMA_CONTROL,
+		 (NI_GRPH_REGAMMA_MODE(NI_REGAMMA_BYPASS) |
+		  NI_OVL_REGAMMA_MODE(NI_REGAMMA_BYPASS)));
+	rdn_wreg(card, NI_OUTPUT_CSC_CONTROL,
+		 (NI_OUTPUT_CSC_GRPH_MODE(NI_OUTPUT_CSC_BYPASS) |
+		  NI_OUTPUT_CSC_OVL_MODE(NI_OUTPUT_CSC_BYPASS)));
+	/* XXX match this to the depth of the crtc fmt block, move to modeset? */
+	rdn_wreg(card, 0x6940, 0);
+}
+
 /*
  * atombios_dig_encoder_setup2(), DIG_ENCODER_CONTROL_PARAMETERS_V4.
  * For the panel-mode action Linux tests the panel mode byte as if it were
@@ -689,6 +745,7 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 	enable_crtc(card, ATOM_ENABLE);
 	enable_crtc_memreq(card, ATOM_ENABLE);
 	blank_crtc(card, ATOM_DISABLE);
+	load_lut(card);
 unlock:
 	lock_crtc(card, ATOM_DISABLE);
 	if (r)

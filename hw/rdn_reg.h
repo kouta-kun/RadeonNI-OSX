@@ -133,6 +133,49 @@
 #define EVERGREEN_VIEWPORT_SIZE				0x6d74
 #define EVERGREEN_MASTER_UPDATE_MODE			0x6ef8
 
+/* Colour pipeline of CRTC 0 (nid.h, evergreen_reg.h) */
+#define NI_INPUT_GAMMA_CONTROL				0x6840
+#define		NI_GRPH_INPUT_GAMMA_MODE(x)			(((x) & 0x3) << 0)
+#define		NI_INPUT_GAMMA_USE_LUT				0
+#define		NI_OVL_INPUT_GAMMA_MODE(x)			(((x) & 0x3) << 4)
+#define NI_PRESCALE_GRPH_CONTROL			0x68b4
+#define		NI_GRPH_PRESCALE_BYPASS				(1 << 4)
+#define NI_PRESCALE_OVL_CONTROL				0x68c4
+#define		NI_OVL_PRESCALE_BYPASS				(1 << 4)
+#define NI_INPUT_CSC_CONTROL				0x68d4
+#define		NI_INPUT_CSC_GRPH_MODE(x)			(((x) & 0x3) << 0)
+#define		NI_INPUT_CSC_BYPASS				0
+#define		NI_INPUT_CSC_OVL_MODE(x)			(((x) & 0x3) << 4)
+#define NI_OUTPUT_CSC_CONTROL				0x68f0
+#define		NI_OUTPUT_CSC_GRPH_MODE(x)			(((x) & 0x7) << 0)
+#define		NI_OUTPUT_CSC_BYPASS				0
+#define		NI_OUTPUT_CSC_OVL_MODE(x)			(((x) & 0x7) << 4)
+#define NI_DEGAMMA_CONTROL				0x6960
+#define		NI_GRPH_DEGAMMA_MODE(x)				(((x) & 0x3) << 0)
+#define		NI_DEGAMMA_BYPASS				0
+#define		NI_OVL_DEGAMMA_MODE(x)				(((x) & 0x3) << 4)
+#define		NI_ICON_DEGAMMA_MODE(x)				(((x) & 0x3) << 8)
+#define		NI_CURSOR_DEGAMMA_MODE(x)			(((x) & 0x3) << 12)
+#define NI_GAMUT_REMAP_CONTROL				0x6964
+#define		NI_GRPH_GAMUT_REMAP_MODE(x)			(((x) & 0x3) << 0)
+#define		NI_GAMUT_REMAP_BYPASS				0
+#define		NI_OVL_GAMUT_REMAP_MODE(x)			(((x) & 0x3) << 4)
+#define NI_REGAMMA_CONTROL				0x6a80
+#define		NI_GRPH_REGAMMA_MODE(x)				(((x) & 0x7) << 0)
+#define		NI_REGAMMA_BYPASS				0
+#define		NI_OVL_REGAMMA_MODE(x)				(((x) & 0x7) << 4)
+#define EVERGREEN_DC_LUT_RW_MODE			0x69e0
+#define EVERGREEN_DC_LUT_RW_INDEX			0x69e4
+#define EVERGREEN_DC_LUT_30_COLOR			0x69f0
+#define EVERGREEN_DC_LUT_WRITE_EN_MASK			0x69f8
+#define EVERGREEN_DC_LUT_CONTROL			0x6a00
+#define EVERGREEN_DC_LUT_BLACK_OFFSET_BLUE		0x6a04
+#define EVERGREEN_DC_LUT_BLACK_OFFSET_GREEN		0x6a08
+#define EVERGREEN_DC_LUT_BLACK_OFFSET_RED		0x6a0c
+#define EVERGREEN_DC_LUT_WHITE_OFFSET_BLUE		0x6a10
+#define EVERGREEN_DC_LUT_WHITE_OFFSET_GREEN		0x6a14
+#define EVERGREEN_DC_LUT_WHITE_OFFSET_RED		0x6a18
+
 /* Reset mask bits (radeon.h) */
 #define RADEON_RESET_GFX				(1 << 0)
 #define RADEON_RESET_COMPUTE				(1 << 1)

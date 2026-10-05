@@ -10,7 +10,7 @@ wherever its criterion involves video output.
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
 | 1 | Tiger in QEMU with the card passed through | **Done 2026-10-04**: `IOPCIDevice` with BAR0/BAR2 assigned; a probe kext reads the registers through BAR2 (needs the QEMU PCI-hole patch) |
-| 2 | Cold POST and modeset from Linux userspace | In progress: cold POST and EDID over DDC work on the real card with our code; VRAM usable without microcode; modeset not started |
+| 2 | Cold POST and modeset from Linux userspace | In progress: cold POST, EDID and modeset run on the real card with our code and the CRTC is scanning out 1366x768; **waiting for the user to confirm what the monitor shows** |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Skeleton only: probe kext builds in the guest, loads by hand, matches the card and reads registers |
 
 ## Needed from the user
