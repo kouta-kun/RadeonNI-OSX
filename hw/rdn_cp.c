@@ -67,6 +67,11 @@ static uint32_t rdn_get_be32(const uint8_t *p)
 	       ((uint32_t)p[2] << 8) | p[3];
 }
 
+static uint32_t rdn_bswap32(uint32_t v)
+{
+	return (v << 24) | ((v & 0xff00) << 8) | ((v >> 8) & 0xff00) | (v >> 24);
+}
+
 static uint32_t rdn_order_base_2(uint32_t v)
 {
 	uint32_t n = 0;
@@ -99,6 +104,7 @@ static int rdn_cp_load_microcode(struct rdn_accel *accel,
 
 	rdn_cp_stop(accel);
 	rdn_wreg(card, CP_RB_CNTL,
+		 (accel->swapped ? BUF_SWAP_32BIT : 0) |
 		 RB_NO_UPDATE | RB_BLKSZ(15) | RB_BUFSZ(3));
 
 	fw_data = fw->pfp;
@@ -149,6 +155,8 @@ int rdn_ring_begin(struct rdn_accel *accel, uint32_t words)
 
 void rdn_ring_emit(struct rdn_accel *accel, uint32_t value)
 {
+	if (accel->swapped)
+		value = rdn_bswap32(value);
 	rdn_vram_write32(accel, accel->ring_offset + accel->wptr * 4, value);
 	accel->wptr = (accel->wptr + 1) & (accel->ring_words - 1);
 }
@@ -295,6 +303,8 @@ static int rdn_cp_resume(struct rdn_accel *accel)
 	/* Set ring buffer size */
 	rb_bufsz = rdn_order_base_2(accel->ring_words / 2);
 	tmp = (rdn_order_base_2(4096 / 8) << 8) | rb_bufsz;
+	if (accel->swapped)
+		tmp |= BUF_SWAP_32BIT;
 	rdn_wreg(card, CP_RB_CNTL, tmp);
 	rdn_wreg(card, CP_SEM_WAIT_TIMER, 0x0);
 	rdn_wreg(card, CP_SEM_INCOMPLETE_TIMER_CNTL, 0x0);
@@ -400,7 +410,7 @@ int rdn_fence_wait(struct rdn_accel *accel, uint32_t seq, uint32_t timeout_ms)
 }
 
 int rdn_ib_submit(struct rdn_accel *accel, uint64_t addr, uint32_t words,
-		  bool swap, uint32_t *seq)
+		  uint32_t *seq)
 {
 	uint32_t next_rptr;
 	int r;
@@ -419,7 +429,11 @@ int rdn_ib_submit(struct rdn_accel *accel, uint64_t addr, uint32_t words,
 	rdn_ring_emit(accel, next_rptr);
 
 	rdn_ring_emit(accel, PACKET3(PACKET3_INDIRECT_BUFFER, 2));
-	rdn_ring_emit(accel, (swap ? (2 << 0) : 0) |
+	/*
+	 * The buffer's words are swapped exactly when the ring's are: with
+	 * only one of the two the command processor hangs (seen on the card).
+	 */
+	rdn_ring_emit(accel, (accel->swapped ? (2 << 0) : 0) |
 			     ((uint32_t)addr & 0xFFFFFFFC));
 	rdn_ring_emit(accel, (uint32_t)(addr >> 32) & 0xFF);
 	rdn_ring_emit(accel, words);
@@ -435,7 +449,7 @@ int rdn_ib_submit(struct rdn_accel *accel, uint64_t addr, uint32_t words,
 int rdn_accel_init(struct rdn_accel *accel, struct rdn_card *card,
 		   volatile void *aperture, uint32_t aperture_size,
 		   const struct rdn_accel_fw *fw,
-		   uint32_t ring_offset, uint32_t ring_bytes)
+		   uint32_t ring_offset, uint32_t ring_bytes, bool swapped)
 {
 	uint32_t fb_location;
 	int r;
@@ -446,6 +460,7 @@ int rdn_accel_init(struct rdn_accel *accel, struct rdn_card *card,
 	accel->aperture_size = aperture_size;
 	accel->ring_offset = ring_offset;
 	accel->ring_words = ring_bytes / 4;
+	accel->swapped = swapped;
 	if (!aperture || (ring_bytes & (ring_bytes - 1)) || ring_bytes < 4096 ||
 	    ring_offset + ring_bytes > aperture_size)
 		return -EINVAL;

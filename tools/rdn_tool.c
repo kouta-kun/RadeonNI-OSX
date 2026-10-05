@@ -10,7 +10,9 @@
  *   rdn_tool [options] accel       start the 3D engine and the command
  *                                  processor (after post and modeset), run
  *                                  the ring test and one fence; -f names the
- *                                  directory with the microcode
+ *                                  directory with the microcode; -R uses
+ *                                  the command byte order that is not the
+ *                                  host's
  *   rdn_tool [options] grab [file]  save the scanout surface as a PPM image
  *   rdn_tool [options] peek REG...  read registers (hex offsets)
  *   rdn_tool [options] edid [file] probe every DDC line for an EDID; save
@@ -415,7 +417,8 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 
 static const char *fw_dir = "firmware";
 /* -S: the self-test submits its commands big-endian with the swap flag. */
-static int swapped_ib;
+/* -R: command words in the byte order that is not the host's. */
+static int other_order;
 
 static uint8_t *read_fw(const char *name, size_t *size)
 {
@@ -462,7 +465,8 @@ static int do_accel(struct linux_card *lc, struct rdn_card *card)
 	}
 
 	r = rdn_accel_init(&accel, card, aperture, (uint32_t)st.st_size, &fw,
-			   ACCEL_RING_OFFSET, ACCEL_RING_BYTES);
+			   ACCEL_RING_OFFSET, ACCEL_RING_BYTES,
+			   RDN_BIG_ENDIAN ? !other_order : other_order);
 	printf("accel init returned %d; tile_config 0x%x, backend_map 0x%x, "
 	       "GRBM_STATUS %08x, CP_STAT %08x\n", r,
 	       (unsigned)accel.cfg.tile_config, (unsigned)accel.cfg.backend_map,
@@ -494,7 +498,6 @@ static int do_accel(struct linux_card *lc, struct rdn_card *card)
 		t.height = rdn_rreg(card, EVERGREEN_GRPH_Y_END);
 		t.pitch_pixels = rdn_rreg(card, EVERGREEN_GRPH_PITCH);
 		t.big_endian_pixels = RDN_BIG_ENDIAN;
-		t.swapped_ib = swapped_ib;
 		printf("drawing on %ux%u, pitch %u\n", (unsigned)t.width,
 		       (unsigned)t.height, (unsigned)t.pitch_pixels);
 		r = rdn_accel_selftest(&accel, &t, ACCEL_WORK_OFFSET);
@@ -600,14 +603,14 @@ int main(int argc, char **argv)
 	void *bios;
 	int opt, fd, no_io = 0, ret = 0;
 
-	while ((opt = getopt(argc, argv, "s:b:t:f:ndS")) != -1) {
+	while ((opt = getopt(argc, argv, "s:b:t:f:ndR")) != -1) {
 		switch (opt) {
 		case 's': addr = optarg; break;
 		case 'b': bios_file = optarg; break;
 		case 't': trace = optarg; break;
 		case 'f': fw_dir = optarg; break;
 		case 'n': no_io = 1; break;
-		case 'S': swapped_ib = 1; break;
+		case 'R': other_order = 1; break;
 		case 'd': force_dvi = 1; break;
 		default: return 2;
 		}

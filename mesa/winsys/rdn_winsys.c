@@ -507,14 +507,10 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
       r = ws->dev->alloc(ws->dev, rcs->current.cdw * 4, 4096, &offset);
    }
    if (!r) {
-      /*
-       * The driver wrote the words in the CPU's byte order; on a
-       * big-endian host the command processor swaps them.
-       */
+      /* The words are in the CPU's byte order, which the device expects. */
       memcpy((uint8_t *)ws->dev->aperture + offset, rcs->current.buf,
              rcs->current.cdw * 4);
-      r = ws->dev->submit(ws->dev, offset, rcs->current.cdw,
-                          UTIL_ARCH_BIG_ENDIAN, &fence->number);
+      r = ws->dev->submit(ws->dev, offset, rcs->current.cdw, &fence->number);
       if (r)
          ws->dev->free(ws->dev, offset);
    }

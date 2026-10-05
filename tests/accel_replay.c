@@ -270,7 +270,7 @@ int main(int argc, char **argv)
 		return 2;
 
 	r = rdn_accel_init(&accel, &card, aperture, APERTURE_SIZE, &fw,
-			   RING_OFFSET, RING_BYTES);
+			   RING_OFFSET, RING_BYTES, false);
 	if (r || m.failed) {
 		printf("FAIL: accel init returned %d\n", r);
 		return 1;
@@ -286,7 +286,7 @@ int main(int argc, char **argv)
 	 * steps differ, so only the ring words are checked from here on.
 	 */
 	m.unchecked = 1;
-	r = rdn_ib_submit(&accel, rdn_vram_addr(&accel, 3u << 20), 64, false, &seq);
+	r = rdn_ib_submit(&accel, rdn_vram_addr(&accel, 3u << 20), 64, &seq);
 	if (r || m.failed) {
 		printf("FAIL: ib submit returned %d\n", r);
 		return 1;

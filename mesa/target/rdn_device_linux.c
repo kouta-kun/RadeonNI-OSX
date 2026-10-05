@@ -163,13 +163,13 @@ static void dev_free(struct rdn_device *dev, uint64_t offset)
 }
 
 static int dev_submit(struct rdn_device *dev, uint64_t offset, uint32_t words,
-		      bool swap, uint32_t *fence)
+		      uint32_t *fence)
 {
 	struct linux_device *d = (struct linux_device *)dev;
 	int r;
 
 	r = rdn_ib_submit(&d->accel, rdn_vram_addr(&d->accel, (uint32_t)offset),
-			  words, swap, fence);
+			  words, fence);
 	if (d->trace) {
 		const uint8_t *p = (const uint8_t *)dev->aperture + offset;
 		uint32_t i;
@@ -258,7 +258,7 @@ struct rdn_device *rdn_device_open(void)
 	if (!fw.pfp || !fw.me)
 		goto fail;
 	if (rdn_accel_init(&d->accel, &d->card, aperture, (uint32_t)aperture_size,
-			   &fw, RING_OFFSET, RING_BYTES)) {
+			   &fw, RING_OFFSET, RING_BYTES, RDN_BIG_ENDIAN)) {
 		fprintf(stderr, "rdn: the command processor did not start; "
 			"is the card posted (rdn_tool post, modeset)?\n");
 		goto fail;

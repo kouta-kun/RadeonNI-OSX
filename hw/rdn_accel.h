@@ -6,9 +6,12 @@
  * through the aperture (BAR0). There is no GART, no bus mastering and no
  * interrupt; completion is polled.
  *
- * Words the command processor reads are stored little-endian, by the
- * accessors below, on any host. A client that fills an indirect buffer in
- * CPU byte order on a big-endian host asks for the swap at submit time.
+ * Byte order: data (vertices, shaders, textures written by this library)
+ * is stored little-endian by the accessors below, on any host. Command
+ * words, in the ring and in indirect buffers alike, are little-endian
+ * unless the accelerator is started `swapped`; then they are big-endian
+ * and the command processor swaps them. A big-endian host starts it
+ * swapped, as Linux does, so that commands are in its own byte order.
  *
  * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
@@ -67,6 +70,12 @@ struct rdn_accel {
 	uint32_t ring_words;
 	uint32_t wptr;
 	bool ready;
+	/*
+	 * The command processor byte-swaps command words, as Linux sets it
+	 * up on big-endian hosts (BUF_SWAP_32BIT for the ring, the swap
+	 * field of each indirect buffer's address).
+	 */
+	bool swapped;
 
 	uint32_t fence_emitted;
 };
@@ -91,13 +100,14 @@ static inline uint64_t rdn_vram_addr(struct rdn_accel *accel, uint32_t offset)
 /*
  * Start the 3D engine and the command processor on a posted card.
  * `aperture` maps BAR0; the ring takes `ring_bytes` (a power of two) at
- * `ring_offset` in it. Ends with a ring test. Returns 0 or a negative errno
- * value.
+ * `ring_offset` in it. `swapped` chooses big-endian command words; pass
+ * RDN_BIG_ENDIAN unless testing the other order. Ends with a ring test.
+ * Returns 0 or a negative errno value.
  */
 int rdn_accel_init(struct rdn_accel *accel, struct rdn_card *card,
 		   volatile void *aperture, uint32_t aperture_size,
 		   const struct rdn_accel_fw *fw,
-		   uint32_t ring_offset, uint32_t ring_bytes);
+		   uint32_t ring_offset, uint32_t ring_bytes, bool swapped);
 void rdn_accel_fini(struct rdn_accel *accel);
 
 /* rdn_gpu.c */
@@ -129,10 +139,11 @@ int rdn_fence_wait(struct rdn_accel *accel, uint32_t seq, uint32_t timeout_ms);
 
 /*
  * Run an indirect buffer of `words` words at GPU address `addr`, followed
- * by a fence. `swap` makes the command processor byte-swap each word.
+ * by a fence. Its words are in the ring's byte order: big-endian when the
+ * accelerator was started `swapped`, little-endian otherwise.
  */
 int rdn_ib_submit(struct rdn_accel *accel, uint64_t addr, uint32_t words,
-		  bool swap, uint32_t *seq);
+		  uint32_t *seq);
 
 /*
  * rdn_selftest.c: draw, with the 3D engine, a square (64,64)-(320,320) and
@@ -145,11 +156,6 @@ struct rdn_selftest_target {
 	uint64_t gpu_addr;
 	uint32_t width, height, pitch_pixels;
 	bool big_endian_pixels;
-	/*
-	 * Write the indirect buffer big-endian and ask the command
-	 * processor to swap it: what a big-endian client does.
-	 */
-	bool swapped_ib;
 };
 
 uint32_t rdn_selftest_work_bytes(void);

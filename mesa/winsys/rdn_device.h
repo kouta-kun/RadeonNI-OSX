@@ -49,13 +49,13 @@ struct rdn_device {
    void (*free)(struct rdn_device *dev, uint64_t offset);
 
    /*
-    * Run `words` command words stored at `offset`. `swap` asks the command
-    * processor to byte-swap each word (a big-endian host that stored them
-    * in its own byte order). Everything written to video memory before the
-    * call is visible to the GPU. Returns 0 and a fence number.
+    * Run `words` command words stored at `offset`, in the CPU's byte order
+    * (the device sets the command processor up for that). Everything
+    * written to video memory before the call is visible to the GPU.
+    * Returns 0 and a fence number.
     */
    int (*submit)(struct rdn_device *dev, uint64_t offset, uint32_t words,
-                 bool swap, uint32_t *fence);
+                 uint32_t *fence);
    bool (*fence_done)(struct rdn_device *dev, uint32_t fence);
    /* 0 when reached. After it, the CPU sees what the GPU wrote. */
    int (*fence_wait)(struct rdn_device *dev, uint32_t fence,

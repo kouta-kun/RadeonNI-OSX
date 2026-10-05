@@ -115,7 +115,7 @@ static const uint32_t selftest_ps[] = {
 struct ib {
 	struct rdn_accel *accel;
 	uint32_t base, words;
-	/* Store the words big-endian and have the command processor swap. */
+	/* Command words are big-endian: see rdn_accel.swapped. */
 	bool swapped;
 };
 
@@ -470,7 +470,7 @@ int rdn_accel_selftest(struct rdn_accel *accel,
 	ib.accel = accel;
 	ib.base = work_offset + WORK_IB;
 	ib.words = 0;
-	ib.swapped = target->swapped_ib;
+	ib.swapped = accel->swapped;
 
 	set_default_state(&ib);
 	set_shaders(&ib, rdn_vram_addr(accel, work_offset + WORK_VS),
@@ -498,8 +498,7 @@ int rdn_accel_selftest(struct rdn_accel *accel,
 	if (ib.words * 4 > WORK_VS)
 		return -ENOMEM;
 
-	r = rdn_ib_submit(accel, rdn_vram_addr(accel, ib.base), ib.words,
-			  ib.swapped, &seq);
+	r = rdn_ib_submit(accel, rdn_vram_addr(accel, ib.base), ib.words, &seq);
 	if (r)
 		return r;
 	return rdn_fence_wait(accel, seq, 2000);
