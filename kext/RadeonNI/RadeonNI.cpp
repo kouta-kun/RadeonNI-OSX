@@ -22,9 +22,18 @@ OSDefineMetaClassAndStructors(RadeonNI, IOFramebuffer)
 /* DDC line of the DVI-I connector (AtomBIOS i2c id). */
 #define DVI_DDC_ID		0x93
 
-/* The single display mode and its single depth. */
-#define MODE_ID			1
-#define DEPTH_32		0
+/*
+ * Display mode IDs are 1 + the index of the EDID detailed timing. Depth
+ * indices follow the usual order.
+ */
+enum {
+	kDepth8 = 0,
+	kDepth16 = 1,
+	kDepth32 = 2,
+	kDepthCount = 3
+};
+
+static const UInt32 kDepthBits[kDepthCount] = { 8, 16, 32 };
 
 /*
  * OS layer for the hardware library. The card's registers are
@@ -141,14 +150,35 @@ bool RadeonNI::loadBios()
 	return true;
 }
 
+const struct rdn_mode *RadeonNI::modeForID(IODisplayModeID id)
+{
+	if (id < 1 || (UInt32)id > fModeCount)
+		return 0;
+	return &fModes[id - 1];
+}
+
+/* The surface for a mode and depth: at the start of the aperture. */
+void RadeonNI::describeFb(const struct rdn_mode *mode, IOIndex depth,
+			  struct rdn_fb *fb)
+{
+	bzero(fb, sizeof(*fb));
+	fb->width = mode->hdisplay;
+	fb->height = mode->vdisplay;
+	/* Linux pads the pitch to 64 pixels; do the same. */
+	fb->pitch_pixels = (mode->hdisplay + 63) & ~63;
+	fb->bpp = kDepthBits[depth];
+	fb->big_endian_pixels = true;
+}
+
 /*
- * POST if needed, read the EDID and work out the mode and the surface. The
- * pattern is drawn so that there is something to see until the window
- * server takes the screen over.
+ * POST if needed, read the EDID, collect the modes and set the preferred
+ * one. The pattern is drawn so that there is something to see until the
+ * window server takes the screen over.
  */
 bool RadeonNI::bringUp()
 {
 	struct rdn_i2c_bus bus;
+	UInt32 i;
 	int r;
 
 	r = rdn_card_post(&fCard);
@@ -161,12 +191,39 @@ bool RadeonNI::bringUp()
 
 	rdn_i2c_bus_by_id(&fCard, DVI_DDC_ID, &bus);
 	fEdidLen = rdn_edid_read(&fCard, &bus, fEdid);
-	if (fEdidLen < 0 || !rdn_edid_preferred_mode(fEdid, &fMode)) {
+	if (fEdidLen < 0) {
 		IOLog("RadeonNI: no EDID on the DVI connector (%d)\n", fEdidLen);
 		return false;
 	}
-	IOLog("RadeonNI: EDID %d bytes, preferred %ux%u at %lu kHz\n", fEdidLen,
-	      fMode.hdisplay, fMode.vdisplay, (unsigned long)fMode.clock);
+	fModeCount = 0;
+	for (i = 0; i < kMaxModes; i++)
+		if (rdn_edid_detailed_mode(fEdid, i, &fModes[fModeCount])) {
+			IOLog("RadeonNI: mode %lu: %ux%u at %lu kHz\n",
+			      (unsigned long)fModeCount + 1,
+			      fModes[fModeCount].hdisplay,
+			      fModes[fModeCount].vdisplay,
+			      (unsigned long)fModes[fModeCount].clock);
+			fModeCount++;
+		}
+	if (!fModeCount) {
+		IOLog("RadeonNI: the EDID has no detailed timing\n");
+		return false;
+	}
+
+	/* Room for the largest mode at 32 bpp, rounded up to a megabyte. */
+	fSurfaceBytes = 0;
+	for (i = 0; i < fModeCount; i++) {
+		struct rdn_fb fb;
+		UInt32 bytes;
+
+		describeFb(&fModes[i], kDepth32, &fb);
+		bytes = fb.pitch_pixels * 4 * fb.height;
+		if (bytes > fSurfaceBytes)
+			fSurfaceBytes = bytes;
+	}
+	fSurfaceBytes = (fSurfaceBytes + 0xfffff) & ~0xfffff;
+	IOLog("RadeonNI: surface memory %lu MB\n",
+	      (unsigned long)fSurfaceBytes >> 20);
 
 	fFbMap = fDevice->mapDeviceMemoryWithRegister(FB_BAR);
 	if (!fFbMap) {
@@ -174,12 +231,13 @@ bool RadeonNI::bringUp()
 		return false;
 	}
 
-	bzero(&fFb, sizeof(fFb));
-	fFb.width = fMode.hdisplay;
-	fFb.height = fMode.vdisplay;
-	fFb.pitch_pixels = (fMode.hdisplay + 63) & ~63;
-	fFb.big_endian_pixels = true;
+	/* Linear ramps until the system loads its own tables. */
+	for (i = 0; i < 256; i++) {
+		fGamma[i].red = fGamma[i].green = fGamma[i].blue = i << 2;
+		fClut[i] = fGamma[i];
+	}
 
+	describeFb(&fModes[0], kDepth32, &fFb);
 	rdn_pattern_draw((volatile uint32_t *)fFbMap->getVirtualAddress(),
 			 fFb.width, fFb.height, fFb.pitch_pixels);
 
@@ -188,20 +246,35 @@ bool RadeonNI::bringUp()
 		IOLog("RadeonNI: display init failed (%d)\n", r);
 		return false;
 	}
-	return programMode() == kIOReturnSuccess;
+	return programMode(1, kDepth32) == kIOReturnSuccess;
 }
 
-IOReturn RadeonNI::programMode()
+IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 {
-	int r = rdn_modeset(&fCard, &fMode, &fFb,
-			    rdn_edid_is_hdmi(fEdid, fEdidLen));
+	const struct rdn_mode *mode = modeForID(id);
+	int r;
 
-	IOLog("RadeonNI: modeset returned %d, CRTC0_CONTROL %08lx\n", r,
-	      (unsigned long)readReg(0x6e70));
+	if (!mode || depth < 0 || depth >= kDepthCount)
+		return kIOReturnUnsupportedMode;
+
+	describeFb(mode, depth, &fFb);
+	r = rdn_modeset(&fCard, mode, &fFb, rdn_edid_is_hdmi(fEdid, fEdidLen));
+	IOLog("RadeonNI: mode %ld depth %ld (%ux%u, %lu bpp): %d\n", (long)id,
+	      (long)depth, mode->hdisplay, mode->vdisplay,
+	      (unsigned long)fFb.bpp, r);
 	if (r)
 		return kIOReturnIOError;
+	fCurrentMode = id;
+	fCurrentDepth = depth;
 	fModeSet = true;
+	loadColors();
 	return kIOReturnSuccess;
+}
+
+/* 8 bpp looks colours up in the table; the other depths use it for gamma. */
+void RadeonNI::loadColors()
+{
+	rdn_lut_set(&fCard, 0, 256, fCurrentDepth == kDepth8 ? fClut : fGamma);
 }
 
 bool RadeonNI::start(IOService *provider)
@@ -293,10 +366,16 @@ void RadeonNI::stop(IOService *provider)
 
 IOReturn RadeonNI::enableController(void)
 {
-	return fModeSet ? kIOReturnSuccess : programMode();
+	return fModeSet ? kIOReturnSuccess : programMode(1, kDepth32);
 }
 
-/* The visible surface, at the start of the aperture. */
+/*
+ * The memory the visible surface can occupy, at the start of the aperture.
+ * It has the same size in every mode, large enough for the biggest one: the
+ * window server maps it once and keeps using that mapping across mode
+ * changes, so a range that only fits the current mode makes it fault as
+ * soon as a larger mode is selected.
+ */
 IODeviceMemory *RadeonNI::getApertureRange(IOPixelAperture aperture)
 {
 	IODeviceMemory *bar;
@@ -306,46 +385,59 @@ IODeviceMemory *RadeonNI::getApertureRange(IOPixelAperture aperture)
 	bar = fDevice->getDeviceMemoryWithRegister(FB_BAR);
 	if (!bar)
 		return 0;
-	return IODeviceMemory::withSubRange(bar, 0,
-		fFb.pitch_pixels * 4 * fFb.height);
+	return IODeviceMemory::withSubRange(bar, 0, fSurfaceBytes);
+}
+
+IODeviceMemory *RadeonNI::getVRAMRange(void)
+{
+	return getApertureRange(kIOFBSystemAperture);
 }
 
 const char *RadeonNI::getPixelFormats(void)
 {
-	static const char formats[] = IO32BitDirectPixels "\0";
+	static const char formats[] =
+		IO8BitIndexedPixels "\0"
+		IO16BitDirectPixels "\0"
+		IO32BitDirectPixels "\0";
 
 	return formats;
 }
 
 IOItemCount RadeonNI::getDisplayModeCount(void)
 {
-	return 1;
+	return fModeCount;
 }
 
 IOReturn RadeonNI::getDisplayModes(IODisplayModeID *allDisplayModes)
 {
-	allDisplayModes[0] = MODE_ID;
+	UInt32 i;
+
+	for (i = 0; i < fModeCount; i++)
+		allDisplayModes[i] = i + 1;
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNI::getInformationForDisplayMode(IODisplayModeID displayMode,
 	IODisplayModeInformation *info)
 {
+	const struct rdn_mode *mode = modeForID(displayMode);
 	UInt64 hz1616;
 
-	if (displayMode != MODE_ID)
+	if (!mode)
 		return kIOReturnUnsupportedMode;
 
 	bzero(info, sizeof(*info));
-	info->nominalWidth = fMode.hdisplay;
-	info->nominalHeight = fMode.vdisplay;
+	info->nominalWidth = mode->hdisplay;
+	info->nominalHeight = mode->vdisplay;
 	/* Refresh rate in 16.16 fixed point: clock / (htotal * vtotal). */
-	hz1616 = ((UInt64)fMode.clock * 1000ULL << 16) /
-		((UInt64)fMode.htotal * fMode.vtotal);
+	hz1616 = ((UInt64)mode->clock * 1000ULL << 16) /
+		((UInt64)mode->htotal * mode->vtotal);
 	info->refreshRate = (IOFixed1616)hz1616;
-	info->maxDepthIndex = DEPTH_32;
-	info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag |
-		kDisplayModeDefaultFlag;
+	info->maxDepthIndex = kDepthCount - 1;
+	info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag;
+	/* The EDID's first detailed timing is the preferred mode. */
+	if (displayMode == 1)
+		info->flags |= kDisplayModeDefaultFlag;
 	return kIOReturnSuccess;
 }
 
@@ -358,25 +450,51 @@ UInt64 RadeonNI::getPixelFormatsForDisplayMode(IODisplayModeID displayMode,
 IOReturn RadeonNI::getPixelInformation(IODisplayModeID displayMode,
 	IOIndex depth, IOPixelAperture aperture, IOPixelInformation *pixelInfo)
 {
-	if (displayMode != MODE_ID || depth != DEPTH_32)
-		return kIOReturnUnsupportedMode;
-	if (aperture != kIOFBSystemAperture)
+	const struct rdn_mode *mode = modeForID(displayMode);
+	struct rdn_fb fb;
+
+	if (!mode || depth < 0 || depth >= kDepthCount ||
+	    aperture != kIOFBSystemAperture)
 		return kIOReturnUnsupportedMode;
 
+	describeFb(mode, depth, &fb);
 	bzero(pixelInfo, sizeof(*pixelInfo));
-	pixelInfo->bytesPerRow = fFb.pitch_pixels * 4;
+	pixelInfo->bytesPerRow = fb.pitch_pixels * (fb.bpp / 8);
 	pixelInfo->bytesPerPlane = 0;
-	pixelInfo->bitsPerPixel = 32;
-	pixelInfo->pixelType = kIORGBDirectPixels;
-	pixelInfo->componentCount = 3;
-	pixelInfo->bitsPerComponent = 8;
-	pixelInfo->componentMasks[0] = 0x00ff0000;
-	pixelInfo->componentMasks[1] = 0x0000ff00;
-	pixelInfo->componentMasks[2] = 0x000000ff;
-	strncpy(pixelInfo->pixelFormat, IO32BitDirectPixels,
-		sizeof(pixelInfo->pixelFormat));
-	pixelInfo->activeWidth = fFb.width;
-	pixelInfo->activeHeight = fFb.height;
+	pixelInfo->bitsPerPixel = fb.bpp;
+	pixelInfo->activeWidth = fb.width;
+	pixelInfo->activeHeight = fb.height;
+
+	switch (depth) {
+	case kDepth8:
+		pixelInfo->pixelType = kIOCLUTPixels;
+		pixelInfo->componentCount = 1;
+		pixelInfo->bitsPerComponent = 8;
+		pixelInfo->componentMasks[0] = 0xff;
+		strncpy(pixelInfo->pixelFormat, IO8BitIndexedPixels,
+			sizeof(pixelInfo->pixelFormat));
+		break;
+	case kDepth16:
+		pixelInfo->pixelType = kIORGBDirectPixels;
+		pixelInfo->componentCount = 3;
+		pixelInfo->bitsPerComponent = 5;
+		pixelInfo->componentMasks[0] = 0x7c00;
+		pixelInfo->componentMasks[1] = 0x03e0;
+		pixelInfo->componentMasks[2] = 0x001f;
+		strncpy(pixelInfo->pixelFormat, IO16BitDirectPixels,
+			sizeof(pixelInfo->pixelFormat));
+		break;
+	default:
+		pixelInfo->pixelType = kIORGBDirectPixels;
+		pixelInfo->componentCount = 3;
+		pixelInfo->bitsPerComponent = 8;
+		pixelInfo->componentMasks[0] = 0x00ff0000;
+		pixelInfo->componentMasks[1] = 0x0000ff00;
+		pixelInfo->componentMasks[2] = 0x000000ff;
+		strncpy(pixelInfo->pixelFormat, IO32BitDirectPixels,
+			sizeof(pixelInfo->pixelFormat));
+		break;
+	}
 	return kIOReturnSuccess;
 }
 
@@ -384,46 +502,95 @@ IOReturn RadeonNI::getCurrentDisplayMode(IODisplayModeID *displayMode,
 	IOIndex *depth)
 {
 	if (displayMode)
-		*displayMode = MODE_ID;
+		*displayMode = fCurrentMode;
 	if (depth)
-		*depth = DEPTH_32;
+		*depth = fCurrentDepth;
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNI::setDisplayMode(IODisplayModeID displayMode, IOIndex depth)
 {
-	if (displayMode != MODE_ID || depth != DEPTH_32)
-		return kIOReturnUnsupportedMode;
-	/* There is one mode and it is already set. */
-	return fModeSet ? kIOReturnSuccess : programMode();
+	if (fModeSet && displayMode == fCurrentMode && depth == fCurrentDepth)
+		return kIOReturnSuccess;
+	return programMode(displayMode, depth);
 }
 
 IOReturn RadeonNI::getStartupDisplayMode(IODisplayModeID *displayMode,
 	IOIndex *depth)
 {
-	return getCurrentDisplayMode(displayMode, depth);
-}
-
-/* Direct colour: there is no colour table to load. */
-IOReturn RadeonNI::setCLUTWithEntries(IOColorEntry *colors, UInt32 index,
-	UInt32 numEntries, IOOptionBits options)
-{
+	if (displayMode)
+		*displayMode = 1;
+	if (depth)
+		*depth = kDepth32;
 	return kIOReturnSuccess;
 }
 
-/* The hardware table holds a linear ramp; gamma is not applied yet. */
+/* The colour table for 8 bpp. Components arrive as 16-bit values. */
+IOReturn RadeonNI::setCLUTWithEntries(IOColorEntry *colors, UInt32 index,
+	UInt32 numEntries, IOOptionBits options)
+{
+	UInt32 i, slot;
+
+	for (i = 0; i < numEntries; i++) {
+		slot = (options & kSetCLUTByValue) ? colors[i].index : index + i;
+		if (slot > 255)
+			continue;
+		fClut[slot].red = colors[i].red >> 6;
+		fClut[slot].green = colors[i].green >> 6;
+		fClut[slot].blue = colors[i].blue >> 6;
+	}
+	if (fModeSet && fCurrentDepth == kDepth8)
+		loadColors();
+	return kIOReturnSuccess;
+}
+
+/*
+ * The gamma ramp for the direct depths: `channelCount` tables of
+ * `dataCount` entries, each `dataWidth` bits wide, red first.
+ */
 IOReturn RadeonNI::setGammaTable(UInt32 channelCount, UInt32 dataCount,
 	UInt32 dataWidth, void *data)
 {
+	UInt32 i, ch, src, v;
+
+	if (!data || !dataCount || (channelCount != 1 && channelCount != 3) ||
+	    dataWidth < 8 || dataWidth > 16)
+		return kIOReturnBadArgument;
+
+	for (i = 0; i < 256; i++) {
+		UInt16 out[3];
+
+		src = i * dataCount / 256;
+		for (ch = 0; ch < 3; ch++) {
+			UInt32 table = (channelCount == 3 ? ch : 0) * dataCount;
+
+			if (dataWidth == 8)
+				v = ((UInt8 *)data)[table + src];
+			else
+				v = ((UInt16 *)data)[table + src];
+			/* To 10 bits. */
+			if (dataWidth >= 10)
+				v >>= dataWidth - 10;
+			else
+				v <<= 10 - dataWidth;
+			out[ch] = v;
+		}
+		fGamma[i].red = out[0];
+		fGamma[i].green = out[1];
+		fGamma[i].blue = out[2];
+	}
+	if (fModeSet && fCurrentDepth != kDepth8)
+		loadColors();
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNI::getTimingInfoForDisplayMode(IODisplayModeID displayMode,
 	IOTimingInformation *info)
 {
+	const struct rdn_mode *mode = modeForID(displayMode);
 	IODetailedTimingInformationV2 *t;
 
-	if (displayMode != MODE_ID)
+	if (!mode)
 		return kIOReturnUnsupportedMode;
 
 	bzero(info, sizeof(*info));
@@ -432,20 +599,20 @@ IOReturn RadeonNI::getTimingInfoForDisplayMode(IODisplayModeID displayMode,
 
 	t = &info->detailedInfo.v2;
 	t->signalConfig = kIODigitalSignal;
-	t->pixelClock = (UInt64)fMode.clock * 1000ULL;
+	t->pixelClock = (UInt64)mode->clock * 1000ULL;
 	t->minPixelClock = t->pixelClock;
 	t->maxPixelClock = t->pixelClock;
-	t->horizontalActive = fMode.hdisplay;
-	t->horizontalBlanking = fMode.htotal - fMode.hdisplay;
-	t->horizontalSyncOffset = fMode.hsync_start - fMode.hdisplay;
-	t->horizontalSyncPulseWidth = fMode.hsync_end - fMode.hsync_start;
-	t->verticalActive = fMode.vdisplay;
-	t->verticalBlanking = fMode.vtotal - fMode.vdisplay;
-	t->verticalSyncOffset = fMode.vsync_start - fMode.vdisplay;
-	t->verticalSyncPulseWidth = fMode.vsync_end - fMode.vsync_start;
-	t->horizontalSyncConfig = (fMode.flags & RDN_MODE_NHSYNC) ?
+	t->horizontalActive = mode->hdisplay;
+	t->horizontalBlanking = mode->htotal - mode->hdisplay;
+	t->horizontalSyncOffset = mode->hsync_start - mode->hdisplay;
+	t->horizontalSyncPulseWidth = mode->hsync_end - mode->hsync_start;
+	t->verticalActive = mode->vdisplay;
+	t->verticalBlanking = mode->vtotal - mode->vdisplay;
+	t->verticalSyncOffset = mode->vsync_start - mode->vdisplay;
+	t->verticalSyncPulseWidth = mode->vsync_end - mode->vsync_start;
+	t->horizontalSyncConfig = (mode->flags & RDN_MODE_NHSYNC) ?
 		0 : kIOSyncPositivePolarity;
-	t->verticalSyncConfig = (fMode.flags & RDN_MODE_NVSYNC) ?
+	t->verticalSyncConfig = (mode->flags & RDN_MODE_NVSYNC) ?
 		0 : kIOSyncPositivePolarity;
 	t->numLinks = 1;
 	return kIOReturnSuccess;
@@ -484,7 +651,7 @@ IOReturn RadeonNI::getAttributeForConnection(IOIndex connectIndex,
 IOReturn RadeonNI::connectFlags(IOIndex connectIndex,
 	IODisplayModeID displayMode, IOOptionBits *flags)
 {
-	if (displayMode != MODE_ID)
+	if (!modeForID(displayMode))
 		return kIOReturnUnsupportedMode;
 	*flags = kDisplayModeValidFlag | kDisplayModeSafeFlag;
 	return kIOReturnSuccess;

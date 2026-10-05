@@ -2,8 +2,9 @@
  * Radeon HD 7570 ("Turks", Northern Islands) driver for Mac OS X 10.4 PPC.
  *
  * An unaccelerated IOFramebuffer: the hardware library in hw/ does the
- * work, this class presents it to IOGraphics. One display mode for now, the
- * preferred timing of the monitor's EDID, at 32 bits per pixel.
+ * work, this class presents it to IOGraphics. The display modes are the
+ * detailed timings of the monitor's EDID, each at 8, 16 and 32 bits per
+ * pixel. The cursor is drawn by IOGraphics in software.
  *
  * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
@@ -24,6 +25,8 @@ extern "C" {
 
 class RadeonNI : public IOFramebuffer
 {
+	enum { kMaxModes = 4 };
+
 	OSDeclareDefaultStructors(RadeonNI)
 
 public:
@@ -33,6 +36,7 @@ public:
 	/* IOFramebuffer */
 	virtual IOReturn enableController(void);
 	virtual IODeviceMemory *getApertureRange(IOPixelAperture aperture);
+	virtual IODeviceMemory *getVRAMRange(void);
 	virtual const char *getPixelFormats(void);
 	virtual IOItemCount getDisplayModeCount(void);
 	virtual IOReturn getDisplayModes(IODisplayModeID *allDisplayModes);
@@ -84,15 +88,29 @@ private:
 	struct rdn_os fOS;
 	struct rdn_card fCard;
 
-	/* The one mode: the display's preferred timing. */
+	/* The display's EDID and the modes taken from its detailed timings. */
 	UInt8 fEdid[RDN_EDID_MAX_SIZE];
 	int fEdidLen;
-	struct rdn_mode fMode;
+	struct rdn_mode fModes[kMaxModes];
+	UInt32 fModeCount;
+	UInt32 fSurfaceBytes;
+
+	/* What is on screen now. */
+	IODisplayModeID fCurrentMode;
+	IOIndex fCurrentDepth;
 	struct rdn_fb fFb;
+
+	/* Colour table for 8 bpp, and the gamma ramp for the direct depths. */
+	struct rdn_lut_entry fClut[256];
+	struct rdn_lut_entry fGamma[256];
 
 	bool loadBios();
 	bool bringUp();
-	IOReturn programMode();
+	const struct rdn_mode *modeForID(IODisplayModeID id);
+	void describeFb(const struct rdn_mode *mode, IOIndex depth,
+			struct rdn_fb *fb);
+	IOReturn programMode(IODisplayModeID id, IOIndex depth);
+	void loadColors();
 	void cleanUp();
 };
 

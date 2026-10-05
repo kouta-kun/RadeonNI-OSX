@@ -34,10 +34,12 @@ registers. That needs the patched QEMU (`patches/qemu/`). OpenBIOS assigns
 neither the I/O BAR nor the expansion ROM. `radeon` is blacklisted on the
 host (`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host
 kernel oops; see the JOURNAL. Milestone 3 is in progress: `kext/RadeonNI`
-is an `IOFramebuffer` subclass that links `hw/`; with one fixed mode Tiger
-draws its desktop on the 7570 at 1366x768. Still to do: the mode list from
-EDID, resolution and depth switching, cursor, gamma. After `kextload` the
-window server must be restarted to pick the screen up.
+is an `IOFramebuffer` subclass that links `hw/`. Tiger draws its desktop on
+the 7570; the modes come from the EDID (1366x768, 1920x1080) at 8, 16 and
+32 bpp, and a resolution change from System Preferences works. Pending:
+the user's confirmation of mode and depth changes on screen, and the
+cursor (software for now). After `kextload` the window server must be
+restarted to pick the screen up.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 

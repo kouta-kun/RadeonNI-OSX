@@ -282,6 +282,13 @@ With a passthrough guest running:
 After `load`, Tiger's window server has to be restarted before it uses the
 new screen: `scripts/tiger.sh ssh 'sudo killall WindowServer'`.
 
+Changing the 7570's resolution from the GUI without seeing its monitor:
+`open /System/Library/PreferencePanes/Displays.prefPane` over ssh, click
+"Gather Windows", then `open -a "System Preferences"` and Command-` to bring
+the 7570's panel to the front on the emulated screen. With two displays the
+scripted pointer is off: to hit (X, Y) send roughly
+(400 + (X - 400) / 1.174, 300 + (Y - 300) / 1.146), and check the screenshot.
+
 `scripts/tiger.sh passthru` does not trace by default, so that drawing is at
 normal speed. `TIGER_TRACE=1` adds `x-no-mmap=on` and the trace events; every
 framebuffer write is then trapped and the desktop takes minutes to draw.

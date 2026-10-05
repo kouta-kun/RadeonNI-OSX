@@ -711,3 +711,46 @@ one connection. Loaded with `kextload` into the running guest.
 - Tiger accepts the framebuffer and extends the desktop onto it at the
   native resolution. Still missing for milestone 3: more than one mode,
   resolution and depth switching, the cursor, gamma.
+
+## 2026-10-04 — Mode list, depths and the first resolution change from System Preferences
+
+**Tried.**
+
+- Library: `rdn_edid_detailed_mode()`, 8/16/32 bpp surfaces, `rdn_lut_set()`,
+  and blanking of a running CRTC before a mode change. The replay test now
+  also covers Linux's direct switch from 1366x768 to 1920x1080 (2051
+  accesses in order; PLL fb 88.0 ref 2 post 8, as Linux).
+- Kext: modes from the EDID's detailed timings (1366x768 and 1920x1080 for
+  this monitor), depth indices 0/1/2 for 8-bit indexed, 16-bit 1555 and
+  32-bit, colour table through `setCLUTWithEntries`, gamma through
+  `setGammaTable`, both written to the hardware table.
+- In an untraced passthrough guest: load, restart the window server, open
+  the Displays pane, "Gather Windows", pick 1920 x 1080 for the 7570.
+
+**Observed.**
+
+- Without tracing the kext loads in 15 s and the desktop draws at normal
+  speed.
+- The Displays pane for the 7570 lists exactly "1366 x 768" and
+  "1920 x 1080", colours "Millions".
+- First attempt: the driver set 1920x1080, the user saw the picture
+  correctly for a moment, then corruption. The window server had crashed
+  with SIGSEGV in `vecCopyBytesFDV` <- `CGXReleaseDisplayDeviceSurface`,
+  at an address 0x5a0000 past the display's base. `getApertureRange` was
+  returning only as much memory as the current mode needs (4.1 MB for
+  1366x768), and the window server kept its original mapping after the
+  switch to a mode that needs 7.9 MB. loginwindow did not bring the window
+  server back; the guest was restarted.
+- Fix: the aperture range (and `getVRAMRange`) is now a fixed size, enough
+  for the largest mode at 32 bpp (8 MB here).
+- Second attempt: mode 2 set, `system_profiler` reports 1920 x 1080, the
+  same window server process is still running, no new crash report.
+- With a second display present, the absolute pointer from QEMU's USB
+  tablet lands off target on the main screen, as if scaled about its centre
+  by about 1.17 horizontally and 1.15 vertically. Clicks are sent
+  pre-corrected for that. Sometimes the mapping is exact; not understood.
+- Host kernel untainted.
+
+**Concluded.** Mode switching works from System Preferences once the
+framebuffer memory range does not depend on the mode. What the monitor shows
+at 1920x1080 is for the user to confirm.
