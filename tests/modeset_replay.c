@@ -13,7 +13,7 @@
  * scanout address (Linux relocates the framebuffer address range, we do
  * not) and the read of that range's location.
  *
- * Usage: modeset_replay <vbios.rom> <edid.bin> <phase-file>
+ * Usage: modeset_replay <vbios.rom> <edid.bin> <modeset-phase> [init-phase]
  *
  * Copyright (c) 2026 kouta-kun and Claude
  * SPDX-License-Identifier: MIT
@@ -193,7 +193,7 @@ int main(int argc, char **argv)
 	FILE *f;
 	int r;
 
-	if (argc != 4) {
+	if (argc != 4 && argc != 5) {
 		fprintf(stderr, "usage: %s <vbios.rom> <edid.bin> <phase-file>\n",
 			argv[0]);
 		return 2;
@@ -240,6 +240,29 @@ int main(int argc, char **argv)
 	       mode.hsync_start, mode.hsync_end, mode.htotal,
 	       mode.vsync_start, mode.vsync_end, mode.vtotal,
 	       (unsigned)mode.flags, rdn_edid_is_hdmi(edid, (int)edid_len));
+
+	/*
+	 * With a fourth argument, first check the one-time display setup
+	 * against the phase that holds Linux's driver start.
+	 */
+	if (argc == 5) {
+		struct access *modeset_trace = m.trace;
+		size_t modeset_len = m.trace_len;
+
+		m.trace = load_trace(argv[4], &m.trace_len);
+		if (!m.trace)
+			return 2;
+		r = rdn_display_init(&card);
+		if (r || m.failed) {
+			printf("FAIL: display init returned %d\n", r);
+			return 1;
+		}
+		printf("display init: %zu accesses found in order\n", m.matched);
+		free(m.trace);
+		m.trace = modeset_trace;
+		m.trace_len = modeset_len;
+		m.pos = 0;
+	}
 
 	r = rdn_modeset(&card, &mode, &fb, rdn_edid_is_hdmi(edid, (int)edid_len));
 	rdn_card_fini(&card);

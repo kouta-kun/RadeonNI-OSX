@@ -16,6 +16,7 @@
  *   -b <file>    take the VBIOS from a file instead of the expansion ROM
  *   -t <file>    log every register access, in the format of
  *                scripts/trace-split.py, for comparison with a reference
+ *   -d           DVI signalling even if the display's EDID says HDMI
  *   -n           no I/O BAR: route AtomBIOS indirect I/O through MMIO
  *
  * Must run as root. Refuses to run while a kernel driver owns the card
@@ -350,6 +351,8 @@ static const uint8_t font[11][7] = {
 	{ 0x00, 0x00, 0x11, 0x0a, 0x04, 0x0a, 0x11 },	/* x */
 };
 
+static int force_dvi;
+
 struct canvas {
 	volatile uint32_t *pix;
 	uint32_t width, height, pitch;
@@ -450,7 +453,7 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 		fprintf(stderr, "no EDID on the DVI connector (%d)\n", len);
 		return -1;
 	}
-	hdmi = rdn_edid_is_hdmi(edid, len);
+	hdmi = rdn_edid_is_hdmi(edid, len) && !force_dvi;
 	printf("EDID: %d bytes, preferred %ux%u at %u kHz, %s\n", len,
 	       mode.hdisplay, mode.vdisplay, (unsigned)mode.clock,
 	       hdmi ? "HDMI" : "DVI");
@@ -475,6 +478,11 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 	c.pitch = fb.pitch_pixels;
 	draw_pattern(&c);
 
+	r = rdn_display_init(card);
+	if (r) {
+		fprintf(stderr, "display init failed (%d)\n", r);
+		return r;
+	}
 	r = rdn_modeset(card, &mode, &fb, hdmi);
 	printf("modeset returned %d\n", r);
 	munmap((void *)c.pix, st.st_size);
@@ -527,12 +535,13 @@ int main(int argc, char **argv)
 	void *bios;
 	int opt, fd, no_io = 0, ret = 0;
 
-	while ((opt = getopt(argc, argv, "s:b:t:n")) != -1) {
+	while ((opt = getopt(argc, argv, "s:b:t:nd")) != -1) {
 		switch (opt) {
 		case 's': addr = optarg; break;
 		case 'b': bios_file = optarg; break;
 		case 't': trace = optarg; break;
 		case 'n': no_io = 1; break;
+		case 'd': force_dvi = 1; break;
 		default: return 2;
 		}
 	}

@@ -49,6 +49,7 @@
 #define DIG_ENCODER		0
 #define HPD_ID			0	/* RADEON_HPD_1 */
 #define TRANSMITTER_ID		ENCODER_OBJECT_ID_INTERNAL_UNIPHY
+#define CONNECTOR_OBJECT_ID	CONNECTOR_OBJECT_ID_DUAL_LINK_DVI_I
 
 #define PS_WORDS		16
 
@@ -688,6 +689,55 @@ static int dig_transmitter_setup(struct rdn_card *card,
 	ps_u8(&ps, 2, config);				/* acConfig */
 	ps_u8(&ps, 3, action);				/* ucAction */
 	ps_u8(&ps, 4, 4);				/* ucLaneNum */
+	return ps_exec(card, index, &ps);
+}
+
+/*
+ * What Linux does once at driver start, before any mode is set
+ * (radeon_atom_encoder_init() and radeon_atom_disp_eng_pll_init()): tell
+ * the BIOS which connector the transmitter serves, and start the display
+ * engine clock. Without that clock the CRTC timing is wrong even though
+ * every modeset register holds the right value.
+ */
+int rdn_display_init(struct rdn_card *card)
+{
+	struct atom_context *ctx = card->atom.ctx;
+	int index = GetIndexIntoMasterTable(COMMAND, UNIPHYTransmitterControl);
+	ATOM_FIRMWARE_INFO_V2_1 *info;
+	uint32_t dispclk;
+	uint16_t data_offset;
+	struct ps ps;
+	int r;
+
+	/* atombios_dig_transmitter_setup(ATOM_TRANSMITTER_ACTION_INIT) */
+	if (cmd_table_check(card, index, "UNIPHYTransmitterControl", 1, 4))
+		return -EINVAL;
+	ps_init(&ps);
+	ps_le16(&ps, 0, CONNECTOR_OBJECT_ID);		/* usInitInfo */
+	ps_u8(&ps, 2, (1 << 1) | ((DIG_ENCODER & 1) << 3)); /* acConfig */
+	ps_u8(&ps, 3, ATOM_TRANSMITTER_ACTION_INIT);	/* ucAction */
+	ps_u8(&ps, 4, 4);				/* ucLaneNum */
+	r = ps_exec(card, index, &ps);
+	if (r)
+		return r;
+
+	/* atombios_crtc_set_disp_eng_pll(), PIXEL_CLOCK_PARAMETERS_V6 */
+	if (!atom_parse_data_header(ctx, GetIndexIntoMasterTable(DATA, FirmwareInfo),
+				    NULL, NULL, NULL, &data_offset))
+		return -EINVAL;
+	info = (ATOM_FIRMWARE_INFO_V2_1 *)((uint8_t *)ctx->bios + data_offset);
+	dispclk = le32_to_cpu(info->ulDefaultDispEngineClkFreq);
+	if (dispclk == 0)
+		dispclk = 54000;	/* 540 MHz */
+
+	index = GetIndexIntoMasterTable(COMMAND, SetPixelClock);
+	if (cmd_table_check(card, index, "SetPixelClock", 1, 6))
+		return -EINVAL;
+	ps_init(&ps);
+	ps_le32(&ps, 0, dispclk);			/* ulDispEngClkFreq */
+	ps_u8(&ps, 8, ATOM_DCPLL);			/* ucPpll */
+	rdn_log(card->os, RDN_LOG_INFO, "display engine clock %u0 kHz",
+		(unsigned)dispclk);
 	return ps_exec(card, index, &ps);
 }
 

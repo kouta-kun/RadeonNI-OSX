@@ -39,8 +39,16 @@ bool rdn_edid_preferred_mode(const uint8_t *edid, struct rdn_mode *mode);
 bool rdn_edid_is_hdmi(const uint8_t *edid, int len);
 
 /*
+ * One-time display setup after the card is posted and before the first
+ * rdn_modeset(): transmitter initialisation and the display engine clock.
+ * Returns 0 or a negative errno value.
+ */
+int rdn_display_init(struct rdn_card *card);
+
+/*
  * Set `mode` on CRTC 0 and drive it out of the DVI-I connector's digital
- * output, scanning out `fb`. The card must be posted. `hdmi` selects HDMI
+ * output, scanning out `fb`. The card must be posted and rdn_display_init()
+ * must have run. `hdmi` selects HDMI
  * rather than DVI signalling. Returns 0 or a negative errno value.
  *
  * The display topology is fixed for now (see rdn_modeset.c).

@@ -598,3 +598,29 @@ the monitor shows the pattern is for the user to say. If HDMI signalling
 without infoframes is a problem for the monitor, DVI signalling is the
 obvious thing to try next; the unported watermark setup is the other
 candidate.
+
+## 2026-10-04 — "Input not supported": the display engine clock was never started
+
+**Observed.** With the first modeset the user's monitor reported "input not
+supported": it saw a signal it could not use.
+
+**Found.** Linux's AtomBIOS call log shows two calls at driver start that the
+first port left out: `DIG1TransmitterControl` with action INIT for each
+connector (`07020002 00000004` for the DVI-I one), and `SetPixelClock`
+`0000d2f0 00000000 00000002`, which starts the display engine PLL (DCPLL) at
+540 MHz (`atombios_crtc_set_disp_eng_pll`). The pixel PLL's output is
+derived relative to that clock.
+
+**Tried.** `rdn_display_init()`: transmitter INIT for the DVI-I connector and
+the DCPLL at `ulDefaultDispEngineClkFreq` from FirmwareInfo (0 on this card,
+so the DCE5 default of 540 MHz). The replay test now also checks it against
+the driver-start phase of the trace: 699 accesses in order, same on both
+architectures. `rdn_tool modeset` calls it; `-d` forces DVI signalling.
+
+**Observed after the change.** Registers 0x6530 and 0x6590, which differed
+from the Linux readback before, now match it (`00005200`, `00010f9f`).
+CRTC still running.
+
+**Concluded.** Probably the cause; the user's answer decides. Lesson for the
+replay tests: they prove that what we do is what Linux did, not that we do
+everything Linux did. The AtomBIOS call log is the checklist for omissions.
