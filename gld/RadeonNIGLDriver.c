@@ -398,11 +398,24 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 		}
 		break;
 	case IDX_gldChoosePixelFormat:
-		/* Word 1 of the pixel format is the whole renderer ID. */
-		if (ret == 0 && a && *(long **)a && (patch & 2))
-			(*(long **)a)[1] = RDN_RENDERER_ID;
-		if (ret == 0 && a && *(long **)a && RDN_CLAIMS_ACCELERATED)
-			(*(unsigned long **)a)[2] |= RECORD_ACCELERATED;
+		/*
+		 * The answer is a chain of records linked through word 0.
+		 * Word 1 of each is the whole renderer ID, word 2 its flags.
+		 * Every record has to carry our ID: CGL hands one that does
+		 * not to the renderer it names, which then frees what it
+		 * did not allocate.
+		 */
+		if (ret == 0 && a) {
+			unsigned long *fmt = *(unsigned long **)a;
+			int guard = 0;
+
+			for (; fmt && guard < 64; fmt = (unsigned long *)fmt[0], guard++) {
+				if (patch & 2)
+					fmt[1] = RDN_RENDERER_ID;
+				if (RDN_CLAIMS_ACCELERATED)
+					fmt[2] |= RECORD_ACCELERATED;
+			}
+		}
 		/* Experiment: RDN_GLD_PF="word:xor" flips bits of the format. */
 		if (ret == 0 && a && *(long **)a && getenv("RDN_GLD_PF")) {
 			char *end;
