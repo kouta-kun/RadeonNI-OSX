@@ -467,3 +467,9 @@ effect, `scripts/card-bind.sh vfio`, then
 - Milestone 1's criterion is met on "IOPCIDevice with BARs assigned". The
   "accessible" half needs kernel code in the guest and will be shown by the
   first probe kext.
+
+## 2026-10-04 — Decision: VBIOS from a file under QEMU
+
+The user chose the load-from-file route over patching OpenBIOS to assign the
+ROM BAR. Reading the VBIOS from the expansion ROM is deferred to the real G5
+and listed in PLAN.md under "Deferred to the real G5".

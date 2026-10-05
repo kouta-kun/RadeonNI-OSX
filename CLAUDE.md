@@ -140,7 +140,10 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
 - No command ring, microcode or interrupts in this phase, but nothing that
   would prevent them later.
 - The VBIOS comes from the PCI expansion ROM, with a load-from-file fallback.
-  Never from the x86 legacy address.
+  Never from the x86 legacy address. Under QEMU the kext uses the file,
+  because OpenBIOS does not assign the ROM BAR and the user chose not to
+  patch it; the ROM path must be revisited on the real G5 (`docs/PLAN.md`,
+  "Deferred to the real G5").
 - Cold POST follows the Linux `radeon` initialisation order.
 - The kext is built inside the Tiger guest over ssh with Xcode 2.5 and
   Apple's gcc. It is always loaded by hand with `kextload` from a temporary

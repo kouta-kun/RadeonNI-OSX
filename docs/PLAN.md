@@ -74,8 +74,8 @@ assigned and accessible.
 3a. Done 2026-10-04: OpenBIOS assigns BAR0 (256 MB) at `0x90000000` and BAR2
    at `0xa0000000` with no patch. It does not assign the I/O BAR or the ROM.
    Remaining: a probe kext that maps BAR2 and reads registers, to show the
-   BARs are accessible; and a decision on how the kext gets the VBIOS under
-   `mac99` (file fallback, or patch OpenBIOS to assign the ROM BAR).
+   BARs are accessible. The kext takes the VBIOS from a file under `mac99`
+   (see "Deferred to the real G5").
 4. Expected trouble: OpenBIOS and the 64-bit 256 MB BAR0. Patch OpenBIOS or
    QEMU as needed; document in HARNESS.md. If unworkable, stop and present
    alternatives.
@@ -112,3 +112,19 @@ resolution change from System Preferences (user confirms).
 1. Kext skeleton matching on `IOPCIMatch`, built in the guest, loaded by hand.
 2. Single fixed mode.
 3. Modes from EDID, resolution and depth switching, cursor.
+
+## Deferred to the real G5
+
+Things knowingly left untested under QEMU, to revisit once the driver runs
+on the Power Mac G5.
+
+- **VBIOS from the PCI expansion ROM.** Under `mac99` the kext loads the
+  VBIOS from a file, because OpenBIOS does not assign the ROM BAR (user
+  decision, 2026-10-04; OpenBIOS is not patched for this). The ROM-read path
+  in the kext is therefore never exercised in the harness. On the G5: check
+  that Open Firmware assigns the ROM (`assigned-addresses` entry for
+  register 0x30), implement or enable reading it through the ROM BAR, compare
+  the image against the file byte for byte, and make the ROM the primary
+  source with the file as fallback. Keep in mind the pc297 failure (VBIOS
+  taken from the wrong place) and the warning that the ROM size in the
+  device tree may be truncated.
