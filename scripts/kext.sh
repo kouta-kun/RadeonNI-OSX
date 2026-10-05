@@ -13,6 +13,9 @@
 #   scripts/kext.sh uninstall  remove a copy installed in the guest's
 #                              /System/Library/Extensions (see below)
 #
+# With RDN_ACCEL=1, load (and so up) also makes the kext announce its
+# accelerator service, which names the OpenGL driver bundle (phase 2).
+#
 # Under QEMU the kext is always loaded from the temporary directory, freshly
 # built, so that what runs is never a stale installed copy. Installing into
 # /System/Library/Extensions is for the real Mac and is done by the package
@@ -33,12 +36,15 @@ make_plist() {
     [ -f "$vbios" ] || { echo "missing $vbios" >&2; exit 1; }
     mkdir -p "$root/build"
     python3 - "$root/kext/RadeonNI/Info.plist" "$vbios" > "$root/build/kext-Info.plist" <<'PY'
-import base64, sys
+import base64, os, sys
 plist = open(sys.argv[1]).read()
 data = base64.b64encode(open(sys.argv[2], "rb").read()).decode()
 marker = "\t\t\t<key>IOProviderClass</key>"
 assert marker in plist
-sys.stdout.write(plist.replace(marker, "\t\t\t<key>VBIOS</key>\n\t\t\t<data>" + data + "</data>\n" + marker))
+extra = "\t\t\t<key>VBIOS</key>\n\t\t\t<data>" + data + "</data>\n"
+if os.environ.get("RDN_ACCEL") == "1":
+    extra += "\t\t\t<key>Accelerator</key>\n\t\t\t<true/>\n"
+sys.stdout.write(plist.replace(marker, extra + marker))
 PY
 }
 

@@ -11,6 +11,7 @@
 #include <kern/clock.h>
 
 #include "RadeonNI.h"
+#include "RadeonNIAccel.h"
 
 #define super IOFramebuffer
 OSDefineMetaClassAndStructors(RadeonNI, IOFramebuffer)
@@ -329,6 +330,13 @@ bool RadeonNI::start(IOService *provider)
 		return false;
 	}
 	IOLog("RadeonNI: framebuffer started\n");
+
+	/*
+	 * The accelerator is announced only when the personality asks for
+	 * it: the window server and OpenGL act on it as soon as it is there.
+	 */
+	if (getProperty("Accelerator") == kOSBooleanTrue)
+		fAccel = RadeonNIAccel::withFramebuffer(this, provider);
 	return true;
 }
 
@@ -355,6 +363,11 @@ void RadeonNI::cleanUp()
 
 void RadeonNI::stop(IOService *provider)
 {
+	if (fAccel) {
+		fAccel->retire(provider);
+		fAccel->release();
+		fAccel = 0;
+	}
 	super::stop(provider);
 	cleanUp();
 	IOLog("RadeonNI: stopped\n");

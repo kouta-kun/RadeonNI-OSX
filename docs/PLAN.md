@@ -207,7 +207,8 @@ app / WindowServer -> OpenGL.framework -> GLEngine (gli*)
 - Mesa's `r600` is the 3D driver. It is a complete GL implementation, so it
   cannot be an ordinary `gld*` driver under Apple's `GLEngine`; the bundle
   implements the lifecycle calls and gives the public GL dispatch table
-  (`gliDispatch.h`) to Mesa. **Unproven hypothesis; A0 tests it.**
+  (`gliDispatch.h`) to Mesa. A0 showed the bundle can reach and change that
+  table; `gldInitDispatch` does not hand it over, the engine's context does.
 - The kernel half (command processor, memory, fences) is ported from the
   MIT-headed Linux `radeon` files into `hw/`, under the same rules as phase
   1, and shared by `rdn_tool` and the kext.
@@ -219,7 +220,7 @@ app / WindowServer -> OpenGL.framework -> GLEngine (gli*)
 
 | # | Milestone | Success criterion | State |
 |---|---|---|---|
-| A0 | Prove the plug-in route, no hardware | A GL program in the guest runs through our `gld*` bundle and shows the effect of a dispatch entry we replaced | not started |
+| A0 | Prove the plug-in route, no hardware | A GL program in the guest runs through our `gld*` bundle and shows the effect of a dispatch entry we replaced | **Criterion met 2026-10-05** for an off-screen context: one entry (`glClear`) replaced. Replacing all 686 for the life of a context is still unproven (GLD-INTERFACE.md, "Not known yet") |
 | A1 | Command processor from Linux userspace (x86, real card) | `rdn_tool` draws a triangle into the scanout buffer; user confirms | not started |
 | A2 | Mesa on our winsys (x86 Linux, real card, no Linux DRM) | Mesa renders an animated test on the monitor; then the big-endian build under `qemu-ppc` does the same | not started |
 | A3 | Kext accelerator + Mesa in Tiger | A full-screen CGL program in the guest renders on the 7570 | not started |

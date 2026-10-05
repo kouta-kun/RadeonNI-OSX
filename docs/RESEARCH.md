@@ -211,7 +211,12 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
   `CGXAcceleratorForDisplayDevice`.
 - The guest has no accelerated device: `IOAccelerator` instance count is 0.
 - **[I]** A `gld*` bundle can replace the whole dispatch table with another
-  GL implementation (Mesa). Milestone A0 tests this.
+  GL implementation (Mesa). **Update (2026-10-05):** one entry replaced and
+  working; the table is reached through the engine's context, not handed
+  over by `gldInitDispatch`. See GLD-INTERFACE.md.
+- **Correction (2026-10-05):** the accelerator names the bundle with an
+  `IOGLBundleName` property it sets on itself at run time, and the
+  framebuffer points at the accelerator with `IOAccelTypes` [V].
 - **[I]** The 10.5/10.6 x86 `gld*` signatures in VMsvga2 carry over to
   10.4 PPC closely enough to be a starting point.
 

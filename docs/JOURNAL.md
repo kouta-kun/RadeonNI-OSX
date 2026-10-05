@@ -888,3 +888,41 @@ hypothesis; milestone A0 tests it before any hardware work. Milestones A0
 to A7, risks and the user's decisions (ABI learning by observation and
 disassembly reading, microcode handled like the VBIOS) are in PLAN.md.
 Nothing was run on the card.
+
+## 2026-10-05 — A0: Tiger's OpenGL loads our bundle; glClear replaced
+
+**Tried.** (1) `tools/guest/glprobe.c`: list renderers, draw off-screen,
+read a pixel back. (2) An accelerator service created by the framebuffer
+when the personality has `Accelerator` true (`RDN_ACCEL=1 scripts/kext.sh
+load`): `IOGLBundleName` on itself, `IOAccelTypes` path on the framebuffer,
+as VMsvga2 does. (3) `gld/RadeonNIGLDriver.bundle`, installed in the guest's
+`/System/Library/Extensions`: forwards all 62 `gld*` calls to
+`GLRendererFloat`, logging them. (4) Changes on the way through: renderer
+ID, `GL_RENDERER` string, `glClear` replaced.
+
+**Observed.**
+- Baseline without our kext: renderers 0x20200 and 0x20400, both software.
+  The guest's installed OpenGL.framework has no headers; the 10.4u SDK does.
+- With the accelerator published and the window server restarted, `glprobe`
+  loads our bundle. The window server itself did not load it, asked for no
+  user client, and kept running.
+- With the renderer info's ID changed, CGL lists 0x00021a00 in place of
+  0x20400, on both displays.
+- With the pixel format's ID changed too, `CGLCreateContext` fails with
+  10002 before calling the bundle. Left unchanged, the context is created
+  through our bundle (asked for as 0x20400) and `GL_RENDERER` is our string.
+- Replacing entry 10 of the table passed to `gldInitDispatch` had no effect:
+  that table is the driver's own, inside the engine context, not the
+  application's. A search of the engine context for the address of the
+  application's `disp` (printed by `glprobe`) found it at `table - 0x18`.
+- Replacing `disp->clear` through that pointer: the program clears to green
+  and reads back 255 0 255 255, magenta, as our replacement paints. The
+  entry was still ours after drawing and after a `gldUpdateDispatch`.
+
+**Concluded.** The plug-in route works as far as A0 asked: our bundle is
+loaded by the system's OpenGL and can replace a GL entry point for an
+application. The hypothesis in the plan was wrong in one detail
+(`gldInitDispatch` does not hand over the public table) and is not fully
+proven: one entry of 686, one short off-screen program. Open points are in
+GLD-INTERFACE.md. The guest is left with the kext loaded with the
+accelerator and the bundle installed.

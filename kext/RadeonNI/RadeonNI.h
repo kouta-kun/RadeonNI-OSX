@@ -23,6 +23,8 @@ extern "C" {
 #include "rdn_pattern.h"
 }
 
+class RadeonNIAccel;
+
 class RadeonNI : public IOFramebuffer
 {
 	enum { kMaxModes = 4 };
@@ -83,6 +85,7 @@ private:
 	void *fBios;
 	UInt32 fBiosSize;
 	bool fCardReady;
+	RadeonNIAccel *fAccel;
 	bool fModeSet;
 
 	struct rdn_os fOS;

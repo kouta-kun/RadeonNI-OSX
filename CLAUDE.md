@@ -41,13 +41,23 @@ System Preferences and a software cursor.
 What was left out on purpose is listed in `docs/PLAN.md` under "Known gaps
 after phase 1" and "Deferred to the real G5".
 
-**Phase 2 (acceleration) was planned with the user on 2026-10-04 and no
-milestone has started.** `docs/PLAN.md`, "Phase 2", has milestones A0 to A7.
-The route: Mesa's `r600` driver behind a `gld*` GL driver bundle that hands
-Apple's public GL dispatch table to Mesa, over a kernel half (command
-processor, memory, fences) ported from Linux into `hw/`. Whether a bundle
-can take over the dispatch table is unproven; A0 tests it first. The first
-run on the real G5 has not been planned in detail.
+**Phase 2 (acceleration) was planned with the user on 2026-10-04.**
+`docs/PLAN.md`, "Phase 2", has milestones A0 to A7. The route: Mesa's `r600`
+driver behind a `gld*` GL driver bundle that gives Apple's public GL
+dispatch table to Mesa, over a kernel half (command processor, memory,
+fences) ported from Linux into `hw/`. The first run on the real G5 has not
+been planned in detail.
+
+- A0's criterion is met (2026-10-05): Tiger's OpenGL loads our bundle
+  (`gld/`, a logging pass-through to Apple's software renderer) and an
+  off-screen GL program runs through it with `glClear` replaced by ours.
+  Only one of the 686 entries was replaced, and only off-screen.
+- A1 to A7 have not started. No acceleration code touches the card yet.
+- The guest currently has `RadeonNIGLDriver.bundle` installed in
+  `/System/Library/Extensions`; the snapshots do not. It is inert unless
+  the kext is loaded with `RDN_ACCEL=1`.
+- `docs/GLD-INTERFACE.md` is what has been learned about Apple's GL driver
+  interface.
 
 ## Documents
 
@@ -61,6 +71,7 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
 - `docs/HARDWARE.md`: facts about this specific card.
 - `docs/REFERENCE-TRACE.md`: how the Linux driver's trace was captured, its
   phases and findings.
+- `docs/GLD-INTERFACE.md`: Apple's OpenGL driver interface as observed.
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
   Treat `[I]` as a hypothesis; fix the document when reality differs.
 
@@ -110,6 +121,16 @@ Keep these current as part of the work, and commit small and often.
   it from `/tmp` with `kextload`, and restart the guest's window server so
   that it uses the screen. The steps are also available one by one
   (`build`, `load`, `activate`), plus `unload`, `log` and `uninstall`.
+- `RDN_ACCEL=1 scripts/kext.sh up`: as above, and the kext also publishes
+  its accelerator service (`kext/RadeonNI/RadeonNIAccel.cpp`), which makes
+  OpenGL load the GL bundle. Without the variable the kext is phase 1's.
+- `scripts/gld.sh {build|install|uninstall|log|clearlog}`: build
+  `gld/RadeonNIGLDriver.bundle` in the guest and install it in the guest's
+  `/System/Library/Extensions` (OpenGL loads it only from there). `log`
+  shows every `gld*` call made to it (`/tmp/rdngld.log` in the guest).
+- `tools/guest/glprobe.c`: build in the guest (command in its header) to
+  list OpenGL renderers and to draw off-screen on a chosen renderer
+  (`glprobe draw 0x20400` goes through our bundle).
 - `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
   with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
   `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.
@@ -138,6 +159,8 @@ Keep these current as part of the work, and commit small and often.
 - `hw/rdn_modeset.c` builds AtomBIOS parameter blocks byte by byte in
   little-endian layout (no structs, no bitfields) and follows the Linux
   call order recorded in `traces/ref-radeon-3.atomcalls.txt`.
+- `gld/` is the OpenGL driver bundle, built in the guest. Today it forwards
+  every `gld*` call to `GLRendererFloat` and logs it.
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.
