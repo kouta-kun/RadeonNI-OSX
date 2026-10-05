@@ -1858,3 +1858,21 @@ screen gives the screen back cleanly.
 - **Tux Racer:** the user says it hangs after "press any key". Not looked
   at.
 
+## 2026-10-05 — Quake 3 full screen: it was the display's mode list
+
+Under the debugger Quake 3 never reaches `CGLChoosePixelFormat` full
+screen: it asks about the renderers, then fails in `GLimp_Init`. Its
+default is 640x480, and the display offers only what the kext takes from
+the EDID's detailed timings: 1366x768 and 1920x1080. Started with
+`+set r_fullscreen 1 +set r_mode -1 +set r_customwidth 1366 +set
+r_customheight 768` it goes full screen on the card (attributes 54, 84:
+mask, 5, 8: 16, 12: 16 ...; the bundle's full-screen attach) and shows
+its CD key screen complete; the user confirmed on the monitor. A small
+test program shows the pixel format requests themselves were never the
+problem.
+
+**To do.** The kext should offer the usual resolutions (640x480, 800x600,
+1024x768, 1280x720 ...), from the EDID's established and standard
+timings or generated. Not known: whether Quake's key input works full
+screen (it did not in a window, the user says).
+
