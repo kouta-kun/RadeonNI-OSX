@@ -1412,3 +1412,31 @@ down to the TV. So both assumptions held: `convertCursorImage` with a
 32-bit descriptor gives rows packed at the cursor's width, colours
 already multiplied by alpha.
 
+## 2026-10-05 — Chess with Quartz Extreme on: drawn by Apple's software renderer, not by the card
+
+**Tried.** `open /Applications/Chess.app` with the Quartz Extreme set-up
+loaded (`RDN_SURFACES=1` and the rest), as an existing OpenGL program to
+test with.
+
+**Observed.** Chess shows its board correctly (on the emulated display,
+where its window opens; neither AppleScript nor System Events could move
+it). But the GPU ran no command buffers for it and the bundle's log has
+no "entries of table ... are Mesa's" line: `rdn_mesa_dispatch` refused,
+because the record passed to `gldAttachDrawable(type 0x50)` is not the one
+`read_record` knows. It begins `00007d53 00000027 02ca5de0 00000002
+00000003 00000002`: connection, window and a third word, the same shape
+as the window server's own record (`0, 0, surface ID`), with no size or
+base address in the places they were before. Read again later with the
+debugger it is unchanged. So every GL call stayed with Apple's software
+renderer.
+
+Before the Quartz Extreme set-up the same Chess rendered through Mesa
+(entry above); `glwin` did so even with Quartz Extreme on, earlier today.
+
+**Concluded.** With surfaces on offer, at least some applications' window
+drawables are described by connection, window and surface instead of by a
+buffer, and the bundle does not handle that: such programs work, but in
+software. This is the unfinished half of A4 (windows as surfaces of their
+own). Not known: what decides between the two kinds of record (`glwin`
+is GLUT, Chess is Cocoa and asks for a multisampled format).
+
