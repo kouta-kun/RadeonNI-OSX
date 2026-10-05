@@ -49,6 +49,7 @@
 
 /* Bit 8 of word 2, in the renderer info and in the pixel format alike. */
 #define RECORD_ACCELERATED	0x100
+#define RECORD_FULLSCREEN	0x2
 #ifdef RDN_MESA
 #define RDN_CLAIMS_ACCELERATED	1
 #else
@@ -560,7 +561,7 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 		if (ret == 0 && a && (patch & 1))
 			((long *)a)[1] = RDN_RENDERER_ID & 0xffff;
 		if (ret == 0 && a && RDN_CLAIMS_ACCELERATED) {
-			((unsigned long *)a)[2] |= RECORD_ACCELERATED;
+			((unsigned long *)a)[2] |= RECORD_ACCELERATED | RECORD_FULLSCREEN;
 			/* Words 12 and 13: video and texture memory, in bytes. */
 			((unsigned long *)a)[12] = RDN_REPORTED_MEMORY;
 			((unsigned long *)a)[13] = RDN_REPORTED_MEMORY;
@@ -707,6 +708,19 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 					(int)getpid(), r[2], r[1], err);
 			if (!err && rdn_mesa_attach_surface((void *)a, r[0], r[1], r[2]))
 				return 2;
+		} else if (idx == IDX_gldAttachDrawable && b == 0x36) {
+			/*
+			 * kCGLPFAFullScreen: the program has the display to
+			 * itself. Mesa draws off-screen and each swap
+			 * copies the whole picture to the screen.
+			 */
+			if (logf) {
+				fprintf(logf, "[%d]   the whole screen is attached\n", (int)getpid());
+				if (c)
+					dump("drawable", c, 0x40);
+			}
+			if (rdn_mesa_attach_screen((void *)a, 0))
+				return 2;
 		} else if (idx == IDX_gldAttachDrawable &&
 			   rdn_mesa_is_surface((void *)a)) {
 			rdn_mesa_detach((void *)a);
@@ -725,6 +739,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	if (in_window_server()) {
 		if (idx == IDX_gldAttachDrawable) {
 			/* The record's third word is the surface ID. */
+			rdn_window_server = 1;
 			ret = rdn_mesa_attach_screen((void *)a,
 				c ? ((const unsigned long *)c)[2] : 0) ? 2 : -1;
 			screen_ctx = ret == 2 ? (void *)a : NULL;
@@ -824,6 +839,23 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			fmt[6] = 1;		/* depth mode: none */
 			fmt[7] = 1;		/* stencil mode: none */
 			fmt[12] = 0xffffffff;	/* display mask */
+			if (!in_window_server()) {
+				/*
+				 * A program: the software renderer has no
+				 * format for the whole screen
+				 * (kCGLPFAFullScreen, 54). The record is its
+				 * record for a window (a depth buffer of 24
+				 * bits, a stencil buffer of 8, the words it
+				 * has at 3, 5 and 8) with the full screen
+				 * flag as well.
+				 */
+				fmt[2] |= RECORD_FULLSCREEN;
+				fmt[3] = 8;
+				fmt[5] = 0x20000000;
+				fmt[6] = 0x1000;
+				fmt[7] = 0x80;
+				fmt[8] = 4;
+			}
 			*(unsigned long **)a = fmt;
 			own_format = fmt;
 		}

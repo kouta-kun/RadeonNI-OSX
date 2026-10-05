@@ -1802,3 +1802,34 @@ window stutters a little, with nothing wrong in the picture. So the
 window server's texture does follow a surface whose buffer moves; how has
 not been looked at.
 
+## 2026-10-05 — Full-screen OpenGL: Sauerbraten on the card
+
+**Asked by the user**, who copied Sauerbraten (PowerPC, SDL 1.2) into the
+guest and found it "a bit wonky" in a window.
+
+**Observed first.** Full screen it stopped with "Failed creating OpenGL
+pixel format": its attribute list is `54 (full screen), 8: 32, 12: 16, 5,
+84: 1, 4`, the software renderer has no format for that, and the record
+the bundle then made itself was the window server's (no depth, no
+full-screen flag).
+
+**Built** (with `/tmp/rdngld.surface`):
+- For a program, the bundle's own pixel format record is the software
+  renderer's window record (words 3, 5 and 8 as it has them, depth mode
+  0x1000, stencil mode 0x80) with the full-screen flag (bit 1 of word 2)
+  added; the renderer info has that flag too.
+- `gldAttachDrawable(ctx, 0x36, record)`: the bundle attaches the whole
+  screen itself, as for the window server's context; Mesa draws
+  off-screen and each `glSwapAPPLE` copies the picture to the screen. The
+  record is not used (its fifth word is 0x6eb, 1771; not understood).
+
+**Observed (readback).** Sauerbraten starts full screen at 1366x768 and
+shows a level: textured, lit walls, items, the crosshair, the status
+numbers and text. Its own counter says 6 frames a second. Lines of its
+console text overlap each other at the top left.
+
+**Not known.** Why it is that slow (the emulated CPU, or the driver: a
+`glFinish` and a full-screen copy per frame), what is wrong with the
+console text, what "wonky" was in the window, and whether leaving full
+screen gives the screen back cleanly.
+

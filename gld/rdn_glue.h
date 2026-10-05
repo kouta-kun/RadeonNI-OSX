@@ -89,6 +89,8 @@ int rdn_swap(void *rend);
  * them). See rdn_watch_end() in rdn_mesa.c.
  */
 extern int rdn_watch;
+/* Set by the bundle when the process is the window server. */
+extern int rdn_window_server;
 void rdn_watch_ortho(double left, double right, double bottom, double top,
 		     double z_near, double z_far);
 void rdn_watch_begin(unsigned mode);

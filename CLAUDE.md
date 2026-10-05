@@ -91,7 +91,10 @@ been planned in detail.
   readback only). How it works is in the journal's last entries (the window server
   textures from the surface's buffer directly). `/var/log/windowserver.log`
   in the guest is the window server's own log.
-  `~/gl/drag x0 y0 x1 y1` drags with the mouse from inside the guest. Without the file, windows
+  `~/gl/drag x0 y0 x1 y1` drags with the mouse from inside the guest.
+- Full-screen OpenGL works by readback (2026-10-05) with the same file:
+  Sauerbraten (the user's test game, on the guest's `/Volumes/sauerbraten`
+  while its image is mounted) shows a level at 6 frames a second. Without the file, windows
   go through the software renderer's buffer as before, and Chess is
   wrong.
 - A6 and A7 have not started.

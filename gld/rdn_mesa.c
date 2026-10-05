@@ -348,7 +348,9 @@ int rdn_mesa_is_surface(void *gld_ctx)
 {
 	struct context *c = find(gld_ctx);
 
-	return c && c->type == DRAWABLE_SURFACE;
+	/* A surface, or the whole screen in a program's hands. */
+	return c && (c->type == DRAWABLE_SURFACE ||
+		     (c->type == DRAWABLE_SCREEN && !rdn_window_server));
 }
 
 void rdn_mesa_detach(void *gld_ctx)
@@ -655,7 +657,7 @@ void rdn_make_current(void *rend)
 		}
 		rdn_origin_x = c->origin_x;
 		rdn_origin_y = c->origin_y;
-		rdn_watch = 1;
+		rdn_watch = rdn_window_server;
 		/* What is shown when the context is flushed: the region. */
 		if (c->screen_rects) {
 			OSMesaReadbackRects(c->mesa, (GLint)c->screen_rects,
@@ -723,6 +725,7 @@ static int drawable_changed(const struct context *c)
  * dragged.
  */
 int rdn_watch;
+int rdn_window_server;
 
 static struct {
 	/* glOrtho's left and top: the desktop position of the drawable's corner. */
@@ -992,6 +995,12 @@ int rdn_swap(void *rend)
 	int i, tries;
 
 	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].rend == rend &&
+		    contexts[i].type == DRAWABLE_SCREEN && !rdn_window_server) {
+			/* The whole screen: the copy is all there is to do. */
+			rdn_mesa_present(contexts[i].gld_ctx);
+			return 1;
+		}
 		if (contexts[i].gld_ctx && contexts[i].rend == rend &&
 		    contexts[i].type == DRAWABLE_SURFACE) {
 			if (contexts[i].swaps++ % 100 < 2)
