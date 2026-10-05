@@ -251,6 +251,22 @@ Snapshots: `installed-raw` (10.4.6, before first boot), `tiger-10.4.11`,
 Only one QMP client can be connected at a time: do not run `guest-ctl.py`
 while `guest-wait.sh` is running.
 
+### A real keyboard and pointer
+
+`TIGER_EVDEV=/dev/input/by-id/<node>` makes `scripts/tiger.sh` start QEMU
+with `-object input-linux` for that host event device, and
+`scripts/guest-cycle.sh ready` then runs `scripts/tiger.sh evdev`, which
+(re)attaches it over QMP and makes the emulated relative mouse the first
+pointer device (`mouse_set`). Without that step a click goes to the
+absolute tablet and throws the pointer into the top left corner. QEMU
+grabs the device; both Ctrl keys together give it back to the host. After
+unplugging the device QEMU does not reopen it: run `scripts/tiger.sh
+evdev` again. `scripts/tiger.sh evdev off` detaches it.
+
+Do not pass a USB keyboard or mouse through with `usb-host`: QEMU's OHCI
+allows one pending packet for the whole controller, an idle device's
+interrupt poll holds it, and Tiger logs a USB timeout every 13 s.
+
 ## Guest recovery (PLANNED)
 
 - The kext is only ever loaded with `kextload` from a temporary directory; a

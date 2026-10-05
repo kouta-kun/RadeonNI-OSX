@@ -1758,3 +1758,41 @@ error.
 gets no texture. **Not tried:** a surface window that changes size (its
 buffer moves; the texture would have to follow).
 
+## 2026-10-05 — A real keyboard and pointer for the guest: evdev, not USB passthrough
+
+**Tried (by the user).** A Logitech Unifying receiver (`046d:c52b`, K400
+Plus) passed to the guest with `usb-host`.
+
+**Observed.** The guest logged `AppleUSBOHCI: Found a transaction which
+hasn't moved in 5 seconds on bus 13, timing out!` every 13 s, 40 times,
+from 41 s after the receiver appeared on the host until 2 s before it was
+unplugged.
+
+**Likely cause (from the source, not captured).** `mac99` has only an OHCI
+controller, and QEMU's OHCI allows one pending asynchronous packet for the
+whole controller (`hw/usb/hcd-ohci.c`, "We only allow one active packet
+per controller"). `usb-host` submits interrupt-IN polls without a timeout,
+so an idle device's poll holds the one slot and every other transfer
+waits. The emulated devices answer "no data" at once and never do this.
+`-trace usb_ohci_td_too_many_pending` would confirm it.
+
+**Tried.** `input-linux` instead: QEMU reads the host's event device and
+feeds its emulated USB keyboard and mouse. Added to the running guest with
+`object-add` over QMP.
+
+**Observed (user).** Keys and pointer work. Every click threw the pointer
+into the top left corner: QEMU sends button events to the first pointer
+device in its list, which was the absolute tablet, and the tablet reports
+the click at its own position, (0,0). `mouse_set` to the relative mouse
+fixed it (confirmed by the user). The guest's HID drivers put the tablet
+first again when they start, so this is done after boot.
+
+**Changed.** `TIGER_EVDEV=<node>` for `scripts/tiger.sh` (the device from
+boot), `scripts/tiger.sh evdev [node|off]` (attach to the running guest
+and make the relative mouse the one for buttons; `guest-cycle.sh ready`
+runs it when `TIGER_EVDEV` is set). The subcommand was run on the live
+guest, twice. Starting a guest with `TIGER_EVDEV` set has not been run.
+
+**Not tried.** `usb-host` on an added UHCI controller (Tiger has
+`AppleUSBUHCI.kext`); scripted clicks from `guest-ctl.py` with the relative
+mouse first.

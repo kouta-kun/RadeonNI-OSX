@@ -171,6 +171,13 @@ Keep these current as part of the work, and commit small and often.
   wait for ssh rather than `guest-cycle.sh ready`, then `kext.sh up`).
   The default keeps the emulated display. `~/gl/cgmode main N` in the
   guest makes a display the main one; the 7570's is, since 2026-10-05.
+- `TIGER_EVDEV=/dev/input/by-id/...` with `scripts/tiger.sh` and
+  `scripts/guest-cycle.sh ready`, or `scripts/tiger.sh evdev [node|off]`
+  on a running guest: a real keyboard and pointer for the guest through
+  QEMU's `input-linux` (works, 2026-10-05). The user's is
+  `usb-Logitech_USB_Receiver-if02-event-mouse`. Not `usb-host`: it stalls
+  the guest's USB bus (journal, 2026-10-05). Run `evdev` again after a
+  guest restart or after replugging the device.
 - `tools/guest/cgmode.c`: build in the guest (`gcc -o cgmode cgmode.c
   -framework ApplicationServices`) to list and switch display modes through
   Quartz and to put the cursor on a display.
