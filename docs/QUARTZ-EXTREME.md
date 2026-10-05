@@ -21,8 +21,8 @@ debugger attached to `WindowServer` (`sudo gdb -p`), the bundle's log
    `ACCF0000-0000-0000-0000-000a2789904e`) and needs `GetBlitter` to
    return a copy-rectangles and a solid-fill routine. Only if that
    succeeds does the display get the internal flags (0x60) from which the
-   flags the update path tests (0x08 and 0x80) are derived. **We have no
-   such plug-in; this is why the window server never tries by itself.**
+   flags the update path tests (0x08 and 0x80) are derived. Without such
+   a plug-in the window server never tries by itself.
 2. **`IOAccelRevision` greater than 1 [I]**, read as a number property
    next to those flags. The kext publishes 2.
 3. **Video memory [V].** The framebuffer's VRAM range must be at least
@@ -65,20 +65,83 @@ debugger attached to `WindowServer` (`sudo gdb -p`), the bundle's log
 - Gate 8: the bundle builds the record itself when the software renderer
   has none.
 
-## How far it gets
+- Gate 1: `ga/RadeonNIGA.plugin` (`scripts/ga.sh`), named by the kext
+  when loaded with `RDN_GA=1`. Its fill and copy routines work on the
+  screen with the CPU.
 
-With gates 2 to 9 satisfied, calling `CGXGLAccelForDisplayDevice` for our
-display from a debugger makes the window server load the bundle, choose
-the format, create a shared state and a context on our renderer, and
-return success; `CGDisplayUsesOpenGLAcceleration` then says yes. It does
-not then draw with it, and after a restart it does not try on its own:
-gate 1.
+## What the window server then does [V]
+
+With every gate met (`RDN_ACCEL=1 RDN_ACCELCAPS=3 RDN_AGPSHIM=3 RDN_GA=1
+RDN_SURFACES=1 scripts/kext.sh up`) it composites the card's display with
+OpenGL by itself, from its first frame:
+
+1. Opens an `IOAccelSurface` user client on the accelerator (type 0) and
+   calls `setIDMode(1, 0x24)`: surface ID 1, windowed, ARGB 8888.
+2. Loads the bundle, chooses the pixel format, creates a shared state and
+   one context.
+3. For every screen update: `setShape(0xd, framebuffer 0, region)` on the
+   surface, where the region is exactly the part of the screen that
+   changed (many rectangles when it is not a box); then
+   `gldAttachDrawable(context, 0x50, record)`, whose record's third word
+   is the surface ID; then `gldInitDispatch`; then it draws; `glFlush`;
+   and `setShape(0x1, ...)` with a 1x1 region.
+4. The drawing is plain OpenGL 1.x: `glDrawBuffer(GL_FRONT_LEFT)`, a
+   viewport the size of the region's bounding box, `glOrtho(left, right,
+   bottom, top)` in global desktop coordinates with y downwards, and per
+   window `GL_TEXTURE_RECTANGLE` tiles of at most 256x256 made with
+   `glTexImage2D`/`glTexSubImage2D` straight from the window's backing
+   store (`GL_UNPACK_ROW_LENGTH`, `SKIP_ROWS`, `SKIP_PIXELS`,
+   `GL_UNPACK_CLIENT_STORAGE_APPLE`, `GL_BGRA`,
+   `GL_UNSIGNED_INT_8_8_8_8_REV`; `GL_ALPHA` tiles for shadows), drawn as
+   quads with two texture units, `GL_COMBINE` environments, blending and
+   alpha test. No scissor: it only draws inside the region and expects
+   the rest of the bounding box to stay as it is on the screen.
+
+So the drawable of the window server's context is the surface, the
+surface is the changed part of the screen, and GL's origin is the bounding
+box's corner.
+
+`/tmp/rdngld.trace` (with `/tmp/rdngld.on`) makes the bundle log every GL
+call with its arguments; that is where the list above comes from.
+
+## What the driver does with that
+
+- Apple's software renderer cannot attach a drawable inside the window
+  server: it calls `CGSGetSurfaceBounds`, which connects to the window
+  server and waits for an answer from the thread that is asking (seen as
+  a hang in `mach_msg`, session gone). The bundle therefore does not
+  forward `gldAttachDrawable`, `gldInitDispatch` and `gldUpdateDispatch`
+  there; it answers them itself (2, 4 and 0, what the software renderer
+  answers an application).
+- The kext keeps each surface's region; the accelerator user client hands
+  it out (`RDN_UC_SURFACE_REGION`). The bundle gives Mesa a drawable the
+  size of the bounding box and, when the context is flushed, copies only
+  the region's rectangles to that place on the screen, top row first
+  (`OSMesaReadbackRects`, added to our copy of the off-screen front end).
+- The other 16 surface methods succeed without doing anything; the locks
+  and `read` are refused. The window server has not called them.
+
+Checked by reading the screen back in the guest (`rdnuc grab`): desktop
+picture, Finder windows with shadows, a window moved in steps, Exposé's
+dimming, all in the right place, while `fences` counts some 40 command
+buffers a second during a move. **Not yet seen on the monitor by the
+user.**
+
+## Not done
+
+- Each update is drawn off-screen on the GPU and copied to the screen by
+  the CPU, into a buffer made anew for every update. Drawing straight on
+  the screen's surface would remove both.
+- Texture uploads copy; `GL_UNPACK_CLIENT_STORAGE_APPLE` is ignored
+  (correct, slower).
+- Applications' OpenGL windows are still drawn into their windows' buffers
+  (A4), not into surfaces of their own.
+- The software cursor is drawn by `IOFramebuffer` into the same screen
+  the copies go to; whether it survives has to be seen on the monitor.
 
 ## Not known
 
-- Whether the window server's context can render through Mesa the way an
-  application's does: it has not attached a drawable or asked for dispatch
-  yet. Its context comes from a private `cgls` layer, not CGL.
-- What the window server needs from the kext's `IOAccelSurface` user
-  client (type 0), which it has not asked for yet.
-- Whether every display has to qualify, or each on its own.
+- Whether every display has to qualify, or each on its own (the emulated
+  display stays unaccelerated and works).
+- What `AccelCaps`' bits mean, and whether Exposé, the genie effect and
+  fast user switching need more than this.

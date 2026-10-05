@@ -73,16 +73,17 @@ been planned in detail.
   off-screen and in windows; each frame is copied into the buffer Apple's
   code presents. Not done: full-screen contexts, presenting without the
   copy.
-- A5 (Quartz Extreme) is in progress by trial and error in the guest.
-  `docs/QUARTZ-EXTREME.md` lists what the window server checks and how far
-  it gets: every gate found so far is met (`RDN_ACCEL=1 RDN_ACCELCAPS=3
-  RDN_AGPSHIM=3 scripts/kext.sh up`) except a 2D accelerator (GA) plug-in
-  for the framebuffer, which does not exist yet. Nothing is composited with
-  OpenGL yet.
+- A5 (Quartz Extreme) works by readback (2026-10-05), not yet seen by the
+  user: with `RDN_ACCEL=1 RDN_ACCELCAPS=3 RDN_AGPSHIM=3 RDN_GA=1
+  RDN_SURFACES=1 scripts/kext.sh up` the window server composites the
+  7570's display with OpenGL through Mesa on the card.
+  `docs/QUARTZ-EXTREME.md` has the gates, what the window server does and
+  what is not done (each update is copied to the screen by the CPU).
 - A6 and A7 have not started.
-- The guest currently has `RadeonNIGLDriver.bundle` installed in
-  `/System/Library/Extensions`; the snapshots do not. It is inert unless
-  the kext is loaded with `RDN_ACCEL=1`.
+- The guest currently has `RadeonNIGLDriver.bundle` and
+  `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
+  snapshots do not. They are inert unless the kext is loaded with
+  `RDN_ACCEL=1` (and `RDN_GA=1`).
 - `docs/GLD-INTERFACE.md` is what has been learned about Apple's GL driver
   interface.
 
@@ -173,6 +174,15 @@ Keep these current as part of the work, and commit small and often.
   `gld/RadeonNIGLDriver.bundle` in the guest and install it in the guest's
   `/System/Library/Extensions` (OpenGL loads it only from there). `log`
   shows every `gld*` call made to it (`/tmp/rdngld.log` in the guest).
+- `scripts/ga.sh {build|install|uninstall}`: the 2D accelerator plug-in
+  (`ga/RadeonNIGA.plugin`) the window server wants before it tries Quartz
+  Extreme; built and installed in the guest like the GL bundle.
+- In the guest, `touch /tmp/rdngld.on` makes every process that loads the
+  bundle log its `gld*` calls to `/tmp/rdngld.<pid>.log`; with
+  `/tmp/rdngld.trace` as well, every GL call. `~/gl/rdnuc grab file.ppm`
+  saves the 7570's screen, `~/gl/qe` says whether Quartz Extreme is in
+  use, `~/gl/fences` counts GPU command buffers over 5 s
+  (`tools/guest/`).
 - `tools/guest/glprobe.c`: build in the guest (command in its header) to
   list OpenGL renderers and to draw off-screen on a chosen renderer
   (`glprobe draw 0x20400` goes through our bundle).

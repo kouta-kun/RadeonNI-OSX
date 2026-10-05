@@ -1299,3 +1299,41 @@ by the bundle; `CGXGLAccelForDisplayDevice` called from the debugger.
 `IOGraphicsInterface.h`; VMsvga2 has an MIT one to learn from). After
 that, whatever the window server asks of its context and of the
 `IOAccelSurface` user client.
+
+## 2026-10-05 — Quartz Extreme composites the desktop through Mesa on the card
+
+**Tried.** A 2D accelerator (GA) plug-in (`ga/`), then a surface user
+client that only logs (`RadeonNISurface.cpp`), then everything the window
+server asked of the bundle, one obstacle at a time.
+
+**Observed.**
+- With the GA plug-in the window server tries by itself: surface client,
+  `setIDMode(1, 0x24)`, `setShape` with the changed region, context,
+  `gldAttachDrawable(type 0x50)`.
+- Forwarding that attach to Apple's software renderer hangs the window
+  server for good: backtrace `gldAttachDrawable` -> `glsAssignDrawable` ->
+  `CGSGetSurfaceBounds` -> `CGSNewConnection` -> `mach_msg`, a connection
+  to itself. Guest restarted.
+- Attaching the screen ourselves instead: the window server keeps
+  running, `qe` says "in use", the GPU runs command buffers, and the
+  screen (read back with `rdnuc grab`) shows windows with shadows, but
+  upside down, then (rows the other way) in the bottom left corner
+  whatever their position, then in the right place with rubbish around
+  them.
+- Each of those had one cause: Mesa's off-screen front end stores the
+  bottom row first; the drawable is not the screen but the surface's
+  region, whose origin is GL's origin; the region is not a box and the
+  window server leaves the rest of the box undrawn.
+- I took the first grab's desktop picture for the right way up and the
+  later ones for flipped. It was the other way round: the picture's dark
+  part belongs at the bottom, and the window's backing store read in the
+  debugger has the same rows as the screen now shows.
+- A window moved in eight steps: about 190 command buffers in 5 s, no
+  trails. Exposé dims the desktop. A windowed GL program (A4's) still
+  runs next to it, 45 frames in 5 s on the emulated display.
+
+**Concluded.** A5 works by readback; the user has not looked yet. What the
+window server does is in `docs/QUARTZ-EXTREME.md`. Next: draw on the
+screen's surface directly instead of copying, and see what the cursor
+does.
+

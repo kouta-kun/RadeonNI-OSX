@@ -225,9 +225,9 @@ app / WindowServer -> OpenGL.framework -> GLEngine (gli*)
 | A2 | Mesa on our winsys (x86 Linux, real card, no Linux DRM) | Mesa renders an animated test on the monitor; then the big-endian build under `qemu-ppc` does the same | **Works by readback 2026-10-05** on x86 and big-endian (`qemu-ppc`), pixel-identical; not yet confirmed on the monitor |
 | A3 | Kext accelerator + Mesa in Tiger | A full-screen CGL program in the guest renders on the 7570 | **Mostly done 2026-10-05**: kext engine and user client; Mesa built for Tiger; CGL contexts (off-screen and window) render through Mesa on the card. Not done: a full-screen context |
 | A4 | Windowed OpenGL | A windowed GL program on the desktop; a renderer query reports our renderer and GL 2.0 | **First form confirmed on the monitor by the user 2026-10-05** (tag `working-cpu-copy`): a GLUT program in a window renders through Mesa on the card (reports AMD TURKS, GL 3.2), by copying each frame into the window's buffer. Not done: presenting without the copy |
-| A5 | Quartz Extreme | Quartz Debug reports it enabled; user confirms the effects | **In progress 2026-10-05**, by trial and error in the guest (QUARTZ-EXTREME.md): the window server's gates are mapped and met except one, a 2D accelerator (GA) plug-in; asked by hand it creates its context on our renderer. Nothing is composited with OpenGL yet |
+| A5 | Quartz Extreme | Quartz Debug reports it enabled; user confirms the effects | **Works by readback 2026-10-05, not yet seen by the user** (QUARTZ-EXTREME.md): with all gates met the window server composites the 7570's display with OpenGL by itself, through Mesa on the card; desktop, windows with shadows, window moves and Exposé's dimming read back correctly. Each update is still copied to the screen by the CPU |
 | A6 | Core Image | Hardware-rendered Core Image filters (Dashboard ripple) | not started |
-| A7 | Hardening | GART and interrupts, hardware cursor, 2D GA plug-in, performance, piglit subset | not started |
+| A7 | Hardening | GART and interrupts, hardware cursor, an accelerated 2D GA plug-in (the one from A5 uses the CPU), performance, piglit subset | not started |
 
 A0 and A1 are independent and may run in parallel. If A0 fails, stop and
 present alternatives (a `gli*`-level engine replacement, or a native `gld*`
