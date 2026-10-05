@@ -135,8 +135,8 @@ Checked by reading the screen back in the guest (`rdnuc grab`), both
 ways: desktop picture, Finder windows with shadows, a window moved in
 steps, Exposé's dimming and its return, all in the right place. Drawing
 directly, a window moved in eight steps took 304 command buffers in 5 s
-and the window server 1.3 s of CPU time for the whole session's drawing,
-against some 14 s with the copy. **Not yet seen on the monitor by the
+and the window server had used 4.3 s of CPU time after that and Exposé,
+against 19 s at the same point with the copy. **Not yet seen on the monitor by the
 user.**
 
 ## Not done
