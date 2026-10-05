@@ -7,7 +7,7 @@ Markers: **[V]** verified in the linked source. **[I]** inference or memory, unc
 ## 1. Conclusions
 
 - An unaccelerated framebuffer for the HD 7570 is feasible. Nobody has published one for PPC Mac OS X.
-- Acceleration (Quartz Extreme, Core Image, OpenGL) depends on private Apple interfaces and is a project of a different magnitude.
+- Acceleration (Quartz Extreme, Core Image, OpenGL) depends on private Apple interfaces and is a project of a different magnitude. Planned as phase 2 (2026-10-04), see section 10 and PLAN.md.
 - The RX 7600 is not viable: mandatory signed firmware, no big-endian precedent.
 - VFIO passthrough works with cross-architecture emulation (PPC guest on x86 host), with limits.
 
@@ -188,6 +188,42 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 - **[V]** VMsvga2's GLD is a shim that forwards to Apple drivers; it is useful as a list of entry points.
 - **[V]** There is no ATIRadeonX2000 for PPC: [kext table](https://forums.macrumors.com/threads/snow-leopard-on-unsupported-powerpc-macs.2232031/).
 - **[V]** Mesa r600 on big-endian has historical bugs: [2011 patch](https://lists.freedesktop.org/archives/dri-devel/2011-April/010170.html), [bug 93727](https://bugs.freedesktop.org/show_bug.cgi?id=93727).
+
+### Tiger's OpenGL plug-in structure [V, in the 10.4.11 guest, 2026-10-04]
+
+- `OpenGL.framework/Resources/GLEngine.bundle` exports 17 `gli*` functions
+  (`gliCreateContext`, `gliChoosePixelFormat`, `gliAttachDrawable`,
+  `gliSwapBuffers`, ...). OpenGL.framework looks these names up at run time.
+- Every driver bundle, hardware (`ATIRadeon9700GLDriver.bundle`) and
+  software (`GLRendererFloat.bundle`), exports the same 62 `gld*` functions,
+  among them `gldInitDispatch` and `gldUpdateDispatch`.
+- The 10.4u SDK publishes `gliContext.h` and `gliDispatch.h`: the GL
+  dispatch table `GLIFunctionDispatch` is a public structure.
+- Apple's GL drivers import only `IOServiceOpen`, `IOConnectAddClient`,
+  `IOConnectMapMemory` and `io_connect_method_*` from IOKit, plus helpers
+  from `libGLImage` (`glg*`) and `libGLProgrammability` (`glp*`).
+- `ATIRadeon9700.kext`'s accelerator personality: `IOProviderClass
+  IOPCIDevice`, `IOMatchCategory IOAccelerator`, `IOCFPlugInTypes` naming
+  the GA plug-in, `IODVDBundleName`. No `IOGLBundleName` in the plist; how
+  the GL bundle is named is still to find.
+- CoreGraphics uses `IOAccelCreateSurface`, `IOAccelSetSurfaceFramebufferShape`,
+  `IOAccel{Read,Write}LockSurface`, `IOAccelFlushSurfaceOnFramebuffers` and
+  `CGXAcceleratorForDisplayDevice`.
+- The guest has no accelerated device: `IOAccelerator` instance count is 0.
+- **[I]** A `gld*` bundle can replace the whole dispatch table with another
+  GL implementation (Mesa). Milestone A0 tests this.
+- **[I]** The 10.5/10.6 x86 `gld*` signatures in VMsvga2 carry over to
+  10.4 PPC closely enough to be a starting point.
+
+### Mesa and toolchain [web, not first-hand]
+
+- A 2024 Mesa issue reports corruption and hangs with `r600` on a
+  big-endian PowerMac G5 (Mesa 24.2.3). `r600` remains the newest Radeon 3D
+  driver usable on big-endian; `radeonsi` is not.
+- [gcc-powerpc-apple-darwin8](https://github.com/VariantXYZ/gcc-powerpc-apple-darwin8)
+  provides GCC 14 with the 10.4u SDK as a Linux-hosted cross toolchain.
+- [tiger-opengl2-backport](https://github.com/SamBushman/tiger-opengl2-backport)
+  investigates Tiger's GL driver components; no interface documentation yet.
 
 ## 11. Still to verify
 

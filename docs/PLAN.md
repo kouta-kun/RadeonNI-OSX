@@ -187,3 +187,81 @@ on the Power Mac G5.
   source with the file as fallback. Keep in mind the pc297 failure (VBIOS
   taken from the wrong place) and the warning that the ROM size in the
   device tree may be truncated.
+
+# Phase 2 — hardware acceleration
+
+Planned with the user on 2026-10-04. Goal: Quartz Extreme, Core Image and
+OpenGL 2.0 on the 7570 under Tiger, reached milestone by milestone. The
+background and the evidence are in RESEARCH.md section 10.
+
+## Approach
+
+```
+app / WindowServer -> OpenGL.framework -> GLEngine (gli*)
+   -> RadeonNIGLDriver.bundle (gld* lifecycle; dispatch table -> Mesa)
+        Mesa: GL state tracker + r600 gallium driver + "rdn" winsys
+   -> IOUserClient -> RadeonNI.kext: IOAccelerator service
+        hw/ accel core: CP ring, microcode, buffers, fences (shared C)
+```
+
+- Mesa's `r600` is the 3D driver. It is a complete GL implementation, so it
+  cannot be an ordinary `gld*` driver under Apple's `GLEngine`; the bundle
+  implements the lifecycle calls and gives the public GL dispatch table
+  (`gliDispatch.h`) to Mesa. **Unproven hypothesis; A0 tests it.**
+- The kernel half (command processor, memory, fences) is ported from the
+  MIT-headed Linux `radeon` files into `hw/`, under the same rules as phase
+  1, and shared by `rdn_tool` and the kext.
+- First memory model: everything in VRAM (ring, command buffers, textures)
+  through the 256 MB aperture. No GART, no bus mastering, no interrupts;
+  fences are polled. GART and interrupts come in A7.
+
+## Milestones
+
+| # | Milestone | Success criterion | State |
+|---|---|---|---|
+| A0 | Prove the plug-in route, no hardware | A GL program in the guest runs through our `gld*` bundle and shows the effect of a dispatch entry we replaced | not started |
+| A1 | Command processor from Linux userspace (x86, real card) | `rdn_tool` draws a triangle into the scanout buffer; user confirms | not started |
+| A2 | Mesa on our winsys (x86 Linux, real card, no Linux DRM) | Mesa renders an animated test on the monitor; then the big-endian build under `qemu-ppc` does the same | not started |
+| A3 | Kext accelerator + Mesa in Tiger | A full-screen CGL program in the guest renders on the 7570 | not started |
+| A4 | Windowed OpenGL | A windowed GL program on the desktop; a renderer query reports our renderer and GL 2.0 | not started |
+| A5 | Quartz Extreme | Quartz Debug reports it enabled; user confirms the effects | not started |
+| A6 | Core Image | Hardware-rendered Core Image filters (Dashboard ripple) | not started |
+| A7 | Hardening | GART and interrupts, hardware cursor, 2D GA plug-in, performance, piglit subset | not started |
+
+A0 and A1 are independent and may run in parallel. If A0 fails, stop and
+present alternatives (a `gli*`-level engine replacement, or a native `gld*`
+driver without Mesa).
+
+The real G5 is a parallel track that needs the user: first boot of the
+phase 1 package, then each A-milestone repeated there. Its 6600 LE under
+working Quartz Extreme is the only reference for A4 and A5, because the
+guest has no accelerated device.
+
+## Risks, in order
+
+1. The dispatch takeover (A0); everything from A3 on depends on it.
+2. Private structures in the `gld*` lifecycle calls (pixel format, renderer
+   info, drawable).
+3. The window server's requirements for Quartz Extreme cannot be observed
+   under QEMU.
+4. Mesa `r600` big-endian bugs. A2 tries one old release (TGSI shader
+   backend) and one current release and pins the better one.
+5. Tiger userland: no thread-local storage, missing libc functions, C++
+   runtime for newer Mesa.
+6. GDDR5 without the MC microcode under 3D load; load `TURKS_mc` if A1
+   shows memory errors.
+7. TCG speed: fine for correctness, useless for judging performance.
+
+## Decisions (user, 2026-10-04)
+
+- Apple's GL plug-in ABI may be learned by observation (symbol lists, a
+  logging shim around Apple's software renderer, VMsvga2's MIT sources) and
+  by reading disassembly to understand the interface. All code is written
+  fresh; nothing decompiled is copied. Findings go in `docs/GLD-INTERFACE.md`.
+- Microcode is handled like the VBIOS: git-ignored `firmware/`, injected at
+  load time, never committed.
+- Microcode, the command ring and (in A7) interrupts are in scope.
+- Mesa and the GL bundle may be cross-compiled on the host; the kext stays
+  guest-built.
+- The GL bundle may be installed in the guest's `/System/Library/Extensions`
+  if A0 shows the framework only loads it from there.

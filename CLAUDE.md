@@ -9,7 +9,8 @@ the AMD Radeon HD 7570 ("Turks", Northern Islands, DCE5). Phase 1 ends when
 Tiger running in `qemu-system-ppc -M mac99` shows its desktop at native
 resolution on a monitor attached to the real card, passed through with VFIO.
 The eventual target is a Power Mac G5 Late 2005; acceleration is out of scope
-for this phase. `PROMPT.md` is the user's original brief.
+for phase 1. Phase 2 is acceleration: Quartz Extreme, Core Image and OpenGL
+2.0. `PROMPT.md` is the user's original brief (phase 1).
 
 ## Current state
 
@@ -38,8 +39,15 @@ System Preferences and a software cursor.
   because unbinding it led to a host kernel oops.
 
 What was left out on purpose is listed in `docs/PLAN.md` under "Known gaps
-after phase 1" and "Deferred to the real G5". The next phase (real G5,
-acceleration) has not been planned with the user yet.
+after phase 1" and "Deferred to the real G5".
+
+**Phase 2 (acceleration) was planned with the user on 2026-10-04 and no
+milestone has started.** `docs/PLAN.md`, "Phase 2", has milestones A0 to A7.
+The route: Mesa's `r600` driver behind a `gld*` GL driver bundle that hands
+Apple's public GL dispatch table to Mesa, over a kernel half (command
+processor, memory, fences) ported from Linux into `hw/`. Whether a bundle
+can take over the dispatch table is unproven; A0 tests it first. The first
+run on the real G5 has not been planned in detail.
 
 ## Documents
 
@@ -162,16 +170,26 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
   structures without a big-endian variant. VBIOS parsing and the AtomBIOS
   interpreter must run as an automated big-endian test without hardware
   (PowerPC Linux build under `qemu-ppc` against the VBIOS dump).
-- No command ring, microcode or interrupts in this phase, but nothing that
-  would prevent them later.
+- Phase 1 had no command ring, microcode or interrupts. Phase 2 brings the
+  command ring and microcode in, and interrupts last (A7). The first memory
+  model keeps everything in VRAM: no GART, no bus mastering, fences polled.
+- Microcode (`TURKS_pfp`, `TURKS_me`, `BTC_rlc`, `TURKS_mc`) is handled like
+  the VBIOS: git-ignored `firmware/`, injected at load time, never committed.
+- Apple's GL plug-in ABI is learned by observation (symbol lists, a logging
+  shim around Apple's software renderer, VMsvga2's MIT sources) and by
+  reading disassembly to understand the interface. All code is written
+  fresh. Findings go in `docs/GLD-INTERFACE.md`.
+- Mesa and the GL bundle may be cross-compiled on the host. The GL bundle
+  may be installed in the guest's `/System/Library/Extensions` if the
+  framework only loads it from there.
 - The VBIOS comes from the PCI expansion ROM, with a load-from-file fallback.
   Never from the x86 legacy address. Under QEMU the kext uses the file,
   because OpenBIOS does not assign the ROM BAR and the user chose not to
   patch it; the ROM path must be revisited on the real G5 (`docs/PLAN.md`,
   "Deferred to the real G5").
 - Cold POST follows the Linux `radeon` initialisation order.
-- The kext is built inside the Tiger guest over ssh with Xcode 2.5 and
-  Apple's gcc. Under QEMU it is always loaded from a temporary directory,
+- The kext is always built inside the Tiger guest over ssh with Xcode 2.5
+  and Apple's gcc. Under QEMU it is always loaded from a temporary directory,
   freshly built (`scripts/kext.sh up`), never from an installed copy, so
   that what runs is never stale (user's decision, 2026-10-04). Installing
   into `/System/Library/Extensions` is how it runs on the real Mac; that is

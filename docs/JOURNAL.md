@@ -863,3 +863,28 @@ installed copy is present.
 **Concluded.** The install path works on Tiger 10.4.11. Nothing here has
 run on a real Mac: Open Firmware's BAR assignment, the interplay with the
 GeForce 6600 LE, and cold POST on the G5 are all untested.
+
+## 2026-10-04 — Phase 2 (acceleration) investigated and planned
+
+**Asked.** The user wants Quartz Extreme, Core Image, OpenGL 2.0 and
+whatever else is possible, milestone by milestone, and proposed building
+Mesa for Mac OS X with an interface to the card.
+
+**Looked at.** In the running guest, read-only: the extension list, the
+OpenGL framework's bundles, `nm` of `GLEngine`, `GLRendererFloat` and
+`ATIRadeon9700GLDriver`, the 9700 kext's personality, strings of
+OpenGL.framework and CoreGraphics. On the web: Mesa `r600` on big-endian,
+cross toolchains for Tiger, VMsvga2's GLD directory.
+
+**Observed.** Two plug-in levels (`gli*` engine, `gld*` driver, 17 and 62
+functions); a public dispatch table header; `gldInitDispatch` and
+`gldUpdateDispatch` in every driver; no accelerated device in the guest.
+Details in RESEARCH.md section 10.
+
+**Concluded.** Mesa is the right 3D driver but cannot be a plain `gld*`
+driver. The plan is a `gld*` bundle that gives the dispatch table to Mesa,
+on top of a kernel half ported from Linux into `hw/`. The takeover is a
+hypothesis; milestone A0 tests it before any hardware work. Milestones A0
+to A7, risks and the user's decisions (ABI learning by observation and
+disassembly reading, microcode handled like the VBIOS) are in PLAN.md.
+Nothing was run on the card.
