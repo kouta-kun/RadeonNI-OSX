@@ -98,7 +98,9 @@ been planned in detail.
   looks a bit slow. The Tiger build of Mesa needs `-fno-strict-aliasing`
   (display lists break without it).
 - A4's second half works by readback (2026-10-05), not yet seen by the
-  user, and is opt-in (`touch /tmp/rdngld.surface` in the guest): a
+  user, and the default since the bundle built on 2026-10-05 20:54
+  (`touch /tmp/rdngld.nosurface` or `RDN_GLD_NOSURFACE=1` turns it off;
+  older bundles, like the guest's, need `touch /tmp/rdngld.surface`): a
   program's OpenGL window is a window server surface, drawn by Mesa and
   shown by the card, no CPU copy. Apple's Chess, started normally, is
   correct that way, also while its window is dragged (the user saw
@@ -107,7 +109,8 @@ been planned in detail.
   textures from the surface's buffer directly). `/var/log/windowserver.log`
   in the guest is the window server's own log.
   `~/gl/drag x0 y0 x1 y1` drags with the mouse from inside the guest.
-- Full-screen OpenGL works by readback (2026-10-05) with the same file:
+- Full-screen OpenGL works by readback (2026-10-05) with the same switch
+  (Quake 3 full screen seen by the user on the G5):
   Sauerbraten (the user's test game, on the guest's `/Volumes/sauerbraten`
   while its image is mounted) shows a level at 6 frames a second. Without the file, windows
   go through the software renderer's buffer as before, and Chess is

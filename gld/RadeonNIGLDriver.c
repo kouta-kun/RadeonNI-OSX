@@ -520,16 +520,18 @@ int rdn_surface_size(unsigned long cid, unsigned long wid, unsigned long sid,
 }
 
 /*
- * Windows as surfaces (see forward()): on with RDN_GLD_SURFACE=1 or a file
- * /tmp/rdngld.surface, until it has been seen to work.
+ * Windows as surfaces (see forward()), and full-screen contexts with them.
+ * On unless RDN_GLD_NOSURFACE is set or a file /tmp/rdngld.nosurface
+ * exists, which give the older path through the software renderer's
+ * buffer.
  */
 static int app_surfaces(void)
 {
 	static int known = -1;
 
 	if (known < 0)
-		known = getenv("RDN_GLD_SURFACE") != NULL ||
-			access("/tmp/rdngld.surface", F_OK) == 0;
+		known = getenv("RDN_GLD_NOSURFACE") == NULL &&
+			access("/tmp/rdngld.nosurface", F_OK) != 0;
 	return known;
 }
 static const long *display_words;

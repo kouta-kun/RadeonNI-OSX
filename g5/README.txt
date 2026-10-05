@@ -26,9 +26,7 @@ Acceleration (experimental; never run on a real Mac)
   Restart. This starts the card's 3D engine at boot, for OpenGL and Quartz
   Extreme. It needs TURKS_pfp.bin and TURKS_me.bin in this folder, and
   RadeonNIGLDriver.bundle and RadeonNIGA.plugin in
-  /System/Library/Extensions. After each restart, "touch /tmp/rdngld.surface"
-  before starting an OpenGL program makes its window or full screen be drawn
-  by the card directly. To go back: sudo ./install.sh, and restart.
+  /System/Library/Extensions. To go back: sudo ./install.sh, and restart.
 
 What the driver does
   It initialises the card from cold (no x86 BIOS runs on a Mac), reads the

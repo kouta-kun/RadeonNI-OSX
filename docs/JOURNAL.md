@@ -1986,3 +1986,21 @@ user sees on the monitor, the kernel log, any OpenGL program.
 Host: `/etc/ssh/sshd_config.d/10-tiger.conf` (asked for by the user)
 adds `diffie-hellman-group14-sha1` and `ssh-rsa` so that Tiger's OpenSSH
 4.5 can connect to the host; negotiation from the G5 checked.
+
+## 2026-10-05 — G5: Quake 3 "could not initialize OpenGL" was the missing surface switch; surfaces are the default now
+
+**Seen by the user on the G5:** Quake 3 full screen fails again.
+**Reproduced over ssh:** `CGLSetFullScreen -> 10005 (invalid drawable)`,
+then its fallback to 640x480, which the display does not offer. `/tmp`
+is emptied at boot, so `/tmp/rdngld.surface` was gone; with
+`RDN_GLD_SURFACE=1` in the environment it went full screen at 1366x768
+(the user saw it; I ended it with `killall`).
+
+**Changed.** `app_surfaces()` in the bundle is on by default; off with
+`RDN_GLD_NOSURFACE` or `/tmp/rdngld.nosurface`. Rebuilt
+(`scripts/build-mesa.sh darwin`), copied into the G5's
+`/System/Library/Extensions` (the G5's previous binary, identical to the
+host's previous build, is `~/RadeonNIGLDriver.prev` there). Quake 3 then
+goes full screen with no file and no variable. The QEMU guest's disk
+still has the old bundle: `scripts/gld.sh install-mesa` when it runs
+next.
