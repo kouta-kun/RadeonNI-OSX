@@ -58,6 +58,23 @@ def trace_call(name, params, names):
 WATCHED = ('ortho', 'begin', 'end', 'vertex2f', 'tex_coord2f', 'color4ub',
            'enable', 'disable', 'active_texture')
 
+# Apple-only extensions that Mesa does not have and that Apple's own
+# programs use without asking (the window server does): the entry, the
+# argument that names the parameter, and the values of it to accept and
+# drop before Mesa sees them and records GL_INVALID_ENUM.
+#   0x85B2 GL_UNPACK_CLIENT_STORAGE_APPLE: Mesa copies texture data anyway.
+#   0x85BC GL_TEXTURE_STORAGE_HINT_APPLE, 0x85B1 GL_TRANSFORM_HINT_APPLE:
+#   hints.
+APPLE_ONLY = {
+    'pixel_storei': ('pname', (0x85B2,)),
+    'pixel_storef': ('pname', (0x85B2,)),
+    'tex_parameteri': ('pname', (0x85BC,)),
+    'tex_parameterf': ('pname', (0x85BC,)),
+    'tex_parameteriv': ('pname', (0x85BC,)),
+    'tex_parameterfv': ('pname', (0x85BC,)),
+    'hint': ('target', (0x85B1,)),
+}
+
 # Entries whose x and y arguments are window coordinates.
 WINDOW_XY = ('viewport', 'scissor', 'read_pixels', 'copy_pixels',
              'copy_tex_image1D', 'copy_tex_image2D', 'copy_tex_sub_image1D',
@@ -91,6 +108,12 @@ def main():
         out.append('\tRDN_ENTER(ctx);')
         out.append('\tif (__builtin_expect(rdn_trace, 0))')
         out.append('\t\t%s;' % trace_call(name, params, names))
+        if name in APPLE_ONLY:
+            arg, values = APPLE_ONLY[name]
+            if arg not in names:
+                sys.exit('%s has no %s' % (name, arg))
+            out.append('\tif (%s)' % ' || '.join('%s == 0x%X' % (arg, v) for v in values))
+            out.append('\t\treturn;')
         if name in WINDOW_XY:
             if 'x' not in names or 'y' not in names:
                 sys.exit('%s has no x and y' % name)

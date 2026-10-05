@@ -1700,3 +1700,23 @@ is full of "GL error 0500"; that log exists and is worth reading).
 **So.** Matching by position is a stopgap. The real fix is to make step 3
 work, so that the window server names the surface.
 
+## 2026-10-05 — Apple-only parameters accepted; the GL errors were not why surfaces are drawn white
+
+**Tried.** The bundle now accepts and drops three Apple-only parameters
+before Mesa sees them (`gen_dispatch.py`, `APPLE_ONLY`):
+`GL_UNPACK_CLIENT_STORAGE_APPLE` (0x85B2, `glPixelStore`),
+`GL_TEXTURE_STORAGE_HINT_APPLE` (0x85BC, `glTexParameter`) and
+`GL_TRANSFORM_HINT_APPLE` (0x85B1, `glHint`). Standard constants need
+nothing: their values are the same everywhere.
+
+**Observed.** `/var/log/windowserver.log`: no "GL error 0500" line after
+the window server's restart, where there had been over a thousand; so
+those three were all of them. But the window server still draws a
+program's surface as an untextured white quad, and still no
+`gldSetInteger` reaches the bundle.
+
+**Concluded.** The suspect of the previous entry is cleared: a left-over
+GL error is not what keeps the window server from binding the surface as
+a texture. Why it does not is still open; the placeholder detection
+stays.
+
