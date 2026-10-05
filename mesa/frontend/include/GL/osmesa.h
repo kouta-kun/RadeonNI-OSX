@@ -285,6 +285,18 @@ OSMesaSurfaceStorage( OSMesaContext ctx, GLuint handle, GLsizei stride,
  * the context's current drawable, the picture's top left corner at x, y
  * there. This is how one context shows what another one drew.
  */
+/*
+ * osx-gpu: copy a part (sx, sy, sw x sh) of such a memory picture into the
+ * context's current drawable itself, its corner at dx, dy from the
+ * drawable's top left, after everything drawn so far and before what is
+ * drawn next.
+ */
+GLAPI void APIENTRY
+OSMesaDrawStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
+                 GLuint offset, GLsizei width, GLsizei height, GLint sx,
+                 GLint sy, GLsizei sw, GLsizei sh, GLint dx, GLint dy );
+
+
 GLAPI void APIENTRY
 OSMesaShowStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                  GLuint offset, GLsizei width, GLsizei height, GLint x,

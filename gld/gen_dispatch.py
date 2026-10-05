@@ -53,6 +53,11 @@ def trace_call(name, params, names):
                                     ''.join(', ' + a for a in args))
 
 
+# Entries the bundle looks at as they go by, in the window server only
+# (rdn_watch): how it draws the place of another program's surface.
+WATCHED = ('ortho', 'begin', 'end', 'vertex2f', 'tex_coord2f', 'color4ub',
+           'enable', 'disable', 'active_texture')
+
 # Entries whose x and y arguments are window coordinates.
 WINDOW_XY = ('viewport', 'scissor', 'read_pixels', 'copy_pixels',
              'copy_tex_image1D', 'copy_tex_image2D', 'copy_tex_sub_image1D',
@@ -92,8 +97,9 @@ def main():
             out.append('\tx += rdn_origin_x;')
             out.append('\ty += rdn_origin_y;')
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
-        if name == 'flush':
-            out.append('\trdn_flushed(ctx);')
+        if name in WATCHED:
+            out.append('\tif (__builtin_expect(rdn_watch, 0))')
+            out.append('\t\trdn_watch_%s(%s);' % (name, ', '.join(names)))
         out.append('}')
         out.append('')
 

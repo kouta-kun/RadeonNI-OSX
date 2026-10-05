@@ -971,6 +971,61 @@ OSMesaShowStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
 
 
 GLAPI void GLAPIENTRY
+OSMesaDrawStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
+                GLuint offset, GLsizei width, GLsizei height, GLint sx,
+                GLint sy, GLsizei sw, GLsizei sh, GLint dx, GLint dy)
+{
+   struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
+   struct pipe_context *pipe;
+   struct pipe_screen *screen;
+   struct pipe_resource templat, *src, *dst;
+   struct winsys_handle whandle;
+   struct pipe_box box;
+
+   if (!osbuffer || width < 1 || height < 1)
+      return;
+   dst = osbuffer->textures[ST_ATTACHMENT_FRONT_LEFT];
+   if (!dst)
+      return;
+   /* The part that is inside both. */
+   if (sx < 0) { dx -= sx; sw += sx; sx = 0; }
+   if (sy < 0) { dy -= sy; sh += sy; sy = 0; }
+   if (dx < 0) { sx -= dx; sw += dx; dx = 0; }
+   if (dy < 0) { sy -= dy; sh += dy; dy = 0; }
+   sw = MIN2(MIN2(sw, width - sx), (int)dst->width0 - dx);
+   sh = MIN2(MIN2(sh, height - sy), (int)dst->height0 - dy);
+   if (sw <= 0 || sh <= 0)
+      return;
+
+   /* What GL has drawn so far goes first. */
+   st_context_flush(osmesa->st, 0, NULL, NULL, NULL);
+   pipe = osmesa->st->pipe;
+   screen = pipe->screen;
+   memset(&templat, 0, sizeof(templat));
+   templat.target = PIPE_TEXTURE_RECT;
+   templat.format = osbuffer->visual.color_format;
+   templat.width0 = width;
+   templat.height0 = height;
+   templat.depth0 = 1;
+   templat.array_size = 1;
+   templat.usage = PIPE_USAGE_DEFAULT;
+   templat.bind = PIPE_BIND_RENDER_TARGET;
+   memset(&whandle, 0, sizeof(whandle));
+   whandle.type = WINSYS_HANDLE_TYPE_KMS;
+   whandle.handle = handle;
+   whandle.stride = stride;
+   whandle.offset = offset;
+   src = screen->resource_from_handle(screen, &templat, &whandle,
+                                      PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+   if (!src)
+      return;
+   u_box_2d(sx, sy, sw, sh, &box);
+   pipe->resource_copy_region(pipe, dst, 0, dx, dy, 0, src, 0, &box);
+   pipe_resource_reference(&src, NULL);
+}
+
+
+GLAPI void GLAPIENTRY
 OSMesaSurfaceStorage(OSMesaContext osmesa, GLuint handle, GLsizei stride,
                      GLuint offset)
 {

@@ -68,6 +68,8 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface);
  */
 int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,
 			    unsigned long window, unsigned long surface);
+/* RadeonNIGLDriver.c: have the window server draw the surface's area again. */
+void rdn_surface_flush(unsigned long cid, unsigned long wid, unsigned long sid);
 /* RadeonNIGLDriver.c: the surface's size as the window server has it. */
 int rdn_surface_size(unsigned long cid, unsigned long wid, unsigned long sid,
 		     unsigned *width, unsigned *height);
@@ -81,8 +83,23 @@ void rdn_mesa_detach(void *gld_ctx);
  * renderer's.
  */
 int rdn_swap(void *rend);
-/* glFlush has been done for this context. */
-void rdn_flushed(void *rend);
+/*
+ * Set in the window server once its context draws on the screen: the
+ * calls below are then reported as they are made (after Mesa has had
+ * them). See rdn_watch_end() in rdn_mesa.c.
+ */
+extern int rdn_watch;
+void rdn_watch_ortho(double left, double right, double bottom, double top,
+		     double z_near, double z_far);
+void rdn_watch_begin(unsigned mode);
+void rdn_watch_end(void);
+void rdn_watch_vertex2f(float x, float y);
+void rdn_watch_tex_coord2f(float s, float t);
+void rdn_watch_color4ub(unsigned char r, unsigned char g, unsigned char b,
+			unsigned char a);
+void rdn_watch_enable(unsigned cap);
+void rdn_watch_disable(unsigned cap);
+void rdn_watch_active_texture(unsigned unit);
 /* True if the context's GL entry points are now Mesa's. */
 int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
 /* Finish the frame and put it into the drawable's buffer. */

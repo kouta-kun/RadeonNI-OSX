@@ -130,6 +130,8 @@ struct context {
 static struct context contexts[MAX_CONTEXTS];
 static int resolved, usable = -1;
 
+static int surface_direct(void);
+
 void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
 
@@ -628,7 +630,7 @@ void rdn_make_current(void *rend)
 			return;
 		}
 		/* Only what the window server lets show of the window. */
-		if (c->placed && c->screen_rects) {
+		if (surface_direct() && c->placed && c->screen_rects) {
 			OSMesaReadbackRects(c->mesa, (GLint)c->screen_rects,
 					    &c->screen_rect[0][0]);
 		} else {
@@ -653,6 +655,7 @@ void rdn_make_current(void *rend)
 		}
 		rdn_origin_x = c->origin_x;
 		rdn_origin_y = c->origin_y;
+		rdn_watch = 1;
 		/* What is shown when the context is flushed: the region. */
 		if (c->screen_rects) {
 			OSMesaReadbackRects(c->mesa, (GLint)c->screen_rects,
@@ -705,43 +708,144 @@ static int drawable_changed(const struct context *c)
 }
 
 /*
- * The window server has just put an update on the screen. It paints the
- * area of every program's surface plain white in its own picture and
- * leaves the surface to the driver: lay each one's picture back over its
- * visible part.
+ * A program's surface inside the window server's picture.
+ *
+ * Where a program's OpenGL surface is, the window server draws a plain
+ * white rectangle: one quad, with texturing off, white, whose texture
+ * coordinates are nevertheless the part of the surface it stands for, and
+ * leaves the surface itself to the driver. The calls are watched as they
+ * go by (gen_dispatch.py, WATCHED); when such a quad has been drawn, the
+ * surface's picture is copied over it in the window server's own drawing
+ * buffer, there and then, so that whatever the window server draws next
+ * (windows in front, shadows) comes out on top of it and the whole goes to
+ * the screen in one piece. The window server's own coordinates are used,
+ * not the shape the kext was told, which lags behind while a window is
+ * dragged.
  */
-void rdn_flushed(void *rend)
-{
-	static int16_t rects[MAX_SCREEN_RECTS][4];
-	static GLint r[MAX_SCREEN_RECTS][4];
-	uint32_t list[32][5], n, i, k, count;
-	struct context *c = NULL;
-	int32_t b[4];
-	int j;
+int rdn_watch;
 
+static struct {
+	/* glOrtho's left and top: the desktop position of the drawable's corner. */
+	double left, top;
+	int unit, rect_on[2];
+	int white, in_quads, vertices, texcoords;
+	float v[4][2], t[4][2], s_now, t_now;
+} watch;
+
+void rdn_watch_ortho(double left, double right, double bottom, double top,
+		     double z_near, double z_far)
+{
+	watch.left = left;
+	watch.top = top;
+}
+
+void rdn_watch_active_texture(unsigned unit)
+{
+	watch.unit = unit == GL_TEXTURE1;
+}
+
+void rdn_watch_enable(unsigned cap)
+{
+	if (cap == GL_TEXTURE_RECTANGLE_ARB)
+		watch.rect_on[watch.unit] = 1;
+}
+
+void rdn_watch_disable(unsigned cap)
+{
+	if (cap == GL_TEXTURE_RECTANGLE_ARB)
+		watch.rect_on[watch.unit] = 0;
+}
+
+void rdn_watch_color4ub(unsigned char r, unsigned char g, unsigned char b,
+			unsigned char a)
+{
+	watch.white = (r & g & b & a) == 0xff;
+}
+
+void rdn_watch_begin(unsigned mode)
+{
+	watch.in_quads = mode == GL_QUADS;
+	watch.vertices = 0;
+	watch.texcoords = 0;
+}
+
+void rdn_watch_tex_coord2f(float s, float t)
+{
+	watch.s_now = s;
+	watch.t_now = t;
+	watch.texcoords++;
+}
+
+void rdn_watch_vertex2f(float x, float y)
+{
+	if (watch.in_quads && watch.vertices < 4) {
+		watch.v[watch.vertices][0] = x;
+		watch.v[watch.vertices][1] = y;
+		watch.t[watch.vertices][0] = watch.s_now;
+		watch.t[watch.vertices][1] = watch.t_now;
+	}
+	watch.vertices++;
+}
+
+void rdn_watch_end(void)
+{
+	uint32_t list[32][5], n, i, best = 32;
+	struct context *c = NULL;
+	int sx, sy, sw, sh, dx, dy, j;
+	static unsigned noted;
+
+	if (!watch.in_quads || watch.vertices != 4 || watch.texcoords != 4 ||
+	    !watch.white || watch.rect_on[0] || watch.rect_on[1])
+		return;
 	for (j = 0; j < MAX_CONTEXTS; j++)
-		if (contexts[j].gld_ctx && contexts[j].rend == rend)
+		if (contexts[j].gld_ctx && contexts[j].rend == rdn_current_rend)
 			c = &contexts[j];
 	if (!c || c->type != DRAWABLE_SCREEN || !c->direct || !c->bound)
 		return;
+	/* Corners go round from the top left: 0 and 2 are opposite. */
+	sx = (int)(watch.t[0][0] + 0.5f);
+	sy = (int)(watch.t[0][1] + 0.5f);
+	sw = (int)(watch.t[2][0] + 0.5f) - sx;
+	sh = (int)(watch.t[2][1] + 0.5f) - sy;
+	if (sx < 0 || sy < 0 || sw <= 0 || sh <= 0 ||
+	    (int)(watch.v[2][0] - watch.v[0][0] + 0.5f) != sw ||
+	    (int)(watch.v[2][1] - watch.v[0][1] + 0.5f) != sh)
+		return;
+	/*
+	 * The drawable's corner is at origin_x from the screen's left and
+	 * origin_y from its bottom, and at glOrtho's left, top on the
+	 * desktop.
+	 */
+	dx = (int)(watch.v[0][0] - watch.left) + c->origin_x;
+	dy = (int)(watch.v[0][1] - watch.top) +
+	     ((int)c->screen_height - c->origin_y - (int)c->screen.height);
+
+	/* Whose is it? The one it fits; of several, the first. */
 	n = rdn_target_surface_list(list, 32);
-	for (i = 0; i < n; i++) {
-		count = 0;
-		if (!rdn_target_surface_region(list[i][0], b, rects,
-					       MAX_SCREEN_RECTS, &count) ||
-		    b[2] <= 0 || b[3] <= 0 || !count || count > MAX_SCREEN_RECTS)
-			continue;
-		for (k = 0; k < count; k++) {
-			r[k][0] = rects[k][0] - b[0];
-			r[k][1] = rects[k][1] - b[1];
-			r[k][2] = rects[k][2];
-			r[k][3] = rects[k][3];
-		}
-		OSMesaShowStore(c->mesa, RDN_TARGET_VRAM_HANDLE,
-				(GLsizei)list[i][2], list[i][1],
-				(GLsizei)list[i][3], (GLsizei)list[i][4],
-				b[0], b[1], (GLint)count, &r[0][0]);
+	for (i = 0; i < n && best == 32; i++)
+		if ((uint32_t)(sx + sw) <= list[i][3] && (uint32_t)(sy + sh) <= list[i][4])
+			best = i;
+	if (best == 32) {
+		if (noted++ < 40)
+			rdn_log("a white quad %dx%d (from %d,%d) fits none of %u surfaces",
+				sw, sh, sx, sy, (unsigned)n);
+		return;
 	}
+	if (rdn_trace || noted++ < 40)
+		rdn_log("surface 0x%x drawn into the window server's picture: %d,%d %dx%d of it at %d,%d",
+			(unsigned)list[best][0], sx, sy, sw, sh, dx, dy);
+	OSMesaDrawStore(c->mesa, RDN_TARGET_VRAM_HANDLE, (GLsizei)list[best][2],
+			list[best][1], (GLsizei)list[best][3], (GLsizei)list[best][4],
+			sx, sy, sw, sh, dx, dy);
+}
+
+static int surface_direct(void)
+{
+	static int known = -1;
+
+	if (known < 0)
+		known = getenv("RDN_GLD_DIRECT_SWAP") != NULL;
+	return known;
 }
 
 int rdn_swap(void *rend)
@@ -758,18 +862,27 @@ int rdn_swap(void *rend)
 					(unsigned)contexts[i].screen_rects,
 					contexts[i].bound);
 			/*
-			 * A first frame can come before the window server
-			 * has told the kext where the window is.
+			 * The picture goes to the surface's buffer, and the
+			 * window server is told: it draws the window's area
+			 * again and the picture goes into its frame
+			 * (rdn_watch_end). Slower than putting it on the
+			 * screen from here, which RDN_GLD_DIRECT_SWAP=1
+			 * does as well, but right when the window is
+			 * moving or partly covered.
 			 */
-			for (tries = 0; tries < 50; tries++) {
-				struct drawable d;
+			if (surface_direct()) {
+				for (tries = 0; tries < 50; tries++) {
+					struct drawable d;
 
-				if (surface_drawable(&contexts[i], &d) &&
-				    contexts[i].placed)
-					break;
-				usleep(10000);
+					if (surface_drawable(&contexts[i], &d) &&
+					    contexts[i].placed)
+						break;
+					usleep(10000);
+				}
 			}
 			rdn_mesa_present(contexts[i].gld_ctx);
+			rdn_surface_flush(contexts[i].connection, contexts[i].window,
+					  contexts[i].surface);
 			return 1;
 		}
 	return 0;

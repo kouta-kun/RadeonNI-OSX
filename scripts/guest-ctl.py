@@ -108,6 +108,26 @@ def main():
             for _ in range(2 if "--double" in a else 1):
                 q.button(True)
                 q.button(False)
+    elif op == "drag":
+        # drag X0 Y0 X1 Y1 [steps [ms]]: press at the first point, move to
+        # the second in steps, release. GUEST_SCREEN=WxH gives the screen's
+        # size when there is no emulated display to take a screenshot of.
+        x0, y0, x1, y1 = (int(v) for v in a[1:5])
+        steps = int(a[5]) if len(a) > 5 else 20
+        pause = (int(a[6]) if len(a) > 6 else 40) / 1000.0
+        if os.environ.get("GUEST_SCREEN"):
+            w, h = (int(v) for v in os.environ["GUEST_SCREEN"].split("x"))
+        else:
+            w, h = png_size(shot(q))
+        q.move(x0, y0, w, h)
+        time.sleep(0.2)
+        q.button(True)
+        time.sleep(0.2)
+        for i in range(1, steps + 1):
+            q.move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps, w, h)
+            time.sleep(pause)
+        time.sleep(0.2)
+        q.button(False)
     elif op == "key":
         q.keys(a[1].split("+"))
     elif op == "type":

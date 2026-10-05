@@ -477,6 +477,21 @@ static int early_takeover(void)
 /* gldCreateContext's sixth argument, less this, is the engine's context. */
 #define ENGINE_CTX_CREATE_ARG	0x360
 
+/*
+ * Tell the window server that a surface has a new picture, so that it
+ * draws that part of the screen again (CGSFlushSurface with no region:
+ * all of it; what OpenGL's own glcDoNonSimpleFlush does).
+ */
+void rdn_surface_flush(unsigned long cid, unsigned long wid, unsigned long sid)
+{
+	int (*flush)(unsigned long, unsigned long, unsigned long, void *) =
+		(int (*)(unsigned long, unsigned long, unsigned long, void *))
+		dlsym(RTLD_DEFAULT, "CGSFlushSurface");
+
+	if (flush)
+		flush(cid, wid, sid, NULL);
+}
+
 static long (*bind_surface)(long, long, long, long, long);
 
 /*
