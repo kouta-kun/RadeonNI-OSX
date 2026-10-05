@@ -92,6 +92,7 @@ ssh)
         -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1 \
         -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+        -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
         "$user@127.0.0.1" "$@"
     ;;
 *)

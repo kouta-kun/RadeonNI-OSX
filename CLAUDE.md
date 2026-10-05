@@ -23,12 +23,14 @@ Milestone 2 is in progress: our library cold-POSTs the real card (same
 register sequence as Linux, with or without the I/O BAR) and the video
 memory works without the MC microcode. EDID over DDC and the DCE5 modeset
 are next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
-is blocked: the Tiger guest is ready (10.4.11, Xcode 2.5, snapshot
-`clean-install`, user `tiger` / password `tiger`, `scripts/tiger.sh ssh`),
-but the first passthrough run oopsed the host kernel during vfio INTx
-setup. `radeon` is now blacklisted on the host
-(`/etc/modprobe.d/osx-gpu.conf`); the host still needs the reboot that makes
-that effective and clears the damaged kernel. Read the last JOURNAL entries.
+is nearly done: the Tiger guest (10.4.11, Xcode 2.5, snapshot
+`clean-install`, user `tiger` / password `tiger`, `scripts/tiger.sh ssh`)
+boots with the card passed through and sees it as an `IOPCIDevice` with
+BAR0 at `0x90000000` and BAR2 at `0xa0000000`. OpenBIOS assigns neither the
+I/O BAR nor the expansion ROM. Next there: a probe kext that maps BAR2 and
+reads registers. `radeon` is blacklisted on the host
+(`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host kernel
+oops; see the JOURNAL.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -68,7 +70,8 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/host-inventory.sh`: read-only host inspection (GPUs, drivers,
   IOMMU groups, tools). Re-run after any hardware or kernel change.
 - `scripts/card-bind.sh {status|vfio|none|radeon}`: move the 7570 between
-  host drivers at runtime. After a host reboot it is back on `radeon`.
+  host drivers at runtime. After a host reboot it is driverless (`radeon` is
+  blacklisted) and un-POSTed.
 - `scripts/x86-trace-guest.sh <name>` then `scripts/trace-split.py
   traces/<name>.log`: capture and reduce a reference trace of the stock
   Linux driver. The compact per-phase files are diffable.
@@ -81,7 +84,8 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/tiger.sh {create|install|cdrom|run|passthru|snapshot|restore|ssh}`:
   Tiger guest lifecycle. Screen on VNC `127.0.0.1:5901`, ssh on port 2222.
   `passthru <addr>` attaches the card with `x-no-mmap=on` and writes the
-  register trace to `traces/`.
+  register trace to `traces/`; it needs sudo, and so does `guest-ctl.py`
+  while that guest runs.
 
 The kext does not exist yet. Add its commands here when it does.
 

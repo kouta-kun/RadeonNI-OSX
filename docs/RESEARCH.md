@@ -149,9 +149,9 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 | Aspect | Status |
 |---|---|
 | Config space, MMIO BARs, INTx | Works [V] |
-| 64-bit BARs | OpenBIOS always maps them in 32-bit space [V]; `mac99` PCI hole is 0x80000000 + 0x70000000 [V]; 256 MB untested |
+| 64-bit BARs | OpenBIOS maps them in 32-bit space [V]; `mac99` PCI hole is 0x80000000 + 0x70000000 [V]; the 7570's 256 MB BAR0 is assigned at 0x90000000 by unpatched OpenBIOS [V, 2026-10-04] |
 | PCIe | `mac99` only has UniNorth PCI/AGP bridges [V] |
-| ROM | Without FCode, OpenBIOS does not initialise it [I]; it can be supplied with `romfile=` |
+| ROM | OpenBIOS assigns neither the expansion ROM nor the I/O BAR of the 7570 [V, 2026-10-04]; the ROM can be supplied with `romfile=` or read from a file |
 | `x-vga` | Designed for PCs; do not use [I] |
 | Host IOMMU grouping | On the development host the whole X370 chipset is one group including the NIC; only the CPU x16 slot is usable for passthrough [V, 2026-10-04] |
 | Reset after a panic | QEMU's reset of the `vfio-pci` device at guest start returns this card to the un-POSTed state [V, 2026-10-04] |
@@ -194,7 +194,7 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 - ~~PCI ID and memory type of this specific card.~~ `1002:675d` Turks PRO, GDDR5 (2026-10-04).
 - ~~Whether GDDR5 VRAM is usable after `asic_init` without the MC microcode.~~ Yes through the aperture (2026-10-04); scan-out still to confirm.
 - The report of an HD 6570 under Linux on a G5 Quad, first-hand.
-- Whether OpenBIOS assigns the 7570's BARs under `mac99`.
+- ~~Whether OpenBIOS assigns the 7570's BARs under `mac99`.~~ BAR0 and BAR2 yes; I/O and ROM no (2026-10-04).
 - Whether the G5's Open Firmware assigns large BARs to a card with no FCode.
 - Whether an `IOFramebuffer` loaded with `kextload` after boot is picked up by WindowServer without logging out.
 - The licence of osx86-driver-radeonhd.

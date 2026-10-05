@@ -414,3 +414,56 @@ but not `radeon.ko`, so no initramfs rebuild is involved. `modprobe -c`
 lists the blacklist. Takes effect at the next host boot, which is pending.
 To verify after boot: `radeon` not loaded, `0000:10:00.0` without a driver,
 card un-POSTed.
+
+## 2026-10-04 — After the host reboot: Tiger boots with the card passed through
+
+**Tried.** After the user rebooted the host: checked the blacklist took
+effect, `scripts/card-bind.sh vfio`, then
+`sudo scripts/tiger.sh passthru 0000:10:00.0 tiger-passthru-1`.
+
+**Observed.**
+
+- After boot: `radeon` not loaded, `10:00.0` without a driver, card
+  un-POSTed, kernel taint 0. `snd_hda_intel` had the audio function and
+  logged "GPU sound probed, but not operational"; unbinding it gave no
+  warning.
+- No oops this time. QEMU started, vfio reset the card, the kernel stayed
+  untainted through boot and shutdown of the guest.
+- OpenBIOS's config writes to the card, in full: command 0; interrupt line
+  0x1b; BAR0 sized and set to `0x9000000c`; BAR2 sized and set to
+  `0xa0000004`; command 3. It never touched the upper halves of the 64-bit
+  BARs, BAR4 (I/O) or the expansion ROM register.
+- QEMU `info pci`: BAR0 64-bit prefetchable at `0x90000000`–`0x9fffffff`,
+  BAR2 64-bit at `0xa0000000`–`0xa001ffff`, BAR4 I/O not mapped, ROM not
+  mapped, IRQ 27.
+- Tiger booted to the desktop on the emulated VGA. In the device tree the
+  card is `pci1002,675d@10`, class `IOPCIDevice`, registered and matched,
+  with `assigned-addresses` for BAR0 (256 MB at `0x90000000`) and BAR2
+  (128 KB at `0xa0000000`), `IODeviceMemory` listing the same two ranges,
+  `compatible` = `pci1028,2b20`, `pci1002,675d`, `pciclass,030000`, and
+  `AAPL,ndrv-dev`. `reg` lists only config space, BAR0 and BAR2.
+- No driver attached to it (IONDRVSupport did not create a framebuffer).
+- `ioreg -l` for the whole tree fails in the guest with "can't obtain
+  properties"; `ioreg -p IODeviceTree -n <name>` works.
+- QEMU's `xp` monitor command refuses to read the BAR addresses ("Cannot
+  access memory"), so register access from the guest side is not yet
+  demonstrated.
+- `scripts/card-state.py` reported "posted" after the guest exited. Wrong:
+  the idle card was in D3hot under `vfio-pci` and every register read
+  all-ones. The script now reports that case as unreadable.
+
+**Concluded.**
+
+- The oops hypothesis is supported: same command, same card, no `radeon`
+  bind/unbind in this boot, no oops. One clean run is not proof.
+- OpenBIOS handles the 256 MB 64-bit BAR without patching, placing it below
+  4 GB. RESEARCH.md's worry about large and 64-bit BARs did not materialise.
+- OpenBIOS does not assign the I/O BAR or the expansion ROM. The I/O BAR is
+  not needed (POST works through MMIO). The ROM matters: under `mac99` the
+  kext cannot read the VBIOS from the ROM BAR as things stand. Options are
+  the load-from-file fallback already in the design, QEMU's `romfile=` with
+  an OpenBIOS patch that assigns the ROM BAR, or mapping the ROM from the
+  kext. To decide when the kext needs it.
+- Milestone 1's criterion is met on "IOPCIDevice with BARs assigned". The
+  "accessible" half needs kernel code in the guest and will be shown by the
+  first probe kext.

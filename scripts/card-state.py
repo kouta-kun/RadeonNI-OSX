@@ -6,7 +6,8 @@ Usage: sudo scripts/card-state.py [pci-address]
 
 Read-only on the card's registers. Turns on memory decoding in the PCI
 command register if it is off (the card may be driverless) and puts the
-command register back afterwards. Exit status: 0 posted, 1 not posted.
+command register back afterwards. Exit status: 0 posted, 1 not posted,
+2 not readable (for example in D3hot while idle on vfio-pci).
 """
 
 import mmap
@@ -41,6 +42,14 @@ def main():
 
         crtcs = [rd(r) for r in CRTC_CONTROL]
         memsize = rd(CONFIG_MEMSIZE)
+        if memsize == 0xffffffff and all(c == 0xffffffff for c in crtcs):
+            # vfio-pci parks an idle device in D3hot, where MMIO reads all-ones.
+            try:
+                state = open(f"{dev}/power_state").read().strip()
+            except OSError:
+                state = "unknown"
+            print(f"registers read all-ones: card not readable (power state {state})")
+            sys.exit(2)
         posted = any(c & CRTC_MASTER_EN for c in crtcs) or memsize != 0
         print("CRTC_CONTROL    " + " ".join(f"{c:08x}" for c in crtcs))
         print(f"CONFIG_MEMSIZE  {memsize:08x}")

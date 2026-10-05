@@ -9,7 +9,7 @@ wherever its criterion involves video output.
 | # | Milestone | State |
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
-| 1 | Tiger in QEMU with the card passed through | **Blocked**: guest ready (10.4.11 + Xcode 2.5, snapshot `clean-install`); first passthrough attempt oopsed the host kernel, host reboot needed |
+| 1 | Tiger in QEMU with the card passed through | Nearly done: the card is an `IOPCIDevice` in Tiger with BAR0 and BAR2 assigned by unpatched OpenBIOS; register access from inside the guest still to be shown (probe kext) |
 | 2 | Cold POST and modeset from Linux userspace | In progress: cold POST works on the real card and VRAM is usable without microcode; EDID and modeset not started |
 | 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
 
@@ -21,7 +21,7 @@ wherever its criterion involves video output.
 | BIOS: primary display left on the integrated GPU (IGD) | M0 | done (iGPU is `boot_vga`) |
 | Monitor connected to the 7570 | M0 (EDID, modeset trace) | done: DVI-I via DVI-to-HDMI adapter |
 | Approval of the M0 host actions listed below | M0 | given 2026-10-04 (rebinding, module load/unload; trace in an x86 guest, no mmiotrace) |
-| Host reboot after the kernel oops of 2026-10-04 | M1, M2 | **open** (blacklist for `radeon` is in place) |
+| Host reboot after the kernel oops of 2026-10-04 | M1, M2 | done; `radeon` stays unloaded |
 | Which resolution counts as native | M2, M3 | decided: the EDID's preferred timing, 1366x768@59.79 |
 | Mac OS X 10.4 PowerPC install DVD image | M1 | done: `media/tiger-install.iso` |
 | Mac OS X 10.4.11 Combo Update (PPC) `.dmg`, if the DVD is older | M1 | not needed: Apple's Software Update still serves it |
@@ -71,6 +71,11 @@ assigned and accessible.
 2. Install Tiger on `mac99` with emulated VGA; update to 10.4.11; install
    Xcode 2.5; enable Remote Login; install an ssh key. Snapshot.
 3. Add `vfio-pci`. Inspect the OpenBIOS device tree and `ioreg`.
+3a. Done 2026-10-04: OpenBIOS assigns BAR0 (256 MB) at `0x90000000` and BAR2
+   at `0xa0000000` with no patch. It does not assign the I/O BAR or the ROM.
+   Remaining: a probe kext that maps BAR2 and reads registers, to show the
+   BARs are accessible; and a decision on how the kext gets the VBIOS under
+   `mac99` (file fallback, or patch OpenBIOS to assign the ROM BAR).
 4. Expected trouble: OpenBIOS and the 64-bit 256 MB BAR0. Patch OpenBIOS or
    QEMU as needed; document in HARNESS.md. If unworkable, stop and present
    alternatives.

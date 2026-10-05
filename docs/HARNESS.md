@@ -90,13 +90,36 @@ host boot, POSTed the card and put fbcon on it. Unbinding it logged two kernel W
 W. With the blacklist the card stays un-POSTed and driverless after boot,
 and the monitor shows nothing until our code drives it.
 
+## What OpenBIOS does with the card (2026-10-04, unpatched)
+
+| Resource | Result |
+|---|---|
+| BAR0, 64-bit prefetchable, 256 MB | assigned at `0x90000000` |
+| BAR2, 64-bit, 128 KB | assigned at `0xa0000000` |
+| BAR4, I/O | not assigned |
+| Expansion ROM | not assigned |
+| Interrupt | line 0x1b (IRQ 27) |
+
+Tiger shows the card as `pci1002,675d@10`, an `IOPCIDevice` with those two
+ranges in `assigned-addresses` and `IODeviceMemory`. Inspect it with
+`ioreg -p IODeviceTree -n pci1002,675d -w0`; `ioreg -l` on the whole tree
+fails in this guest.
+
+While idle on `vfio-pci` the card sits in D3hot and its registers read
+all-ones from the host; `scripts/card-state.py` reports that as unreadable.
+
+Start the passthrough guest with `sudo scripts/tiger.sh passthru
+0000:10:00.0 <trace-name>` (root is needed for VFIO); then `guest-ctl.py`
+also needs sudo, because the QMP socket belongs to root.
+
 ## Known host hazard: kernel oops on INTx setup (2026-10-04)
 
 The first `scripts/tiger.sh passthru` run oopsed the host kernel in
 `vfio_pci_set_intx_trigger`. It happened in a boot where `radeon` had
-earlier been unbound from the card (with WARNs). Until this is understood,
-do not start a `mac99` passthrough guest in a boot where `radeon` has been
-bound to the card. See JOURNAL.
+earlier been unbound from the card (with WARNs). In the next boot, with
+`radeon` blacklisted and never bound, the same run worked. Do not start a
+`mac99` passthrough guest in a boot where `radeon` has been bound to the
+card. See JOURNAL.
 
 ## Returning the card to the un-POSTed state
 
