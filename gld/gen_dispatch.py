@@ -21,8 +21,21 @@ import sys
 ENTRY = re.compile(r'^\s*(.+?)\(\*\s*([A-Za-z0-9_]+)\s*\)\s*\(\s*GLIContext\s+ctx\s*(?:,\s*(.*?))?\)\s*;', re.S)
 
 
+# Entries whose name in Apple's table is not the function's name.
+ALIASES = {
+    'enable_vertex_attrib_ARB': 'glEnableVertexAttribArrayARB',
+    'disable_vertex_attrib_ARB': 'glDisableVertexAttribArrayARB',
+    'bind_vertex_array_EXT': 'glBindVertexArray',
+    'delete_vertex_arrays_EXT': 'glDeleteVertexArrays',
+    'gen_vertex_arrays_EXT': 'glGenVertexArrays',
+    'is_vertex_array_EXT': 'glIsVertexArray',
+}
+
+
 def gl_name(entry):
     """clear_color -> glClearColor, tex_image2D -> glTexImage2D."""
+    if entry in ALIASES:
+        return ALIASES[entry]
     return 'gl' + ''.join(p[:1].upper() + p[1:] for p in entry.split('_'))
 
 

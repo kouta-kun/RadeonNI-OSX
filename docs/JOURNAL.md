@@ -1833,3 +1833,28 @@ console text overlap each other at the top left.
 console text, what "wonky" was in the window, and whether leaving full
 screen gives the screen back cleanly.
 
+## 2026-10-05 — More programs from the user: Sauerbraten's sky, Quake 3, Tux Racer
+
+- **Sauerbraten, seen by the user full screen:** more or less right, but
+  the sky is a hall of mirrors once the view moves (right in the first
+  frame) and the weapon is not drawn. Reproduced by readback with
+  `curmove` turning the view. The game clears only depth; in its first
+  frame it draws the sky's polygons to depth alone (colour mask off) and
+  then the sky box with `glDepthFunc(GL_GEQUAL)`; that pair appears once
+  in a 40 s trace. What later frames do has not been read yet.
+  `R600_DEBUG=nohyperz` changes nothing. Not compared with Apple's
+  software renderer yet.
+- Apple's table calls four functions by other names than Mesa
+  (`enable_vertex_attrib_ARB` and so on); mapped in `gen_dispatch.py`
+  (629 of 686 entries now). No visible change in Sauerbraten.
+- I killed the user's running game with my own test runs. Ask before
+  restarting a program the user may be in.
+- **Quake 3 (Carbon, the user's copy on the guest's desktop):** full
+  screen it stops with "Could not initialize OpenGL" after
+  `gldGetRendererInfo`, before any pixel format request reaches the
+  bundle. With `+set r_fullscreen 0` it gets a context and a surface,
+  reports Mesa's strings and shows its CD key screen in its window
+  (readback); the picture fills only the upper two thirds of the window.
+- **Tux Racer:** the user says it hangs after "press any key". Not looked
+  at.
+
