@@ -494,7 +494,9 @@ void rdn_make_current(void *rend)
 	}
 	OSMesaPixelStore(OSMESA_ROW_LENGTH, (GLint)(d.rowbytes / 4));
 	/* CGL's buffers hold the bottom row first; the screen the top row. */
-	OSMesaPixelStore(OSMESA_Y_UP, c->type != DRAWABLE_SCREEN);
+	OSMesaPixelStore(OSMESA_Y_UP, c->type == DRAWABLE_OFFSCREEN ||
+				      (c->type == DRAWABLE_WINDOW &&
+				       !rdn_windows_top_down()));
 	OSMesaReadbackRects(c->mesa,
 			    c->type == DRAWABLE_SCREEN ? (GLint)c->screen_rects : 0,
 			    &c->screen_rect[0][0]);

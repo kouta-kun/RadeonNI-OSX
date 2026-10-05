@@ -393,6 +393,47 @@ static void present_hook(void *gld_ctx, long table)
 /* The context of the window server that draws on the screen, if any. */
 static void *screen_ctx;
 
+/*
+ * Does the window server composite with OpenGL (Quartz Extreme) on some
+ * display? Then a window's buffer holds its top row first; without, the
+ * bottom row (both seen on the monitor: a GLUT triangle before Quartz
+ * Extreme worked, Chess after).
+ */
+int rdn_windows_top_down(void)
+{
+	static int known = -1;
+	int (*list)(unsigned max, unsigned *displays, unsigned *count) =
+		(int (*)(unsigned, unsigned *, unsigned *))
+		dlsym(RTLD_DEFAULT, "CGGetActiveDisplayList");
+	int (*uses)(unsigned display) =
+		(int (*)(unsigned))dlsym(RTLD_DEFAULT, "CGDisplayUsesOpenGLAcceleration");
+	unsigned displays[8], count = 0, i;
+
+	if (known >= 0)
+		return known;
+	known = 0;
+	if (list && uses && !list(8, displays, &count))
+		for (i = 0; i < count; i++)
+			if (uses(displays[i]))
+				known = 1;
+	return known;
+}
+
+/*
+ * A program started in the login session, with Quartz Extreme working,
+ * gets a window drawable described by connection, window and surface
+ * alone (the record's fourth word is 2, and no buffer follows). The
+ * bundle cannot draw on that yet, so such a context has to stay with the
+ * software renderer, and so no context may be given to Mesa before its
+ * drawable is known. RDN_GLD_EARLY=1 does it anyway: right for programs
+ * whose record names a buffer (those started from an ssh session), which
+ * otherwise lose what they set up before their window existed.
+ */
+static int early_takeover(void)
+{
+	return getenv("RDN_GLD_EARLY") != NULL;
+}
+
 /* gldCreateContext's sixth argument, less this, is the engine's context. */
 #define ENGINE_CTX_CREATE_ARG	0x360
 
@@ -668,7 +709,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	 * gldInitDispatch is given later).
 	 */
 	if (idx == IDX_gldCreateContext && ret == 0 && a && f &&
-	    !in_window_server())
+	    !in_window_server() && early_takeover())
 		rdn_mesa_context_engine(*(void **)a,
 					(char *)f - ENGINE_CTX_CREATE_ARG);
 #endif

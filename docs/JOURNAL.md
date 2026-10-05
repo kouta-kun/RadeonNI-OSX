@@ -1491,3 +1491,45 @@ contexts on our renderer read back nothing since the Quartz Extreme
 changes (`glprobe draw 0x21a00`, `prelist`); the record is of another
 form. The guest was started with the emulated display again.
 \n
+
+## 2026-10-05 — The display-list failure narrowed down; Chess correct on the card in one configuration
+
+Asked by the user whether the "compiler bug" is certain. It was not.
+
+**Narrowing.** All with `rdn_gltest -L 1/5/15` in the guest, the rest of
+Mesa at -Os, one file (`src/mesa/vbo/vbo_save_api.c`) varied by pragma:
+- as is: fail. `optimize("Os")` (control: the pragma alone): fail.
+  With no-trapping-math and no-math-errno added: fail.
+- `optimize("O1")`, `("O2")`, `("no-strict-aliasing")`: pass.
+- no-strict-aliasing over one range of functions at a time: only
+  `compile_vertex_list()` (lines 506 to 998 of that file) matters.
+So: this compiler's strict-aliasing-based optimisation at -Os produces
+wrong code for that one function. The x86 and big-endian Linux builds
+compile the same function at -O2 with strict aliasing on and are right.
+Whether the function breaks the aliasing rules (Mesa's fault) or GCC 14.2
+for powerpc-apple-darwin8 is wrong has not been decided; I read the
+function and found no obvious violation. Not looked at: the generated
+code.
+
+**Done about it.** `-fno-strict-aliasing` for the whole Tiger build
+(`scripts/build-mesa.sh`; an existing build directory needs `meson
+configure -Dc_args=... -Dcpp_args=...`, the cross file is only read at
+the first set-up). With it both list tests pass in all seven modes. The
+earlier "whole build at -O1 still fails" was never a clean observation
+and is withdrawn.
+
+**Chess.** Started from an ssh session with `RDN_GLD_EARLY=1`, it is
+drawn completely by the card: textured board, all pieces, reflections
+(readback). Two more things were needed:
+- With Quartz Extreme compositing, a window's buffer holds its top row
+  first; before, the bottom row. The bundle now asks
+  `CGDisplayUsesOpenGLAcceleration`.
+- Started normally (`open`), with the early takeover on, the record the
+  software renderer is supposed to fill stays as it came in (`connection,
+  window, surface, 2`, no buffer) and the window stays white; without the
+  early takeover the record is filled, but then what Chess set up before
+  its window existed is lost (untextured board, no pieces). So the early
+  takeover is off unless `RDN_GLD_EARLY=1`, and a normally started Chess
+  is still wrong. Why the record is not filled in that one combination is
+  not known.
+

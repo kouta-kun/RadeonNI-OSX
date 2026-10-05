@@ -38,6 +38,8 @@ void rdn_mesa_context_engine(void *gld_ctx, void *rend);
 void rdn_mesa_early(void *gld_ctx);
 /* The same for every context that has no drawable yet. */
 void rdn_mesa_early_all(void *cgl_ctx);
+/* True if windows' buffers hold their top row first (RadeonNIGLDriver.c). */
+int rdn_windows_top_down(void);
 /* rdn_hook.c: call `after` whenever a context has been made current. */
 void rdn_hook_set_current(void (*after)(void *cgl_ctx));
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
