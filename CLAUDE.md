@@ -88,7 +88,9 @@ been planned in detail.
   shown by the card, no CPU copy. Apple's Chess, started normally, is
   correct that way, also while its window is dragged (the user saw
   the first version flicker and leave trails; the fix is checked by
-  readback only). How it works is in the journal's last entries.
+  readback only). How it works is in the journal's last entries (the window server
+  textures from the surface's buffer directly). `/var/log/windowserver.log`
+  in the guest is the window server's own log.
   `~/gl/drag x0 y0 x1 y1` drags with the mouse from inside the guest. Without the file, windows
   go through the software renderer's buffer as before, and Chess is
   wrong.

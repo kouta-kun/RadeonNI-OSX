@@ -1720,3 +1720,41 @@ GL error is not what keeps the window server from binding the surface as
 a texture. Why it does not is still open; the placeholder detection
 stays.
 
+## 2026-10-05 — Why the window server drew surfaces white, and surfaces as its textures
+
+**Found in the debugger** (breakpoints inside `CGXNextSurface`, the window
+server stopped only for the attach): the read lock succeeds, the surface's
+accelerator is the display's, `CGXGLCreateSurfaceTextureReference` is
+called and returns nothing. That routine starts by switching on the read
+lock's `pixelFormat`: 3, 4, 5, 6 and two YUV codes, anything else fails.
+The numbers are the surface colour depth codes of
+`IOAccelSurfaceConnect.h` (4: `kIOAccelSurfaceModeColorDepth8888`). The
+kext returned 32. The white quad is what the window server draws for a
+surface it could not make a texture for.
+
+**With 4:** the window server makes a rectangle texture (`glGenTextures`,
+`glBindTexture`, two filters, anisotropy), sets its private context
+parameter 997, and draws the surface as a textured quad. The parameter
+never reaches the bundle: no `gldSetInteger`, no driver table entry;
+Apple's engine keeps it. The texture has no image for Mesa and shows
+white.
+
+**Built.** The kext remembers which surface is read-locked
+(`RDN_UC_SURFACE_LOCKED`). In the window server the bundle watches for a
+rectangle texture whose anisotropy is set before it has an image while a
+surface is locked, and makes that surface's buffer in video memory the
+texture's image (`OSMesaTexStore`, Mesa's `st_context_teximage`; no
+copy, no alpha). The window server then names the surface itself, by
+making the texture while it holds the lock; nothing is matched by size or
+place.
+
+**Observed (readback).** Chess started normally: complete, and the log
+says its surface became a texture. Chess and `glwin` together, Chess
+dragged: each window has its own picture; two textures bound; the
+placeholder path was not used once; `/var/log/windowserver.log` has no GL
+error.
+
+**Left in.** The placeholder detection, as a fallback for a surface that
+gets no texture. **Not tried:** a surface window that changes size (its
+buffer moves; the texture would have to follow).
+
