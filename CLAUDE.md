@@ -35,6 +35,7 @@ System Preferences and a software cursor.
 - The guest: snapshots `clean-install` and `pre-kext-install` (no kext
   installed in either), user `tiger` / password `tiger`,
   `scripts/tiger.sh ssh`. QEMU must be the patched build (`patches/qemu/`).
+  Screensaver and display sleep are off in the guest.
 - `radeon` is blacklisted on the host (`/etc/modprobe.d/osx-gpu.conf`)
   because unbinding it led to a host kernel oops.
 
@@ -61,8 +62,10 @@ been planned in detail.
   Linux DRM, on x86 and, pixel-identical, as a big-endian PowerPC build
   under `qemu-ppc` (`scripts/build-mesa.sh x86|ppc`). Not confirmed on the
   monitor.
-- A3 and the first form of A4 work in the guest (2026-10-05), by readback
-  and screenshot, not confirmed on the 7570's monitor. The kext starts the
+- A3 and the first form of A4 work in the guest (2026-10-05). The user
+  confirmed a windowed GL program on the 7570's monitor; the tag
+  `working-cpu-copy` marks that state. A1's and A2's own pictures were
+  checked by readback only. The kext starts the
   3D engine and serves a user client (`RDN_ACCEL=1 scripts/kext.sh up`).
   Mesa 26.2.4 is cross-built for Tiger (`scripts/build-mesa.sh darwin`).
   The driver bundle with Mesa inside (`scripts/gld.sh install-mesa`) makes
@@ -154,6 +157,10 @@ Keep these current as part of the work, and commit small and often.
   src/gallium/targets/rdn/RadeonNIGLDriver.dylib`). `RDN_GLD_LOG=file` in a
   program's environment makes it log.
 - `tools/guest/glwin.c`: a windowed GLUT test for the guest.
+- `tools/guest/fences.c`: how many command buffers the GPU completed in a
+  few seconds; zero when nothing draws with the card.
+- For Quartz Extreme the user chose trial and error in the guest
+  (2026-10-05), not captures from the real G5.
 - `scripts/gld.sh {build|install|uninstall|log|clearlog}`: build
   `gld/RadeonNIGLDriver.bundle` in the guest and install it in the guest's
   `/System/Library/Extensions` (OpenGL loads it only from there). `log`

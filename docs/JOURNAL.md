@@ -1253,3 +1253,20 @@ per frame, threads, and the user's own look at the 7570's monitor.
   screen from video memory shows the Tiger desktop and the window with
   Mesa's picture in it (the triangle is smeared in the grab only, because
   reading the screen back takes longer than a frame).
+
+## 2026-10-05 — Windowed OpenGL confirmed on the monitor by the user
+
+- The user first saw a screensaver on the 7570. Screensaver and display
+  sleep are now off in the guest (`defaults -currentHost write
+  com.apple.screensaver idleTime -int 0`, `pmset -a displaysleep 0 sleep
+  0`); the guest was restarted and `glwin` started again on that screen.
+- The user then reported: the triangle turning steadily, the white frame,
+  the dark blue background. That confirms A4 in its first form on the
+  monitor.
+- Asked whether this is really hardware accelerated. Measured with
+  `tools/guest/fences.c`: the card completed 304 command buffers in 5 s
+  while `glwin` ran, 0 while it was stopped (`killall -STOP`), 300 after it
+  resumed. The drawing is the GPU's; putting the frame into the window is
+  a read back and a CPU copy, and the window server composites in software.
+- Tagged `working-cpu-copy`. The user chose trial and error in the guest
+  for Quartz Extreme over capturing the window server on the real G5.
