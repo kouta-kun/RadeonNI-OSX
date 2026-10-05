@@ -19,12 +19,13 @@ VBIOS is in `private/vbios.rom`, and the reference trace of the stock Linux
 driver is in `traces/` and described in `docs/REFERENCE-TRACE.md`. The
 monitor is on the DVI-I connector; its EDID prefers 1366x768.
 
-Milestone 2 is in progress: our library cold-POSTs the real card (same
-register sequence as Linux, with or without the I/O BAR), the video memory
-works without the MC microcode, `hw/rdn_i2c.c` reads the monitor's EDID
-over DDC, and `hw/rdn_modeset.c` sets the mode (fixed topology: CRTC 0,
-PLL 1, UNIPHY link A, DVI-I connector). The CRTC runs; the user's visual
-confirmation of the test pattern is pending. The target mode is the EDID's preferred one, 1366x768. Milestone 1
+Milestone 2 is done and confirmed on screen by the user: from an un-POSTed
+card, `rdn_tool post` and `rdn_tool modeset` show the test pattern at
+1366x768 on the DVI-I output. The library does POST (`rdn_card_post`), DDC
+and EDID (`rdn_i2c.c`), one-time display setup (`rdn_display_init`: the
+display engine clock is required) and the modeset (`rdn_modeset`, fixed
+topology: CRTC 0, PLL 1, UNIPHY link A). No MC microcode is needed.
+The target mode is the EDID's preferred one, 1366x768. Milestone 1
 is done: the Tiger guest (10.4.11, Xcode 2.5, snapshot `clean-install`,
 user `tiger` / password `tiger`, `scripts/tiger.sh ssh`) boots with the card
 passed through, sees it as an `IOPCIDevice` with BAR0 at `0x90000000` and
@@ -32,7 +33,8 @@ BAR2 at `0xa0000000`, and the probe kext in `kext/RadeonNI` reads its
 registers. That needs the patched QEMU (`patches/qemu/`). OpenBIOS assigns
 neither the I/O BAR nor the expansion ROM. `radeon` is blacklisted on the
 host (`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host
-kernel oops; see the JOURNAL. Milestone 3 has only that probe skeleton.
+kernel oops; see the JOURNAL. Milestone 3 is next: the probe kext has to
+become an `IOFramebuffer` that links `hw/` and runs this same sequence.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 

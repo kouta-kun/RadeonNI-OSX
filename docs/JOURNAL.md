@@ -624,3 +624,21 @@ CRTC still running.
 **Concluded.** Probably the cause; the user's answer decides. Lesson for the
 replay tests: they prove that what we do is what Linux did, not that we do
 everything Linux did. The AtomBIOS call log is the checklist for omissions.
+
+## 2026-10-04 — Milestone 2 confirmed by the user
+
+After the display engine clock fix, with the card reset to un-POSTed and
+then driven only by `rdn_tool post` and `rdn_tool modeset`, the user reports
+on the monitor: the white edge line, the black margin, the eight colour bars
+and the black box with the resolution text. Nothing looks wrong, except that
+white looks slightly yellow, which the user attributes to the monitor and
+asked to ignore for now.
+
+Milestone 2's criterion is met. The display engine clock was the cause of
+"input not supported".
+
+Open, low priority: the yellowish white. If it turns out not to be the
+monitor, candidates are HDMI signalling without an AVI infoframe (the
+monitor may assume a different colour encoding or range) and the unported
+parts of the colour pipeline. `rdn_tool -d modeset` (DVI signalling) is a
+quick way to tell.
