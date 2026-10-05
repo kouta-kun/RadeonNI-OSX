@@ -19,8 +19,13 @@ the call log of our pass-through bundle (`gld/`, `scripts/gld.sh log`).
 - The bundle is asked for renderer info for every display mask, not only its
   own display's, and it takes the place of `GLRendererFloat` (ID 0x20400) in
   the renderer list. The generic renderer 0x20200 stays.
-- The window server restarted with the accelerator present, did not load the
-  bundle and asked for no user client. It kept working unaccelerated.
+- The window server loads the bundle and asks for a surface user client
+  only once its Quartz Extreme gates are met (`QUARTZ-EXTREME.md`). Its
+  `gldAttachDrawable` has type 0x50 and a record whose third word is the
+  ID of its `IOAccelSurface`; the software renderer must not be given
+  that call inside the window server (it deadlocks). `gldAttachDrawable`
+  returns 2 and `gldInitDispatch` 4 when the software renderer answers an
+  application; the bundle returns the same when it answers itself.
 
 ## Entry points [V]
 
@@ -136,4 +141,4 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
 - The meaning of most fields of the renderer info and pixel format records,
   the 33-entry driver table, and every call a window or full-screen
   drawable brings.
-- What makes the window server use an accelerator at all.
+- What the return values 2 and 4 above mean.
