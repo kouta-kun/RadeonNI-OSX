@@ -297,6 +297,16 @@ OSMesaDrawStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                  GLint sy, GLsizei sw, GLsizei sh, GLint dx, GLint dy );
 
 
+/*
+ * osx-gpu: make such a memory picture the image of the texture bound to
+ * `target` in the context, without copying: the texture shows whatever is
+ * in that memory when it is used. Opaque.
+ */
+GLAPI GLboolean APIENTRY
+OSMesaTexStore( OSMesaContext ctx, GLenum target, GLuint handle,
+                GLsizei stride, GLuint offset, GLsizei width, GLsizei height );
+
+
 GLAPI void APIENTRY
 OSMesaShowStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                  GLuint offset, GLsizei width, GLsizei height, GLint x,

@@ -59,14 +59,21 @@ IOReturn RadeonNISurfaceClient::lockForRead(IOAccelSurfaceInformation *info,
 	info->rowBytes = rowBytes;
 	info->width = width;
 	info->height = height;
-	/* 32-bit ARGB, as QuickDraw numbers pixel formats (k32ARGBPixelFormat). */
-	info->pixelFormat = 32;
+	/*
+	 * The window server reads this as a surface colour depth
+	 * (kIOAccelSurfaceModeColorDepth8888); anything it does not know
+	 * makes it give the surface up and draw white.
+	 */
+	info->pixelFormat = kIOAccelSurfaceModeColorDepth8888;
+	fAccel->setReadLocked(fWid);
 	*size = sizeof(*info);
 	return kIOReturnSuccess;
 }
 
 void RadeonNISurfaceClient::unlockRead(void)
 {
+	if (fAccel && fAccel->readLocked() == fWid)
+		fAccel->setReadLocked(0);
 	if (fReadMap) {
 		fReadMap->release();
 		fReadMap = 0;

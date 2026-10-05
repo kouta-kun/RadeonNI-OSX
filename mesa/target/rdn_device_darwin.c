@@ -141,6 +141,16 @@ static uint32_t dev_surface_list(struct rdn_device *dev, struct rdn_surface *lis
 	return i;
 }
 
+static uint32_t dev_surface_locked(struct rdn_device *dev)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	int id = 0;
+
+	if (IOConnectMethodScalarIScalarO(d->conn, RDN_UC_SURFACE_LOCKED, 0, 1, &id))
+		return 0;
+	return (uint32_t)id;
+}
+
 static void dev_destroy(struct rdn_device *dev)
 {
 	struct darwin_device *d = (struct darwin_device *)dev;
@@ -216,6 +226,7 @@ struct rdn_device *rdn_device_open(void)
 	d->base.surface_region = dev_surface_region;
 	d->base.surface_buffer = dev_surface_buffer;
 	d->base.surface_list = dev_surface_list;
+	d->base.surface_locked = dev_surface_locked;
 	return &d->base;
 
 fail_close:

@@ -56,7 +56,8 @@ def trace_call(name, params, names):
 # Entries the bundle looks at as they go by, in the window server only
 # (rdn_watch): how it draws the place of another program's surface.
 WATCHED = ('ortho', 'begin', 'end', 'vertex2f', 'tex_coord2f', 'color4ub',
-           'enable', 'disable', 'active_texture')
+           'enable', 'disable', 'active_texture', 'bind_texture',
+           'tex_image2D', 'tex_sub_image2D', 'tex_parameterf')
 
 # Apple-only extensions that Mesa does not have and that Apple's own
 # programs use without asking (the window server does): the entry, the

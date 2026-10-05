@@ -628,6 +628,8 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 5, 0 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceList,
 		  kIOUCScalarIStructO, 0, sizeof(struct rdn_user_surfaces) },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceLocked,
+		  kIOUCScalarIScalarO, 0, 1 },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -706,6 +708,12 @@ IOReturn RadeonNIUserClient::methodFenceWait(UInt32 fence, UInt32 timeoutMs,
 IOReturn RadeonNIUserClient::methodSyncForCPU(void)
 {
 	fAccel->syncForCPU();
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodSurfaceLocked(UInt32 *wid)
+{
+	*wid = fAccel->readLocked();
 	return kIOReturnSuccess;
 }
 

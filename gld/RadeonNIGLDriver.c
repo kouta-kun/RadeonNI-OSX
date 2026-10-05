@@ -399,10 +399,11 @@ static void present_hook(void *gld_ctx, long table)
  */
 static unsigned stub_calls[33];
 
-static long table_stub(int entry)
+static long table_stub(int entry, long a, long b, long c, long d)
 {
-	if (logf && stub_calls[entry]++ < 4) {
-		fprintf(logf, "[%d] driver table entry %d called\n", (int)getpid(), entry);
+	if (logf && stub_calls[entry]++ < 6) {
+		fprintf(logf, "[%d] driver table entry %d called (%lx, %lx, %lx, %lx)\n",
+			(int)getpid(), entry, a, b, c, d);
 		fflush(logf);
 	}
 	return 0;
@@ -410,7 +411,7 @@ static long table_stub(int entry)
 
 #define S(n) static long table_stub_##n(long a, long b, long c, long d, long e, \
 				       long f, long g, long h) \
-	{ return table_stub(n); }
+	{ return table_stub(n, a, b, c, d); }
 S(0) S(1) S(2) S(3) S(4) S(5) S(6) S(7) S(8) S(9) S(10) S(11) S(12) S(13) S(14) S(15) S(16) S(17) S(18) S(19) S(20) S(21) S(22) S(23) S(24) S(25) S(26) S(27) S(28) S(29) S(30) S(31) S(32) 
 #undef S
 
@@ -668,6 +669,10 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		restore_id = 1;
 	}
 #ifdef RDN_MESA
+	if (idx == IDX_gldSetInteger && logf && c) {
+		fprintf(logf, "[%d] gldSetInteger parameter %ld:", (int)getpid(), b);
+		dump("values", c, 0x20);
+	}
 	/* Mesa's context goes before the software renderer's own. */
 	if (idx == IDX_gldDestroyContext)
 		rdn_mesa_context_destroyed((void *)a);
@@ -731,6 +736,8 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		}
 		if ((idx == IDX_gldInitDispatch || idx == IDX_gldUpdateDispatch) &&
 		    screen_ctx == (void *)a) {
+			if (b)
+				table_fill(b);
 			if (b && rdn_mesa_dispatch((void *)a, (void *)b))
 				present_hook((void *)a, b);
 			if (logf) {

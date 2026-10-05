@@ -970,6 +970,50 @@ OSMesaShowStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
 }
 
 
+GLAPI GLboolean GLAPIENTRY
+OSMesaTexStore(OSMesaContext osmesa, GLenum target, GLuint handle,
+               GLsizei stride, GLuint offset, GLsizei width, GLsizei height)
+{
+   struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
+   struct pipe_screen *screen;
+   struct pipe_resource templat, *res;
+   struct winsys_handle whandle;
+   enum pipe_format format;
+   bool ok;
+
+   if (!osbuffer || width < 1 || height < 1)
+      return GL_FALSE;
+   /* The same layout without alpha: a surface is opaque. */
+   format = osbuffer->visual.color_format;
+   if (format == PIPE_FORMAT_B8G8R8A8_UNORM)
+      format = PIPE_FORMAT_B8G8R8X8_UNORM;
+   else if (format == PIPE_FORMAT_A8R8G8B8_UNORM)
+      format = PIPE_FORMAT_X8R8G8B8_UNORM;
+   screen = osmesa->st->pipe->screen;
+   memset(&templat, 0, sizeof(templat));
+   templat.target = PIPE_TEXTURE_RECT;
+   templat.format = format;
+   templat.width0 = width;
+   templat.height0 = height;
+   templat.depth0 = 1;
+   templat.array_size = 1;
+   templat.usage = PIPE_USAGE_DEFAULT;
+   templat.bind = PIPE_BIND_SAMPLER_VIEW;
+   memset(&whandle, 0, sizeof(whandle));
+   whandle.type = WINSYS_HANDLE_TYPE_KMS;
+   whandle.handle = handle;
+   whandle.stride = stride;
+   whandle.offset = offset;
+   res = screen->resource_from_handle(screen, &templat, &whandle,
+                                      PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+   if (!res)
+      return GL_FALSE;
+   ok = st_context_teximage(osmesa->st, target, 0, format, res, false);
+   pipe_resource_reference(&res, NULL);
+   return ok ? GL_TRUE : GL_FALSE;
+}
+
+
 GLAPI void GLAPIENTRY
 OSMesaDrawStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
                 GLuint offset, GLsizei width, GLsizei height, GLint sx,

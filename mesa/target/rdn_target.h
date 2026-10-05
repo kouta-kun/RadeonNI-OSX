@@ -44,6 +44,8 @@ bool rdn_target_surface_buffer(uint32_t id, uint32_t offset, uint32_t row_bytes,
 /* The surfaces that keep their picture in such a buffer: id, offset, row
  * bytes, width, height each; at most `max`; returns how many. */
 uint32_t rdn_target_surface_list(uint32_t (*list)[5], uint32_t max);
+/* The surface that is locked for reading at this moment, or 0. */
+uint32_t rdn_target_surface_locked(void);
 
 /* The `handle` that names the screen to OSMesaMakeCurrentDirect. */
 #define RDN_TARGET_SCREEN_HANDLE 0x7570

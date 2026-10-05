@@ -49,6 +49,12 @@ enum {
 	RDN_UC_SURFACE_BUFFER,
 	/* struct out: struct rdn_user_surfaces, every surface with a buffer */
 	RDN_UC_SURFACE_LIST,
+	/*
+	 * scalar out: the ID of the surface that is locked for reading at
+	 * this moment, or 0. The window server makes a texture for a
+	 * surface between locking and unlocking it.
+	 */
+	RDN_UC_SURFACE_LOCKED,
 	RDN_UC_METHOD_COUNT
 };
 

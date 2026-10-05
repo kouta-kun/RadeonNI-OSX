@@ -93,6 +93,13 @@ rdn_target_surface_list(uint32_t (*list)[5], uint32_t max)
    return n;
 }
 
+uint32_t
+rdn_target_surface_locked(void)
+{
+   return the_device && the_device->surface_locked ?
+          the_device->surface_locked(the_device) : 0;
+}
+
 struct pipe_screen *osmesa_create_screen(void);
 
 struct pipe_screen *

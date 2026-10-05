@@ -100,6 +100,14 @@ void rdn_watch_color4ub(unsigned char r, unsigned char g, unsigned char b,
 void rdn_watch_enable(unsigned cap);
 void rdn_watch_disable(unsigned cap);
 void rdn_watch_active_texture(unsigned unit);
+void rdn_watch_bind_texture(unsigned target, unsigned texture);
+void rdn_watch_tex_image2D(unsigned target, int level, int internalformat,
+			   int width, int height, int border, unsigned format,
+			   unsigned type, const void *pixels);
+void rdn_watch_tex_sub_image2D(unsigned target, int level, int xoffset,
+			       int yoffset, int width, int height,
+			       unsigned format, unsigned type, const void *pixels);
+void rdn_watch_tex_parameterf(unsigned target, unsigned pname, float param);
 /* True if the context's GL entry points are now Mesa's. */
 int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
 /* Finish the frame and put it into the drawable's buffer. */

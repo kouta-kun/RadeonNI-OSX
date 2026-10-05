@@ -109,6 +109,9 @@ struct rdn_device {
    uint32_t (*surface_list)(struct rdn_device *dev, struct rdn_surface *list,
                             uint32_t max);
 
+   /* Optional: the surface that is locked for reading right now, or 0. */
+   uint32_t (*surface_locked)(struct rdn_device *dev);
+
    void (*destroy)(struct rdn_device *dev);
 };
 

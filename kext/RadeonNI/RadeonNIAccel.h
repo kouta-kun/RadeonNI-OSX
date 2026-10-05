@@ -89,6 +89,9 @@ public:
 	bool getSurfaceBuffer(UInt32 wid, UInt32 *offset, UInt32 *rowBytes,
 			      UInt32 *width, UInt32 *height);
 	void listSurfaces(struct rdn_user_surfaces *list);
+	/* The surface that is read-locked now (0: none). */
+	void setReadLocked(UInt32 wid) { fReadLocked = wid; }
+	UInt32 readLocked(void) { return fReadLocked; }
 
 private:
 	RadeonNI *fFramebuffer;
@@ -107,6 +110,7 @@ private:
 		/* The surface's picture, if its owner has said where it is. */
 		UInt32 bufOffset, bufRowBytes, bufWidth, bufHeight;
 	} fShapes[kMaxSurfaces];
+	UInt32 fReadLocked;
 	/* See RadeonNIAGPShim. */
 	IOAGPDevice *fAncestor;
 	RadeonNIAGPShim *fShim;
@@ -144,6 +148,7 @@ public:
 	IOReturn methodSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
 				     UInt32 width, UInt32 height);
 	IOReturn methodSurfaceList(struct rdn_user_surfaces *list, IOByteCount *size);
+	IOReturn methodSurfaceLocked(UInt32 *wid);
 
 private:
 	RadeonNIAccel *fAccel;

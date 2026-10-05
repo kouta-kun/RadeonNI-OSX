@@ -787,6 +787,78 @@ void rdn_watch_vertex2f(float x, float y)
 	watch.vertices++;
 }
 
+/*
+ * A surface as a texture.
+ *
+ * The better case: the window server makes a rectangle texture for a
+ * program's surface, sets its filters and gives it no image, because it
+ * has told Apple's engine (a private context parameter, 997) that the
+ * texture is the surface; it then draws the surface as an ordinary
+ * textured quad. The engine keeps that to itself, but the window server
+ * does all of it while it holds the surface locked for reading, and the
+ * kext knows which surface that is. So: a rectangle texture whose
+ * anisotropy is set before it has an image, while a surface is locked,
+ * gets that surface's picture in video memory as its image, uncopied.
+ */
+static int watch_texture_has_image;
+
+void rdn_watch_bind_texture(unsigned target, unsigned texture)
+{
+	if (target == GL_TEXTURE_RECTANGLE_ARB)
+		watch_texture_has_image = 0;
+}
+
+void rdn_watch_tex_image2D(unsigned target, int level, int internalformat,
+			   int width, int height, int border, unsigned format,
+			   unsigned type, const void *pixels)
+{
+	if (target == GL_TEXTURE_RECTANGLE_ARB)
+		watch_texture_has_image = 1;
+}
+
+void rdn_watch_tex_sub_image2D(unsigned target, int level, int xoffset,
+			       int yoffset, int width, int height,
+			       unsigned format, unsigned type, const void *pixels)
+{
+	if (target == GL_TEXTURE_RECTANGLE_ARB)
+		watch_texture_has_image = 1;
+}
+
+void rdn_watch_tex_parameterf(unsigned target, unsigned pname, float param)
+{
+	uint32_t list[32][5], n, i, id;
+	struct context *c = NULL;
+	static unsigned noted;
+	int j;
+
+	if (target != GL_TEXTURE_RECTANGLE_ARB || watch_texture_has_image ||
+	    pname != 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY_EXT */)
+		return;
+	id = rdn_target_surface_locked();
+	if (!id)
+		return;
+	for (j = 0; j < MAX_CONTEXTS; j++)
+		if (contexts[j].gld_ctx && contexts[j].rend == rdn_current_rend)
+			c = &contexts[j];
+	if (!c || !c->mesa)
+		return;
+	n = rdn_target_surface_list(list, 32);
+	for (i = 0; i < n; i++) {
+		if (list[i][0] != id)
+			continue;
+		if (OSMesaTexStore(c->mesa, GL_TEXTURE_RECTANGLE_ARB,
+				   RDN_TARGET_VRAM_HANDLE, (GLsizei)list[i][2],
+				   list[i][1], (GLsizei)list[i][3], (GLsizei)list[i][4]))
+			watch_texture_has_image = 1;
+		if (noted++ < 20)
+			rdn_log("surface 0x%x is the image of a texture of the window server's: %s",
+				(unsigned)id, watch_texture_has_image ? "done" : "failed");
+		return;
+	}
+	if (noted++ < 20)
+		rdn_log("surface 0x%x is locked for a texture but has no buffer", (unsigned)id);
+}
+
 void rdn_watch_end(void)
 {
 	uint32_t list[32][5], n, i, best = 32;
