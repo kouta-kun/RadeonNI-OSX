@@ -9,12 +9,15 @@ graphical installer can be operated without a VNC client.
   scripts/guest-ctl.py type 'text'           US layout
   scripts/guest-ctl.py qmp '{"execute": ...}'  raw command
   scripts/guest-ctl.py size                  guest screen size
+  scripts/guest-ctl.py evdev NODE|off        give a host keyboard/pointer
+                                             (/dev/input/...) to the guest
 
 Pixel coordinates refer to the screenshot. Needs scripts/tiger.sh running.
 """
 
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -23,6 +26,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOCK = os.path.join(ROOT, "build", "qemu-qmp.sock")
 SHOT = os.path.join(ROOT, "build", "shot.png")
+EVDEV_ID = "evdev0"
 
 KEYMAP = {
     " ": "spc", "\n": "ret", "\t": "tab", "-": "minus", "=": "equal",
@@ -48,6 +52,12 @@ class Qmp:
         self.cmd("qmp_capabilities")
 
     def cmd(self, execute, **arguments):
+        r = self.raw(execute, **arguments)
+        if "error" in r:
+            sys.exit(f"QMP error: {r['error']}")
+        return r["return"]
+
+    def raw(self, execute, **arguments):
         msg = {"execute": execute}
         if arguments:
             msg["arguments"] = arguments
@@ -56,9 +66,10 @@ class Qmp:
         while True:
             r = json.loads(self.f.readline())
             if "return" in r or "error" in r:
-                if "error" in r:
-                    sys.exit(f"QMP error: {r['error']}")
-                return r["return"]
+                return r
+
+    def hmp(self, line):
+        return self.cmd("human-monitor-command", **{"command-line": line})
 
     def keys(self, names, hold_ms=60):
         ev = [{"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": k}}} for k in names]
@@ -88,6 +99,28 @@ def png_size(path):
 def shot(q, path=SHOT):
     q.cmd("screendump", filename=path, format="png")
     return path
+
+
+def evdev(q, node):
+    # QEMU reads the host's event device and feeds its emulated USB keyboard
+    # and mouse. Passing the USB device itself through stalls the bus:
+    # QEMU's OHCI allows one pending packet for the whole controller and an
+    # idle device's interrupt poll holds it (journal, 2026-10-05).
+    q.raw("object-del", id=EVDEV_ID)
+    if node == "off":
+        return
+    q.cmd("object-add", **{"qom-type": "input-linux", "id": EVDEV_ID,
+                           "evdev": node, "grab_all": True, "repeat": True})
+    # Buttons go to the first pointer device in QEMU's list. That must be
+    # the relative mouse: the tablet reports a click with its own absolute
+    # position, which throws the pointer into the top left corner. Scripted
+    # clicks still work, the tablet keeps getting the absolute moves.
+    for line in q.hmp("info mice").splitlines():
+        m = re.match(r"[* ] Mouse #(\d+): QEMU HID Mouse", line)
+        if m:
+            q.hmp("mouse_set " + m.group(1))
+            return
+    sys.exit("evdev attached, but the guest has no relative mouse for its buttons")
 
 
 def main():
@@ -128,6 +161,8 @@ def main():
             time.sleep(pause)
         time.sleep(0.2)
         q.button(False)
+    elif op == "evdev":
+        evdev(q, a[1])
     elif op == "key":
         q.keys(a[1].split("+"))
     elif op == "type":

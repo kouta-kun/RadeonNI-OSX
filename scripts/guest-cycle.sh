@@ -8,6 +8,8 @@
 #   scripts/guest-cycle.sh ready   wait until the guest answers ssh and its
 #                                  Finder runs, then mask the card's PCIe
 #                                  error escalation again (QEMU reset it)
+#                                  and, with TIGER_EVDEV set, attach that
+#                                  host keyboard/pointer (tiger.sh evdev)
 
 set -euo pipefail
 
@@ -26,6 +28,9 @@ ready)
     done
     "$root/scripts/card-quiet.sh" apply > /dev/null
     echo "guest is up; card error escalation masked"
+    if [ -n "${TIGER_EVDEV:-}" ]; then
+        "$root/scripts/tiger.sh" evdev && echo "host input $TIGER_EVDEV attached"
+    fi
     ;;
 *)
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'

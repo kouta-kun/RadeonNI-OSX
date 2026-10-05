@@ -13,6 +13,10 @@
 #   scripts/tiger.sh snapshot <name>     save a qcow2 snapshot (guest off)
 #   scripts/tiger.sh restore <name>      revert to a snapshot (guest off)
 #   scripts/tiger.sh ssh [cmd...]        ssh into the guest
+#   scripts/tiger.sh evdev [node|off]    give the host keyboard/pointer at
+#                                        /dev/input/... (default TIGER_EVDEV)
+#                                        to the running guest, or take it
+#                                        back; again after replugging it
 #
 # Guest screen: VNC on 127.0.0.1:5901 (tunnel with ssh -L 5901:127.0.0.1:5901).
 # Guest ssh:    127.0.0.1:2222.  QEMU monitor: build/qemu-mon.sock.
@@ -21,6 +25,12 @@
 # Environment:  TIGER_MEM (MB, default 1024), TIGER_DISK, TIGER_USER,
 #               TIGER_BOOTARGS (kernel boot arguments, e.g. debug=0x100).
 #               TIGER_NOVGA=1 (no emulated display; experiment).
+#               TIGER_EVDEV (host event device, e.g. /dev/input/by-id/
+#               usb-Logitech_USB_Receiver-if02-event-mouse: the guest gets
+#               its keys and pointer from boot; QEMU grabs it, both Ctrl
+#               keys together give it back to the host. Run "evdev" once
+#               the guest is up (guest-cycle.sh ready does), or a click
+#               throws the pointer into the top left corner).
 
 set -euo pipefail
 
@@ -50,6 +60,13 @@ base_args() {
     # only go to the serial log.
     if [ "${TIGER_NOVGA:-0}" = 1 ]; then
         args+=(-vga none)
+    fi
+    if [ -n "${TIGER_EVDEV:-}" ]; then
+        if [ -r "$TIGER_EVDEV" ]; then
+            args+=(-object "input-linux,id=evdev0,evdev=$TIGER_EVDEV,grab_all=on,repeat=on")
+        else
+            echo "TIGER_EVDEV: cannot read $TIGER_EVDEV, starting without it" >&2
+        fi
     fi
     if [ -n "${TIGER_BOOTARGS:-}" ]; then
         args+=(-prom-env "boot-args=$TIGER_BOOTARGS")
@@ -104,6 +121,13 @@ snapshot)
     ;;
 restore)
     qemu-img snapshot -a "${1:?snapshot name required}" "$disk"
+    ;;
+evdev)
+    node=${1:-${TIGER_EVDEV:?event device or TIGER_EVDEV required}}
+    # The sockets of a guest started with sudo belong to root.
+    sudo=
+    [ -w "$root/build/qemu-qmp.sock" ] || sudo=sudo
+    exec $sudo "$root/scripts/guest-ctl.py" evdev "$node"
     ;;
 ssh)
     # Tiger ships an old OpenSSH; re-enable the algorithms it speaks.
