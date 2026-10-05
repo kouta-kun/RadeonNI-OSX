@@ -36,6 +36,23 @@ def arg_names(params):
     return names
 
 
+def trace_call(name, params, names):
+    """The rdn_log call that prints one GL call with its arguments."""
+    fmt, args = [], []
+    for p, n in zip(params.split(',') if params else [], names):
+        if '*' in p or '[' in p:
+            fmt.append('%p')
+            args.append('(void *)%s' % n)
+        elif re.search(r'GL(float|clampf|double|clampd)\b', p):
+            fmt.append('%g')
+            args.append('(double)%s' % n)
+        else:
+            fmt.append('0x%lx')
+            args.append('(unsigned long)%s' % n)
+    return 'rdn_log("%s(%s)"%s)' % (gl_name(name), ', '.join(fmt),
+                                    ''.join(', ' + a for a in args))
+
+
 def main():
     text = open(sys.argv[1]).read()
     body = text[text.index('__GLIFunctionDispatchRec'):]
@@ -61,6 +78,8 @@ def main():
         out.append('static %s t_%s(%s)' % (ret, name, full))
         out.append('{')
         out.append('\tRDN_ENTER(ctx);')
+        out.append('\tif (__builtin_expect(rdn_trace, 0))')
+        out.append('\t\t%s;' % trace_call(name, params, names))
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
         out.append('}')
         out.append('')

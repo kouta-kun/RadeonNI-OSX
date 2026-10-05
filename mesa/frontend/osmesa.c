@@ -129,6 +129,9 @@ struct osmesa_context
    GLint user_row_length; /*< user-specified number of pixels per row */
    GLboolean y_up;        /*< TRUE  -> Y increases upward */
                           /*< FALSE -> Y increases downward */
+   /* OSMesaReadbackRects: the only parts of the color buffer to copy out. */
+   GLint num_rects;
+   GLint *rects;
 
 };
 
@@ -186,7 +189,7 @@ get_st_manager(void)
  */
 static void
 osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
-                   int dst_stride, bool y_up)
+                   int dst_stride, bool y_up, bool use_rects)
 {
    struct pipe_context *pipe = osmesa->st->pipe;
 
@@ -208,6 +211,30 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
    }
 
    unsigned bpp = util_format_get_blocksize(res->format);
+
+   if (use_rects && osmesa->num_rects > 0) {
+      /* The rectangles' rows count from the first row of the user's buffer. */
+      for (int i = 0; i < osmesa->num_rects; i++) {
+         const GLint *r = osmesa->rects + i * 4;
+         int x0 = MAX2(r[0], 0), y0 = MAX2(r[1], 0);
+         int x1 = MIN2(r[0] + r[2], (int)res->width0);
+         int y1 = MIN2(r[1] + r[3], (int)res->height0);
+
+         if (x1 <= x0)
+            continue;
+         for (int y = y0; y < y1; y++) {
+            int src_y = y_up ? (int)res->height0 - 1 - y : y;
+
+            /* dst and dst_stride already follow the rows of the source. */
+            memcpy((uint8_t *)dst + src_y * dst_stride + (int)(x0 * bpp),
+                   src + src_y * transfer->stride + x0 * bpp,
+                   (x1 - x0) * bpp);
+         }
+      }
+      pipe->texture_unmap(pipe, transfer);
+      return;
+   }
+
    for (unsigned y = 0; y < res->height0; y++)
    {
       memcpy(dst, src, bpp * res->width0);
@@ -370,12 +397,13 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
    else
       dst_stride = bpp * osbuffer->width;
 
-   osmesa_read_buffer(osmesa, res, osbuffer->map, dst_stride, osmesa->y_up);
+   osmesa_read_buffer(osmesa, res, osbuffer->map, dst_stride, osmesa->y_up,
+                      true);
 
    /* If the user has requested the Z/S buffer, then snapshot that one too. */
    if (osmesa->zs) {
       osmesa_read_buffer(osmesa, osbuffer->textures[ST_ATTACHMENT_DEPTH_STENCIL],
-                         osmesa->zs, osmesa->zs_stride, true);
+                         osmesa->zs, osmesa->zs_stride, true, false);
    }
 
    return true;
@@ -686,6 +714,7 @@ OSMesaDestroyContext(OSMesaContext osmesa)
    if (osmesa) {
       st_destroy_context(osmesa->st);
       free(osmesa->zs);
+      free(osmesa->rects);
       FREE(osmesa);
    }
 }
@@ -783,6 +812,24 @@ OSMesaGetCurrentContext(void)
 
 
 GLAPI void GLAPIENTRY
+OSMesaReadbackRects(OSMesaContext osmesa, GLint count, const GLint *rects)
+{
+   if (!osmesa)
+      return;
+   free(osmesa->rects);
+   osmesa->rects = NULL;
+   osmesa->num_rects = 0;
+   if (count <= 0 || !rects)
+      return;
+   osmesa->rects = malloc(count * 4 * sizeof(GLint));
+   if (!osmesa->rects)
+      return;
+   memcpy(osmesa->rects, rects, count * 4 * sizeof(GLint));
+   osmesa->num_rects = count;
+}
+
+
+GLAPI void GLAPIENTRY
 OSMesaPixelStore(GLint pname, GLint value)
 {
    OSMesaContext osmesa = OSMesaGetCurrentContext();
@@ -875,7 +922,7 @@ OSMesaGetDepthBuffer(OSMesaContext c, GLint *width, GLint *height,
       if (!c->zs)
          return GL_FALSE;
 
-      osmesa_read_buffer(c, res, c->zs, c->zs_stride, true);
+      osmesa_read_buffer(c, res, c->zs, c->zs_stride, true, false);
    }
 
    *buffer = c->zs;

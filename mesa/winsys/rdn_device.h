@@ -36,6 +36,16 @@ struct rdn_device_info {
    uint32_t num_ses;
 };
 
+/* Screen coordinates: x, y from the top left, width, height. */
+#define RDN_REGION_RECTS 256
+
+struct rdn_region {
+   /* Rectangles in the shape; only the first RDN_REGION_RECTS are here. */
+   uint32_t count;
+   int32_t bounds[4];
+   int16_t rects[RDN_REGION_RECTS][4];
+};
+
 struct rdn_device {
    struct rdn_device_info info;
 
@@ -71,6 +81,13 @@ struct rdn_device {
                      uint64_t timeout_ns);
    /* Make the CPU see what the GPU wrote, without waiting for anything. */
    void (*sync_for_cpu)(struct rdn_device *dev);
+
+   /*
+    * Optional: the shape on the screen of the window system's surface
+    * `id`. False if unknown.
+    */
+   bool (*surface_region)(struct rdn_device *dev, uint32_t id,
+                          struct rdn_region *region);
 
    void (*destroy)(struct rdn_device *dev);
 };

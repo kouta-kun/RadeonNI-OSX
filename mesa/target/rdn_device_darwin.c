@@ -89,6 +89,26 @@ static void dev_sync_for_cpu(struct rdn_device *dev)
 	IOConnectMethodScalarIScalarO(d->conn, RDN_UC_SYNC_FOR_CPU, 0, 0);
 }
 
+static bool dev_surface_region(struct rdn_device *dev, uint32_t id,
+			       struct rdn_region *region)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	static struct rdn_user_region r;
+	IOByteCount size = sizeof(r);
+	uint32_t n;
+
+	if (IOConnectMethodScalarIStructureO(d->conn, RDN_UC_SURFACE_REGION, 1,
+					     &size, (int)id, &r))
+		return false;
+	region->count = r.count;
+	memcpy(region->bounds, r.bounds, sizeof(region->bounds));
+	n = r.count < RDN_USER_REGION_RECTS ? r.count : RDN_USER_REGION_RECTS;
+	if (n > RDN_REGION_RECTS)
+		n = RDN_REGION_RECTS;
+	memcpy(region->rects, r.rects, n * sizeof(r.rects[0]));
+	return true;
+}
+
 static void dev_destroy(struct rdn_device *dev)
 {
 	struct darwin_device *d = (struct darwin_device *)dev;
@@ -161,6 +181,7 @@ struct rdn_device *rdn_device_open(void)
 	d->base.fence_wait = dev_fence_wait;
 	d->base.sync_for_cpu = dev_sync_for_cpu;
 	d->base.destroy = dev_destroy;
+	d->base.surface_region = dev_surface_region;
 	return &d->base;
 
 fail_close:

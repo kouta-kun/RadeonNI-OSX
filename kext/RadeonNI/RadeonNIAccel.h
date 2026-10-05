@@ -20,6 +20,8 @@
 #include <IOKit/graphics/IOAccelerator.h>
 #include <IOKit/pci/IOAGPDevice.h>
 
+#include <IOKit/graphics/IOAccelSurfaceConnect.h>
+
 extern "C" {
 #include "rdn_accel.h"
 #include "rdn_mem.h"
@@ -76,6 +78,10 @@ public:
 	bool fenceWait(UInt32 fence, UInt32 timeoutMs);
 	void syncForCPU(void);
 	IOMemoryDescriptor *apertureMemory(void);
+	/* The shapes of the window server's surfaces, by surface ID. */
+	void setSurfaceRegion(UInt32 wid, const IOAccelDeviceRegion *rgn,
+			      UInt32 rects);
+	bool getSurfaceRegion(UInt32 wid, struct rdn_user_region *region);
 
 private:
 	RadeonNI *fFramebuffer;
@@ -86,6 +92,12 @@ private:
 	bool fEngineUp;
 	/* Hand out surface clients (RadeonNISurface.h)? */
 	bool fSurfaces;
+	enum { kMaxSurfaces = 8 };
+	struct {
+		UInt32 wid;
+		bool used;
+		struct rdn_user_region region;
+	} fShapes[kMaxSurfaces];
 	/* See RadeonNIAGPShim. */
 	IOAGPDevice *fAncestor;
 	RadeonNIAGPShim *fShim;
@@ -118,6 +130,8 @@ public:
 	IOReturn methodSubmit(UInt32 offset, UInt32 words, UInt32 *fence);
 	IOReturn methodFenceWait(UInt32 fence, UInt32 timeoutMs, UInt32 *reached);
 	IOReturn methodSyncForCPU(void);
+	IOReturn methodSurfaceRegion(UInt32 wid, struct rdn_user_region *region,
+				     IOByteCount *size);
 
 private:
 	RadeonNIAccel *fAccel;

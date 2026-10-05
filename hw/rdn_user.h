@@ -33,6 +33,12 @@ enum {
 	RDN_UC_FENCE_WAIT,
 	/* no arguments: make the CPU see what the GPU wrote */
 	RDN_UC_SYNC_FOR_CPU,
+	/*
+	 * scalar in: surface ID (what the window server named the surface
+	 * with IOAccelSetSurfaceID); struct out: struct rdn_user_region, its
+	 * shape on the screen. Fails if there is no such surface.
+	 */
+	RDN_UC_SURFACE_REGION,
 	RDN_UC_METHOD_COUNT
 };
 
@@ -56,6 +62,17 @@ struct rdn_user_info {
 	uint32_t fb_height;
 	uint32_t fb_pitch_pixels;
 	uint32_t fb_bits_per_pixel;
+};
+
+/* A surface's shape: screen coordinates, y from the top. */
+#define RDN_USER_REGION_RECTS		256
+
+struct rdn_user_region {
+	/* Rectangles in the shape; only the first RDN_USER_REGION_RECTS are here. */
+	uint32_t count;
+	/* x, y, width, height of the box around them all. */
+	int32_t bounds[4];
+	int16_t rects[RDN_USER_REGION_RECTS][4];
 };
 
 #define RDN_USER_VERSION		1

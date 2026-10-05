@@ -30,6 +30,16 @@ void rdn_make_current(void *rend);
 void rdn_mesa_context_created(void *gld_ctx);
 void rdn_mesa_context_destroyed(void *gld_ctx);
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
+/* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
+extern int rdn_trace;
+
+/*
+ * The context draws on the card's screen, inside the shape of the window
+ * server's surface `surface` (the whole screen if the kernel does not know
+ * the surface). For the window server's compositing context. False if the
+ * screen cannot be reached.
+ */
+int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface);
 /* True if the context's GL entry points are now Mesa's. */
 int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
 /* Finish the frame and put it into the drawable's buffer. */

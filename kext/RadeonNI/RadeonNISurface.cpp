@@ -195,6 +195,11 @@ IOReturn RadeonNISurfaceClient::setShape(UInt32 options, UInt32 fbIndex,
 {
 	note("setShape", options, fbIndex, size, 0);
 	noteRegion("setShape", rgn, size);
+	/* The structure is declared with one rectangle and holds num_rects. */
+	if (rgn && size >= sizeof(IOAccelDeviceRegion) - sizeof(IOAccelBounds) &&
+	    rgn->num_rects <= (size - (sizeof(IOAccelDeviceRegion) -
+				       sizeof(IOAccelBounds))) / sizeof(IOAccelBounds))
+		fAccel->setSurfaceRegion(fWid, rgn, rgn->num_rects);
 	return kIOReturnSuccess;
 }
 

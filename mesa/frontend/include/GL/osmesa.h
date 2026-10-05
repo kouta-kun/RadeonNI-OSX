@@ -237,6 +237,17 @@ GLAPI void APIENTRY
 OSMesaPixelStore( GLint pname, GLint value );
 
 
+/*
+ * osx-gpu: copy only these rectangles of the color buffer to the user's
+ * buffer when the context is flushed, and leave the rest of the buffer
+ * alone. Each is x, y, width, height in pixels, with y counted from the
+ * first row of the user's buffer. A count of zero copies everything again
+ * (the default).
+ */
+GLAPI void APIENTRY
+OSMesaReadbackRects( OSMesaContext ctx, GLint count, const GLint *rects );
+
+
 
 /*
  * Return an integer value like glGetIntegerv.

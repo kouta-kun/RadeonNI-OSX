@@ -6,6 +6,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 
 #include "pipe/p_screen.h"
 #include "r600/r600_public.h"
@@ -26,6 +27,23 @@ rdn_target_screen(volatile uint32_t **pixels, uint32_t *width,
    *width = the_device->screen.width;
    *height = the_device->screen.height;
    *pitch = the_device->screen.pitch_pixels;
+   return true;
+}
+
+bool
+rdn_target_surface_region(uint32_t id, int32_t bounds[4], int16_t (*rects)[4],
+                          uint32_t max, uint32_t *count)
+{
+   static struct rdn_region region;
+   uint32_t n;
+
+   if (!the_device || !the_device->surface_region ||
+       !the_device->surface_region(the_device, id, &region))
+      return false;
+   memcpy(bounds, region.bounds, sizeof(region.bounds));
+   *count = region.count;
+   n = MIN2(MIN2(region.count, RDN_REGION_RECTS), max);
+   memcpy(rects, region.rects, n * sizeof(region.rects[0]));
    return true;
 }
 

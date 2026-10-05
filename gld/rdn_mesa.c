@@ -24,6 +24,7 @@
 #include <GL/osmesa.h>
 
 #include "rdn_glue.h"
+#include "rdn_target.h"
 
 /* gldAttachDrawable's type for CGLSetOffScreen: kCGLPFAOffScreen. */
 #define DRAWABLE_OFFSCREEN	0x35
@@ -45,6 +46,9 @@
 
 /* gldAttachDrawable's type for a window: kCGLPFAWindow. */
 #define DRAWABLE_WINDOW		0x50
+/* Not Apple's: the card's own screen, for the window server's context. */
+#define DRAWABLE_SCREEN		0x7570
+#define MAX_SCREEN_RECTS	256
 
 /*
  * What gldAttachDrawable's record says, as far as it is understood, for
@@ -77,6 +81,14 @@ struct context {
 	const uint32_t *record;
 	/* What Mesa is bound to now; compared with the record. */
 	struct drawable drawable;
+	/*
+	 * For DRAWABLE_SCREEN: the part of the screen to draw on, and the
+	 * rectangles of it (relative to it) that are copied there. None
+	 * means all of it.
+	 */
+	struct drawable screen;
+	uint32_t screen_rects;
+	GLint screen_rect[MAX_SCREEN_RECTS][4];
 	int bound;
 };
 
@@ -132,6 +144,10 @@ static int read_record(const struct context *c, struct drawable *d)
 {
 	const uint32_t *r = c->record;
 
+	if (c->type == DRAWABLE_SCREEN) {
+		*d = c->screen;
+		return d->base != NULL;
+	}
 	memset(d, 0, sizeof(*d));
 	if (!r || (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
 		return 0;
@@ -160,6 +176,60 @@ void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 	rdn_log("attach: context %p, type 0x%lx, %ux%u, rowbytes %u, base %p",
 		gld_ctx, type, (unsigned)d.width, (unsigned)d.height,
 		(unsigned)d.rowbytes, d.base);
+}
+
+int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
+{
+	static int16_t rects[MAX_SCREEN_RECTS][4];
+	uint32_t count = 0, i;
+	int32_t b[4];
+	struct context *c = find(gld_ctx);
+	volatile uint32_t *pixels;
+	uint32_t width, height, pitch;
+
+	if (!c)
+		return 0;
+	/* The device is opened with the first Mesa context. */
+	if (!c->mesa)
+		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
+	if (!c->mesa || !rdn_target_screen(&pixels, &width, &height, &pitch)) {
+		rdn_log("attach: context %p cannot reach the screen", gld_ctx);
+		return 0;
+	}
+	c->type = DRAWABLE_SCREEN;
+	c->record = NULL;
+	c->bound = 0;
+	c->screen_rects = 0;
+	if (!rdn_target_surface_region((uint32_t)surface, b, rects,
+				       MAX_SCREEN_RECTS, &count) ||
+	    b[0] < 0 || b[1] < 0 || b[2] <= 0 || b[3] <= 0 ||
+	    (uint32_t)(b[0] + b[2]) > width || (uint32_t)(b[1] + b[3]) > height) {
+		b[0] = b[1] = 0;
+		b[2] = (int32_t)width;
+		b[3] = (int32_t)height;
+	} else if (count <= MAX_SCREEN_RECTS) {
+		/*
+		 * The window server draws only inside the shape; the rest
+		 * of the box around it must stay as it is on the screen.
+		 */
+		for (i = 0; i < count; i++) {
+			c->screen_rect[i][0] = rects[i][0] - b[0];
+			c->screen_rect[i][1] = rects[i][1] - b[1];
+			c->screen_rect[i][2] = rects[i][2];
+			c->screen_rect[i][3] = rects[i][3];
+		}
+		c->screen_rects = count;
+	}
+	c->screen.width = (uint32_t)b[2];
+	c->screen.height = (uint32_t)b[3];
+	c->screen.rowbytes = pitch * 4;
+	c->screen.base = (void *)(pixels + (uint32_t)b[1] * pitch + (uint32_t)b[0]);
+	if (c->rend && c->rend == rdn_current_rend)
+		rdn_current_rend = NULL;
+	rdn_log("attach: context %p draws on the screen at %d,%d %dx%d (surface %lu, %u rectangles)",
+		gld_ctx, (int)b[0], (int)b[1], (int)b[2], (int)b[3], surface,
+		(unsigned)count);
+	return 1;
 }
 
 static void *lookup(const char *name)
@@ -237,6 +307,11 @@ void rdn_make_current(void *rend)
 		return;
 	}
 	OSMesaPixelStore(OSMESA_ROW_LENGTH, (GLint)(d.rowbytes / 4));
+	/* CGL's buffers hold the bottom row first; the screen the top row. */
+	OSMesaPixelStore(OSMESA_Y_UP, c->type != DRAWABLE_SCREEN);
+	OSMesaReadbackRects(c->mesa,
+			    c->type == DRAWABLE_SCREEN ? (GLint)c->screen_rects : 0,
+			    &c->screen_rect[0][0]);
 	c->drawable = d;
 	c->bound = 1;
 	rdn_current_rend = rend;

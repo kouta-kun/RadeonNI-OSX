@@ -402,6 +402,57 @@ void RadeonNIAccel::syncForCPU(void)
 	IOLockUnlock(fLock);
 }
 
+void RadeonNIAccel::setSurfaceRegion(UInt32 wid, const IOAccelDeviceRegion *rgn,
+				     UInt32 rects)
+{
+	int i, slot = -1;
+	UInt32 r;
+
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces; i++) {
+		if (fShapes[i].used && fShapes[i].wid == wid) {
+			slot = i;
+			break;
+		}
+		if (!fShapes[i].used && slot < 0)
+			slot = i;
+	}
+	if (slot >= 0) {
+		struct rdn_user_region *region = &fShapes[slot].region;
+
+		fShapes[slot].used = true;
+		fShapes[slot].wid = wid;
+		region->count = rects;
+		region->bounds[0] = rgn->bounds.x;
+		region->bounds[1] = rgn->bounds.y;
+		region->bounds[2] = rgn->bounds.w;
+		region->bounds[3] = rgn->bounds.h;
+		for (r = 0; r < rects && r < RDN_USER_REGION_RECTS; r++) {
+			region->rects[r][0] = rgn->rect[r].x;
+			region->rects[r][1] = rgn->rect[r].y;
+			region->rects[r][2] = rgn->rect[r].w;
+			region->rects[r][3] = rgn->rect[r].h;
+		}
+	}
+	IOLockUnlock(fLock);
+}
+
+bool RadeonNIAccel::getSurfaceRegion(UInt32 wid, struct rdn_user_region *region)
+{
+	bool found = false;
+	int i;
+
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces && !found; i++) {
+		if (!fShapes[i].used || fShapes[i].wid != wid)
+			continue;
+		*region = fShapes[i].region;
+		found = true;
+	}
+	IOLockUnlock(fLock);
+	return found;
+}
+
 IOMemoryDescriptor *RadeonNIAccel::apertureMemory(void)
 {
 	return fFramebuffer ? fFramebuffer->apertureDescriptor() : 0;
@@ -484,6 +535,8 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 2, 1 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodSyncForCPU,
 		  kIOUCScalarIScalarO, 0, 0 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceRegion,
+		  kIOUCScalarIStructO, 1, sizeof(struct rdn_user_region) },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -562,5 +615,16 @@ IOReturn RadeonNIUserClient::methodFenceWait(UInt32 fence, UInt32 timeoutMs,
 IOReturn RadeonNIUserClient::methodSyncForCPU(void)
 {
 	fAccel->syncForCPU();
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodSurfaceRegion(UInt32 wid,
+	struct rdn_user_region *region, IOByteCount *size)
+{
+	if (*size < sizeof(*region))
+		return kIOReturnBadArgument;
+	if (!fAccel->getSurfaceRegion(wid, region))
+		return kIOReturnNotFound;
+	*size = sizeof(*region);
 	return kIOReturnSuccess;
 }

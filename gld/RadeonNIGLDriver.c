@@ -31,6 +31,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <OpenGL/gl.h>
 #include <OpenGL/gliContext.h>
@@ -122,6 +123,8 @@ static int patch = 1;
 #include <stdarg.h>
 #include "rdn_glue.h"
 
+int rdn_trace;
+
 void rdn_log(const char *fmt, ...)
 {
 	va_list ap;
@@ -163,6 +166,7 @@ static void setup(void)
 		snprintf(name, sizeof(name), "/tmp/rdngld.%d.log", (int)getpid());
 		logf = fopen(name, "a");
 	}
+	rdn_trace = logf && access("/tmp/rdngld.trace", F_OK) == 0;
 #else
 	logf = fopen(path ? path : DEFAULT_LOG, "a");
 #endif
@@ -364,6 +368,9 @@ static long present_wrap(long a, long b, long c, long d, long e, long f,
 			 long g, long h)
 {
 	rdn_mesa_present(present_ctx);
+	/* No software renderer behind the window server's context. */
+	if (!present_real)
+		return 0;
 	return present_real(a, b, c, d, e, f, g, h);
 }
 
@@ -372,10 +379,22 @@ static void present_hook(void *gld_ctx, long table)
 	gld_fn *t = (gld_fn *)table;
 
 	present_ctx = gld_ctx;
-	if (t[DRIVER_TABLE_PRESENT] && t[DRIVER_TABLE_PRESENT] != present_wrap) {
+	if (t[DRIVER_TABLE_PRESENT] != present_wrap) {
 		present_real = t[DRIVER_TABLE_PRESENT];
 		t[DRIVER_TABLE_PRESENT] = present_wrap;
 	}
+}
+
+/* The context of the window server that draws on the screen, if any. */
+static void *screen_ctx;
+
+static int in_window_server(void)
+{
+	static int known = -1;
+
+	if (known < 0)
+		known = strcmp(getprogname(), "WindowServer") == 0;
+	return known;
 }
 #endif
 
@@ -508,6 +527,37 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	/* Mesa's context goes before the software renderer's own. */
 	if (idx == IDX_gldDestroyContext)
 		rdn_mesa_context_destroyed((void *)a);
+	/*
+	 * Inside the window server the software renderer cannot attach a
+	 * drawable (it waits on the window server, that is, on itself). The
+	 * window server's context draws on the screen: attach that
+	 * ourselves, and keep the software renderer out of the dispatch
+	 * set-up that follows. The return values are the ones the software
+	 * renderer gives applications.
+	 */
+	if (in_window_server()) {
+		if (idx == IDX_gldAttachDrawable) {
+			/* The record's third word is the surface ID. */
+			ret = rdn_mesa_attach_screen((void *)a,
+				c ? ((const unsigned long *)c)[2] : 0) ? 2 : -1;
+			screen_ctx = ret == 2 ? (void *)a : NULL;
+			if (logf) {
+				fprintf(logf, "[%d]   attached by us -> %lx\n", (int)getpid(), ret);
+				dump("drawable", c, 0x80);
+			}
+			return ret;
+		}
+		if ((idx == IDX_gldInitDispatch || idx == IDX_gldUpdateDispatch) &&
+		    screen_ctx == (void *)a) {
+			if (b && rdn_mesa_dispatch((void *)a, (void *)b))
+				present_hook((void *)a, b);
+			if (logf) {
+				fprintf(logf, "[%d]   dispatch set up by us\n", (int)getpid());
+				fflush(logf);
+			}
+			return idx == IDX_gldInitDispatch ? 4 : 0;
+		}
+	}
 #endif
 	/*
 	 * The renderer decides itself whether it satisfies an attribute
