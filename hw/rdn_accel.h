@@ -145,6 +145,11 @@ struct rdn_selftest_target {
 	uint64_t gpu_addr;
 	uint32_t width, height, pitch_pixels;
 	bool big_endian_pixels;
+	/*
+	 * Write the indirect buffer big-endian and ask the command
+	 * processor to swap it: what a big-endian client does.
+	 */
+	bool swapped_ib;
 };
 
 uint32_t rdn_selftest_work_bytes(void);

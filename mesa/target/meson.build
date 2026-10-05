@@ -13,20 +13,37 @@ rdn_hw = files(
   'hw/rdn_selftest.c',
 )
 
+rdn_inc = [
+  include_directories('.'), inc_rdn_winsys, inc_rdn_frontend,
+  inc_include, inc_src, inc_gallium, inc_gallium_aux, inc_gallium_winsys,
+  inc_gallium_drivers, inc_amd_common,
+]
+rdn_sources = [files('rdn_target.c', 'rdn_device_linux.c'), rdn_hw]
+rdn_link_whole = [librdn_st, libglapi]
+rdn_link_with = [libr600, libmesa, libgallium, libgalliumvl, librdnwinsys]
+rdn_deps = [dep_thread, idep_mesautil, idep_nir]
+
 librdngl = shared_library(
   'rdngl',
-  files('rdn_target.c', 'rdn_device_linux.c'), rdn_hw,
+  rdn_sources,
   gnu_symbol_visibility : 'hidden',
   link_args : [ld_args_gc_sections],
-  include_directories : [
-    include_directories('.'), inc_rdn_winsys, inc_rdn_frontend,
-    inc_include, inc_src, inc_gallium, inc_gallium_aux, inc_gallium_winsys,
-    inc_gallium_drivers, inc_amd_common,
-  ],
-  # The hardware library defines errno names itself where it needs them.
-  c_args : ['-Wno-missing-prototypes'],
-  link_whole : [librdn_st, libglapi],
-  link_with : [libr600, libmesa, libgallium, libgalliumvl, librdnwinsys],
-  dependencies : [dep_thread, idep_mesautil, idep_nir],
+  include_directories : rdn_inc,
+  link_whole : rdn_link_whole,
+  link_with : rdn_link_with,
+  dependencies : rdn_deps,
+  install : false,
+)
+
+# The test program with everything linked in, so that it can be built
+# static for a foreign architecture and run under qemu-user
+# (-Dc_link_args=-static -Dcpp_link_args=-static).
+executable(
+  'rdn_gltest',
+  rdn_sources, files('tests/rdn_gltest.c'),
+  include_directories : rdn_inc,
+  link_whole : rdn_link_whole,
+  link_with : rdn_link_with,
+  dependencies : rdn_deps,
   install : false,
 )

@@ -4,7 +4,7 @@
  * no kernel driver is bound to, and `rdn_tool post` and `modeset` done.
  *
  * Environment: RDN_PCI_ADDR (default 0000:10:00.0), RDN_FIRMWARE_DIR
- * (default "firmware").
+ * (default "firmware"), RDN_TRACE (report every submission and fence wait).
  *
  * Video memory while this runs: the scanout surface at 0 (untouched), the
  * ring at 32 MB, everything Mesa allocates from 34 MB to the end of the
@@ -41,6 +41,8 @@ struct linux_device {
 	struct rdn_mem mem;
 	volatile uint8_t *mmio;
 	bool accel_up;
+	/* RDN_TRACE=1: report every submission and fence wait. */
+	bool trace;
 };
 
 static uint32_t os_mmio_read32(void *c, uint32_t off)
@@ -164,9 +166,23 @@ static int dev_submit(struct rdn_device *dev, uint64_t offset, uint32_t words,
 		      bool swap, uint32_t *fence)
 {
 	struct linux_device *d = (struct linux_device *)dev;
+	int r;
 
-	return rdn_ib_submit(&d->accel, rdn_vram_addr(&d->accel, (uint32_t)offset),
-			     words, swap, fence);
+	r = rdn_ib_submit(&d->accel, rdn_vram_addr(&d->accel, (uint32_t)offset),
+			  words, swap, fence);
+	if (d->trace) {
+		const uint8_t *p = (const uint8_t *)dev->aperture + offset;
+		uint32_t i;
+
+		/* The first words, as the bytes lie in video memory. */
+		fprintf(stderr, "rdn: submit %u words at 0x%llx, swap %d -> %d, fence %u\n   ",
+			(unsigned)words, (unsigned long long)offset, swap, r,
+			(unsigned)*fence);
+		for (i = 0; i < 32 && i < words * 4; i++)
+			fprintf(stderr, "%02x%s", p[i], (i & 3) == 3 ? " " : "");
+		fprintf(stderr, "\n");
+	}
+	return r;
 }
 
 static bool dev_fence_done(struct rdn_device *dev, uint32_t fence)
@@ -177,13 +193,18 @@ static bool dev_fence_done(struct rdn_device *dev, uint32_t fence)
 static int dev_fence_wait(struct rdn_device *dev, uint32_t fence,
 			  uint64_t timeout_ns)
 {
+	struct linux_device *d = (struct linux_device *)dev;
 	uint64_t ms = timeout_ns / 1000000;
+	int r;
 
 	/* "Forever" still ends: a hung GPU must not hang the process. */
 	if (ms > 10000)
 		ms = 10000;
-	return rdn_fence_wait(&((struct linux_device *)dev)->accel, fence,
-			      (uint32_t)ms);
+	r = rdn_fence_wait(&d->accel, fence, (uint32_t)ms);
+	if (d->trace)
+		fprintf(stderr, "rdn: wait for fence %u -> %d, GRBM_STATUS %08x\n",
+			(unsigned)fence, r, (unsigned)rdn_rreg(&d->card, 0x8010));
+	return r;
 }
 
 static void dev_sync_for_cpu(struct rdn_device *dev)
@@ -213,6 +234,7 @@ struct rdn_device *rdn_device_open(void)
 		return NULL;
 	if (!addr)
 		addr = "0000:10:00.0";
+	d->trace = getenv("RDN_TRACE") != NULL;
 
 	d->mmio = map_resource(addr, "resource2", &mmio_size);
 	/* Not the write-combining mapping: Mesa reads its buffers back. */

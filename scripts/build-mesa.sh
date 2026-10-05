@@ -1,8 +1,12 @@
 #!/bin/bash
 # Build Mesa's r600 driver on top of this project's winsys, for the Linux
 # host: third_party/mesa-<version>/build-x86/src/gallium/targets/rdn/librdngl.so
+# (and rdn_gltest next to it).
 #
-#   scripts/build-mesa.sh           fetch if needed, prepare, configure, build
+#   scripts/build-mesa.sh [x86]     fetch if needed, prepare, configure, build
+#   scripts/build-mesa.sh ppc       the GL test program for big-endian
+#                                   PowerPC Linux, static, to run under
+#                                   third_party/qemu/qemu-ppc
 #
 # Mesa is not modified beyond mesa/patches/: this project's winsys, frontend
 # and target directories (mesa/) and hw/ are copied into its tree. Python modules
@@ -45,16 +49,54 @@ for d in src/gallium/winsys/rdn src/gallium/frontends/rdn src/gallium/targets/rd
 done
 rsync -a --delete "$root/mesa/winsys/" src/gallium/winsys/rdn/
 rsync -a --delete "$root/mesa/frontend/" src/gallium/frontends/rdn/
-rsync -a --delete --exclude hw "$root/mesa/target/" src/gallium/targets/rdn/
+rsync -a --delete --exclude hw --exclude tests "$root/mesa/target/" src/gallium/targets/rdn/
 rsync -a --delete "$root/hw/" src/gallium/targets/rdn/hw/
+rsync -a --delete "$root/mesa/tests/" src/gallium/targets/rdn/tests/
 
-if [ ! -f build-x86/build.ninja ]; then
-    meson setup build-x86 -Drdn=true \
-        -Dgallium-drivers=r600,softpipe -Dvulkan-drivers= \
-        -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dllvm=disabled \
-        -Dplatforms= -Dgles1=disabled -Dgles2=disabled -Dzstd=disabled \
-        -Dvalgrind=disabled -Dlibunwind=disabled -Dvideo-codecs= \
-        -Dgallium-va=disabled -Dbuildtype=debugoptimized
-fi
-ninja -C build-x86 "$@"
-ls -l build-x86/src/gallium/targets/rdn/librdngl.so
+common=(-Drdn=true -Dgallium-drivers=r600,softpipe -Dvulkan-drivers=
+    -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dllvm=disabled
+    -Dplatforms= -Dgles1=disabled -Dgles2=disabled -Dzstd=disabled
+    -Dvalgrind=disabled -Dlibunwind=disabled -Dvideo-codecs=
+    -Dgallium-va=disabled -Dbuildtype=debugoptimized)
+
+case "${1:-x86}" in
+x86)
+    [ -f build-x86/build.ninja ] || meson setup build-x86 "${common[@]}"
+    ninja -C build-x86
+    ls -l build-x86/src/gallium/targets/rdn/librdngl.so
+    ;;
+ppc)
+    # Big-endian PowerPC Linux, static, for qemu-ppc: the same code as the
+    # host build in the byte order of the real target.
+    tc=$tp/ppc-toolchain/bin
+    cat > "$tp/mesa-ppc-cross.ini" <<INI
+[binaries]
+c = '$tc/powerpc-linux-gcc'
+cpp = '$tc/powerpc-linux-g++'
+ar = '$tc/powerpc-linux-ar'
+strip = '$tc/powerpc-linux-strip'
+pkg-config = 'false'
+exe_wrapper = '$tp/qemu/qemu-ppc'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'ppc'
+cpu = 'e300c3'
+endian = 'big'
+INI
+    # Mesa declares three pthread functions weak (for old glibc); a static
+    # link then leaves them out unless they are asked for by name.
+    static="-static -Wl,-u,pthread_mutexattr_init -Wl,-u,pthread_mutexattr_settype -Wl,-u,pthread_mutexattr_destroy"
+    [ -f build-ppc/build.ninja ] || meson setup build-ppc "${common[@]}" \
+        --cross-file "$tp/mesa-ppc-cross.ini" -Dxmlconfig=disabled \
+        -Dshader-cache=disabled -Dc_link_args="$static" -Dcpp_link_args="$static" \
+        -Dzlib:default_library=static -Dexpat:default_library=static \
+        --wrap-mode=default
+    ninja -C build-ppc src/gallium/targets/rdn/rdn_gltest
+    ls -l build-ppc/src/gallium/targets/rdn/rdn_gltest
+    ;;
+*)
+    echo "usage: $0 [x86|ppc]" >&2
+    exit 2
+    ;;
+esac

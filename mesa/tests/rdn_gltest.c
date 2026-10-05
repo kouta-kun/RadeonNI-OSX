@@ -1,12 +1,15 @@
 /*
  * First OpenGL through Mesa on the osx-gpu winsys (Linux host).
  *
- *   rdn_gltest [-n frames] [-o file.ppm] [-s width height pitch]
+ *   rdn_gltest [-n frames] [-a angle] [-b rrggbb] [-o file.ppm]
+ *              [-s width height pitch]
  *
  * Renders with fixed-function OpenGL into an off-screen buffer: a clear to
  * dark grey, a depth-tested pair of triangles (the red-green-blue one in
  * front of the yellow one, whatever the drawing order) and a checkerboard
- * textured square, all turning slowly. Prints the GL strings and a few
+ * textured square, turned by -a degrees plus two per frame. -b sets the
+ * background, so that a run cannot be mistaken for an earlier one whose
+ * picture is still in video memory. Prints the GL strings and a few
  * pixels of the first frame, saves the last frame with -o, and with -s
  * copies every frame to the scanout surface at aperture offset 0
  * (width, height and pitch as `rdn_tool accel` prints them).
@@ -71,10 +74,15 @@ static int load_gl(void)
 	return 0;
 }
 
+/* Background colour, 0xRRGGBB; -b changes it. */
+static unsigned background = 0x333333;
+
 static void draw(float angle, GLuint tex)
 {
 	rglViewport(0, 0, W, H);
-	rglClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+	rglClearColor(((background >> 16) & 0xff) / 255.0f,
+		      ((background >> 8) & 0xff) / 255.0f,
+		      (background & 0xff) / 255.0f, 1.0f);
 	rglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	rglEnable(GL_DEPTH_TEST);
 
@@ -125,15 +133,18 @@ int main(int argc, char **argv)
 {
 	const char *out = NULL, *addr = getenv("RDN_PCI_ADDR");
 	int frames = 1, sw = 0, sh = 0, spitch = 0, opt, f, x, y;
+	float start_angle = 0.0f;
 	volatile uint32_t *scan = NULL;
 	uint8_t *buf, tex_data[8 * 8 * 4];
 	OSMesaContext ctx;
 	GLuint tex;
 
-	while ((opt = getopt(argc, argv, "n:o:s")) != -1) {
+	while ((opt = getopt(argc, argv, "n:o:sa:b:")) != -1) {
 		switch (opt) {
 		case 'n': frames = atoi(optarg); break;
 		case 'o': out = optarg; break;
+		case 'a': start_angle = (float)atof(optarg); break;
+		case 'b': background = (unsigned)strtoul(optarg, NULL, 16); break;
 		case 's':
 			if (optind + 2 >= argc + 0 && optind + 3 > argc)
 				return 2;
@@ -194,11 +205,11 @@ int main(int argc, char **argv)
 		     tex_data);
 
 	for (f = 0; f < frames; f++) {
-		draw(frames > 1 ? f * 2.0f : 0.0f, tex);
+		draw(start_angle + f * 2.0f, tex);
 		if (f == 0) {
 			printf("GL error 0x%x\n", (unsigned)rglGetError());
-			printf("pixel (10,10)   = %06x  (background, 333333)\n",
-			       (unsigned)pixel(buf, 10, 10));
+			printf("pixel (10,10)   = %06x  (background, %06x)\n",
+			       (unsigned)pixel(buf, 10, 10), background);
 			printf("pixel (154,200) = %06x  (front triangle alone, mixed colours)\n",
 			       (unsigned)pixel(buf, 154, 200));
 			printf("pixel (250,120) = %06x  (yellow triangle alone, ffff00)\n",

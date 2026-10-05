@@ -13,6 +13,30 @@ index 93a60e3..9635578 100644
 +  value : false,
 +  description : 'osx-gpu: build r600 on the rdn winsys (no DRM) with its off-screen frontend.'
 +)
+diff --git a/src/gallium/drivers/r600/meson.build b/src/gallium/drivers/r600/meson.build
+index a717491..59bdf40 100644
+--- a/src/gallium/drivers/r600/meson.build
++++ b/src/gallium/drivers/r600/meson.build
+@@ -179,10 +179,15 @@ libr600 = static_library(
+   dependencies: [idep_nir, idep_nir_headers, idep_mesautil],
+ )
+ 
+-driver_r600 = declare_dependency(
+-  compile_args : '-DGALLIUM_R600',
+-  link_with : [libr600, libmesa, libradeonwinsys],
+-)
++if with_radeon_drm_winsys
++  driver_r600 = declare_dependency(
++    compile_args : '-DGALLIUM_R600',
++    link_with : [libr600, libmesa, libradeonwinsys],
++  )
++else
++  # osx-gpu: no DRM winsys; targets/rdn links libr600 itself.
++  driver_r600 = declare_dependency()
++endif
+ 
+ if with_tests
+   subdir('sfn/tests')
 diff --git a/src/gallium/drivers/r600/r600_pipe.c b/src/gallium/drivers/r600/r600_pipe.c
 index f9320ec..73d0e00 100644
 --- a/src/gallium/drivers/r600/r600_pipe.c
@@ -35,10 +59,24 @@ index f9320ec..73d0e00 100644
  	return drm_version;
  }
 diff --git a/src/gallium/meson.build b/src/gallium/meson.build
-index 67011f5..ac8cccc 100644
+index 67011f5..cdc82d9 100644
 --- a/src/gallium/meson.build
 +++ b/src/gallium/meson.build
-@@ -260,3 +260,11 @@ if with_teflon
+@@ -76,7 +76,12 @@ if with_gallium_asahi
+ else
+   driver_asahi = declare_dependency()
+ endif
+-if with_gallium_r300 or with_gallium_radeonsi or with_gallium_r600
++# osx-gpu: the rdn winsys replaces the DRM one where there is no libdrm.
++with_radeon_drm_winsys = with_gallium_r300 or with_gallium_radeonsi or with_gallium_r600
++if get_option('rdn') and not dep_libdrm.found()
++  with_radeon_drm_winsys = false
++endif
++if with_radeon_drm_winsys
+   subdir('winsys/radeon/drm')
+ endif
+ if with_gallium_r300
+@@ -260,3 +265,11 @@ if with_teflon
    subdir('frontends/teflon')
    subdir('targets/teflon')
  endif

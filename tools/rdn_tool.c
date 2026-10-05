@@ -414,6 +414,8 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 #define ACCEL_WORK_OFFSET	(34u << 20)
 
 static const char *fw_dir = "firmware";
+/* -S: the self-test submits its commands big-endian with the swap flag. */
+static int swapped_ib;
 
 static uint8_t *read_fw(const char *name, size_t *size)
 {
@@ -492,6 +494,7 @@ static int do_accel(struct linux_card *lc, struct rdn_card *card)
 		t.height = rdn_rreg(card, EVERGREEN_GRPH_Y_END);
 		t.pitch_pixels = rdn_rreg(card, EVERGREEN_GRPH_PITCH);
 		t.big_endian_pixels = RDN_BIG_ENDIAN;
+		t.swapped_ib = swapped_ib;
 		printf("drawing on %ux%u, pitch %u\n", (unsigned)t.width,
 		       (unsigned)t.height, (unsigned)t.pitch_pixels);
 		r = rdn_accel_selftest(&accel, &t, ACCEL_WORK_OFFSET);
@@ -597,13 +600,14 @@ int main(int argc, char **argv)
 	void *bios;
 	int opt, fd, no_io = 0, ret = 0;
 
-	while ((opt = getopt(argc, argv, "s:b:t:f:nd")) != -1) {
+	while ((opt = getopt(argc, argv, "s:b:t:f:ndS")) != -1) {
 		switch (opt) {
 		case 's': addr = optarg; break;
 		case 'b': bios_file = optarg; break;
 		case 't': trace = optarg; break;
 		case 'f': fw_dir = optarg; break;
 		case 'n': no_io = 1; break;
+		case 'S': swapped_ib = 1; break;
 		case 'd': force_dvi = 1; break;
 		default: return 2;
 		}
