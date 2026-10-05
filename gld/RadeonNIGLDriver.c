@@ -46,6 +46,17 @@
 	"GLRendererFloat.bundle/GLRendererFloat"
 #define DEFAULT_LOG	"/tmp/rdngld.log"
 
+/* Bit 8 of word 2, in the renderer info and in the pixel format alike. */
+#define RECORD_ACCELERATED	0x100
+#ifdef RDN_MESA
+#define RDN_CLAIMS_ACCELERATED	1
+#else
+#define RDN_CLAIMS_ACCELERATED	0
+#endif
+
+/* The entry of the driver's own table the engine calls to present. */
+#define DRIVER_TABLE_PRESENT	24
+
 /* The 62 entry points of a 10.4.11 PowerPC driver bundle. */
 #define GLD_ENTRIES(X) \
 	X(gldAllocVertexBuffer) X(gldAttachDrawable) X(gldChoosePixelFormat) \
@@ -95,7 +106,12 @@ static int ready;
  * the pixel format. With 2, CGLCreateContext fails with kCGLBadPixelFormat
  * before the bundle is called, so it is off by default.
  */
+#ifdef RDN_MESA
+/* With Mesa inside, the bundle is a renderer of its own, and accelerated. */
+static int patch = 7;
+#else
 static int patch = 1;
+#endif
 
 #ifdef RDN_MESA
 #include <stdarg.h>
@@ -254,19 +270,147 @@ static void scan(long table)
 	fflush(logf);
 }
 
+/*
+ * Experiment (RDN_GLD_TABLE=1): count the engine's calls into the table
+ * the driver fills at gldInitDispatch, to learn what each entry is for.
+ * The wrappers only count before passing the call on, so that arguments
+ * in floating-point registers survive.
+ */
+#define DRIVER_TABLE_ENTRIES 33
+static gld_fn table_real[DRIVER_TABLE_ENTRIES];
+static unsigned long table_calls[DRIVER_TABLE_ENTRIES];
+
+#define TABLE_WRAPPERS(X) \
+	X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) \
+	X(13) X(14) X(15) X(16) X(17) X(18) X(19) X(20) X(21) X(22) X(23) \
+	X(24) X(25) X(26) X(27) X(28) X(29) X(30) X(31) X(32)
+#define X(n) \
+	static long table_wrap_##n(long a, long b, long c, long d, long e, \
+				   long f, long g, long h) \
+	{ \
+		table_calls[n]++; \
+		return table_real[n](a, b, c, d, e, f, g, h); \
+	}
+TABLE_WRAPPERS(X)
+#undef X
+static const gld_fn table_wrap[DRIVER_TABLE_ENTRIES] = {
+#define X(n) table_wrap_##n,
+	TABLE_WRAPPERS(X)
+#undef X
+};
+
+static void table_report(void)
+{
+	int i;
+
+	if (!logf)
+		return;
+	fprintf(logf, "[%d] driver table calls:", (int)getpid());
+	for (i = 0; i < DRIVER_TABLE_ENTRIES; i++)
+		if (table_calls[i])
+			fprintf(logf, " [%d]=%lu", i, table_calls[i]);
+	fprintf(logf, "\n");
+	fflush(logf);
+}
+
+static void table_hook(long table)
+{
+	gld_fn *t = (gld_fn *)table;
+	static int registered;
+	int i;
+
+	if (!getenv("RDN_GLD_TABLE") || !t)
+		return;
+	for (i = 0; i < DRIVER_TABLE_ENTRIES; i++) {
+		if (!t[i] || t[i] == table_wrap[i])
+			continue;
+		table_real[i] = t[i];
+		t[i] = table_wrap[i];
+	}
+	if (!registered) {
+		registered = 1;
+		atexit(table_report);
+	}
+}
+
+#ifdef RDN_MESA
+/*
+ * Presentation. The engine calls the software renderer through the driver
+ * table to put a window's buffer on screen. Mesa has to have finished its
+ * frame, and copied it into that buffer, before the software renderer
+ * hands it to the window server.
+ */
+static gld_fn present_real;
+static void *present_ctx;
+
+static long present_wrap(long a, long b, long c, long d, long e, long f,
+			 long g, long h)
+{
+	rdn_mesa_present(present_ctx);
+	return present_real(a, b, c, d, e, f, g, h);
+}
+
+static void present_hook(void *gld_ctx, long table)
+{
+	gld_fn *t = (gld_fn *)table;
+
+	present_ctx = gld_ctx;
+	if (t[DRIVER_TABLE_PRESENT] && t[DRIVER_TABLE_PRESENT] != present_wrap) {
+		present_real = t[DRIVER_TABLE_PRESENT];
+		t[DRIVER_TABLE_PRESENT] = present_wrap;
+	}
+}
+#endif
+
 /* Changes made to what the software renderer answered. */
-static long adjust(int idx, long a, long b, long c, long ret)
+static long adjust(int idx, long a, long b, long c, long d, long ret)
 {
 	switch (idx) {
+	case IDX_gldGetVersion:
+		/*
+		 * The fourth value is the low half of the renderer ID; the
+		 * engine files the plug-in under it.
+		 */
+		if (ret && d && (patch & 4))
+			*(long *)d = RDN_RENDERER_ID & 0xffff;
+		break;
 	case IDX_gldGetRendererInfo:
 		/* Word 1 is the low half of the renderer ID. */
 		if (ret == 0 && a && (patch & 1))
 			((long *)a)[1] = RDN_RENDERER_ID & 0xffff;
+		if (ret == 0 && a && RDN_CLAIMS_ACCELERATED)
+			((unsigned long *)a)[2] |= RECORD_ACCELERATED;
+		/* Experiment: RDN_GLD_INFO="word:xor[,word:xor]" flips bits. */
+		if (ret == 0 && a && getenv("RDN_GLD_INFO")) {
+			const char *p = getenv("RDN_GLD_INFO");
+
+			while (*p) {
+				char *end;
+				long word = strtol(p, &end, 0);
+				unsigned long x = *end == ':' ? strtoul(end + 1, &end, 0) : 0;
+
+				if (word >= 0 && word < 16)
+					((unsigned long *)a)[word] ^= x;
+				p = *end == ',' ? end + 1 : end;
+				if (p == end && *end)
+					break;
+			}
+		}
 		break;
 	case IDX_gldChoosePixelFormat:
 		/* Word 1 of the pixel format is the whole renderer ID. */
 		if (ret == 0 && a && *(long **)a && (patch & 2))
 			(*(long **)a)[1] = RDN_RENDERER_ID;
+		if (ret == 0 && a && *(long **)a && RDN_CLAIMS_ACCELERATED)
+			(*(unsigned long **)a)[2] |= RECORD_ACCELERATED;
+		/* Experiment: RDN_GLD_PF="word:xor" flips bits of the format. */
+		if (ret == 0 && a && *(long **)a && getenv("RDN_GLD_PF")) {
+			char *end;
+			long word = strtol(getenv("RDN_GLD_PF"), &end, 0);
+
+			if (*end == ':' && word >= 0 && word < 16)
+				(*(unsigned long **)a)[word] ^= strtoul(end + 1, NULL, 0);
+		}
 		break;
 	case IDX_gldInitDispatch:
 	case IDX_gldUpdateDispatch:
@@ -278,9 +422,10 @@ static long adjust(int idx, long a, long b, long c, long ret)
 		 * the CGL context object). 10.4.11, found by search.
 		 */
 		scan(b);
+		table_hook(b);
 #ifdef RDN_MESA
-		if (b)
-			rdn_mesa_dispatch((void *)a, (void *)b);
+		if (b && rdn_mesa_dispatch((void *)a, (void *)b))
+			present_hook((void *)a, b);
 #else
 		if (b)
 			take_over(*(GLIFunctionDispatch **)(b - APP_DISPATCH_BACK));
@@ -330,6 +475,27 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	if (idx == IDX_gldDestroyContext)
 		rdn_mesa_context_destroyed((void *)a);
 #endif
+	/*
+	 * The renderer decides itself whether it satisfies an attribute
+	 * list, and the software renderer turns down a request for an
+	 * accelerated one. Experiment (RDN_GLD_ACCEL=1): take those
+	 * attributes out before it sees the list.
+	 */
+	if (idx == IDX_gldChoosePixelFormat && b &&
+	    (RDN_CLAIMS_ACCELERATED || getenv("RDN_GLD_ACCEL"))) {
+		static long filtered[64];
+		const long *in = (const long *)b;
+		int n = 0;
+
+		while (*in && n < 62) {
+			/* kCGLPFAAccelerated and kCGLPFANoRecovery take no value. */
+			if (*in != 73 && *in != 72)
+				filtered[n++] = *in;
+			in++;
+		}
+		filtered[n] = 0;
+		b = (long)filtered;
+	}
 	if (real[idx])
 		ret = real[idx](a, b, c, d, e, f, g, h);
 	if (restore_id)
@@ -339,7 +505,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		fflush(logf);
 	}
 	describe(idx, a, b, c, d, ret);
-	ret = adjust(idx, a, b, c, ret);
+	ret = adjust(idx, a, b, c, d, ret);
 	return ret;
 }
 

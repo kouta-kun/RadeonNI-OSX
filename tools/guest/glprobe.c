@@ -1,7 +1,7 @@
 /*
  * glprobe: list the OpenGL renderers Tiger offers and exercise one.
  *
- *   glprobe              list renderers for every display
+ *   glprobe [-v]         list renderers for every display (-v: all properties)
  *   glprobe draw [id]    create an off-screen context (optionally on the
  *                        renderer with that ID), clear to a colour, read a
  *                        pixel back and print the GL strings
@@ -22,6 +22,8 @@
 #include <OpenGL/gl.h>
 #include <OpenGL/CGLContext.h>
 #include <ApplicationServices/ApplicationServices.h>
+
+static int verbose;
 
 static void list(void)
 {
@@ -50,6 +52,28 @@ static void list(void)
 			CGLDescribeRenderer(info, i, kCGLRPOffScreen, &off);
 			printf("  renderer 0x%08lx accel %ld vram %ld window %ld fullscreen %ld offscreen %ld\n",
 			       id, accel, vram, window, full, off);
+			if (verbose) {
+				static const struct { int prop; const char *name; } more[] = {
+					{ kCGLRPRobust, "robust" }, { kCGLRPBackingStore, "backing" },
+					{ kCGLRPMPSafe, "mpsafe" }, { kCGLRPMultiScreen, "multiscreen" },
+					{ kCGLRPCompliant, "compliant" }, { kCGLRPDisplayMask, "mask" },
+					{ kCGLRPBufferModes, "buffers" }, { kCGLRPColorModes, "colors" },
+					{ kCGLRPAccumModes, "accum" }, { kCGLRPDepthModes, "depth" },
+					{ kCGLRPStencilModes, "stencil" }, { kCGLRPMaxAuxBuffers, "aux" },
+					{ kCGLRPMaxSampleBuffers, "samplebufs" }, { kCGLRPMaxSamples, "samples" },
+					{ kCGLRPTextureMemory, "texmem" },
+				};
+				unsigned k;
+
+				printf("   ");
+				for (k = 0; k < sizeof(more) / sizeof(more[0]); k++) {
+					long v = 0;
+
+					CGLDescribeRenderer(info, i, more[k].prop, &v);
+					printf(" %s 0x%lx", more[k].name, v);
+				}
+				printf("\n");
+			}
 		}
 		CGLDestroyRendererInfo(info);
 	}
@@ -122,6 +146,7 @@ int main(int argc, char **argv)
 {
 	if (argc > 1 && !strcmp(argv[1], "draw"))
 		return draw(argc > 2 ? strtol(argv[2], NULL, 0) : 0);
+	verbose = argc > 1 && !strcmp(argv[1], "-v");
 	list();
 	return 0;
 }

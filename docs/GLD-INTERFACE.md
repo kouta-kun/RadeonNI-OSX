@@ -85,14 +85,51 @@ pixels in host byte order.
   range, element array, fences, texture range and the like) and stay the
   engine's.
 
+## Renderer identity and capabilities [V, 2026-10-05]
+
+Found by flipping one bit at a time and asking CGL (`glprobe -v`).
+
+- The low half of the renderer ID appears in three places that must agree:
+  the fourth value of `gldGetVersion`, word 1 of the renderer info, and
+  (as the full ID) word 1 of the pixel format. The engine files the
+  plug-in under the `gldGetVersion` value; with the other two changed
+  alone, `CGLCreateContext` fails with `kCGLBadPixelFormat` before any
+  driver call.
+- Renderer info word 2 is flags: bit 0 window, 1 full screen, 2 off-screen,
+  3 backing store, 4 MP safe, 6 robust, 8 accelerated, 9 multi-screen,
+  10 compliant. Word 3 is buffer modes, 4 colour modes, 5 accumulation
+  modes, 6 depth modes, 7 stencil modes; word 9 holds aux buffers (high
+  half) and sample buffers (low half), word 10 samples (high half).
+- Pixel format word 2 has the accelerated flag at bit 8 too.
+- CGL removes `kCGLPFAAccelerated` and the renderer ID from the attribute
+  list before the plug-in sees it, and decides acceptance from the flags in
+  the returned pixel format.
+- With ID 0x00021a00 in all three places and both accelerated flags set,
+  our renderer is listed first, is what a default context gets, and
+  satisfies a request for an accelerated one. Apple's float renderer
+  (0x20400) then appears again beside it.
+
+## Windows [V, 2026-10-05]
+
+- `gldAttachDrawable(ctx, 0x50, record, ...)` for a window. From word 4 on
+  the record matches the off-screen one: width, height, the same again, 1,
+  the type, a word, and at word 11 the base address of a buffer of 32-bit
+  ARGB pixels (row length assumed to be the width). The first three words
+  look like connection, window and surface identifiers.
+- The table the driver fills at `gldInitDispatch` (33 entries) is what the
+  engine calls to do the work. Counted per frame of a test program: entry
+  1 clears, 8 draws lines, 11 draws triangles, 24 presents. There is no
+  `gld*` call for presenting; `gldUpdateDispatch` runs once per frame.
+- Apple's software renderer presents the window itself, through the window
+  server (`CGSLockWindowBits`, `CGSFlushSurface`). If Mesa's frame is in
+  the record's buffer when entry 24 runs, it reaches the screen: a GLUT
+  program in a window shows Mesa's rendering.
+
 ## Not known yet
 
 - Whether the engine rewrites entries of `disp` during longer use. It
   cannot do so from inside a GL call any more (none reaches it), but it
   may at lifecycle events; only a short program has been run.
-- How to carry a renderer ID of our own through the pixel format: with word 1
-  of the pixel format changed, `CGLCreateContext` fails with
-  `kCGLBadPixelFormat` before any driver call.
 - The meaning of most fields of the renderer info and pixel format records,
   the 33-entry driver table, and every call a window or full-screen
   drawable brings.

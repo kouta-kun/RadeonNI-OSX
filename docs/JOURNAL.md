@@ -1183,3 +1183,34 @@ kext, the card. Open: windowed and full-screen drawables (A3's criterion
 and A4), the 63 Apple-only entry points, Apple-specific extension names
 that programs look for, more than one thread, and whether the engine ever
 puts its own entries back.
+
+## 2026-10-05 — A4 (first form): a windowed OpenGL program in Tiger on Mesa
+
+**Tried.** Experiments with the guest-built logging bundle, each a loop
+over single bits or a counter: which bits of the renderer info and pixel
+format records CGL reads as which capability; why a request for an
+accelerated renderer was refused; where the renderer ID has to match; what
+a window drawable's record holds; which entries of the driver's internal
+table the engine calls per frame (`tools/guest/glwin.c` with drawing steps
+left out one at a time). Then the Mesa-backed bundle extended to windows.
+
+**Observed.** Details in GLD-INTERFACE.md. In short: the ID must agree in
+`gldGetVersion`, renderer info and pixel format; bit 8 of word 2 means
+accelerated in both records; a window's record carries the address of the
+buffer the software renderer presents; entry 24 of the driver table
+presents.
+
+With the bundle claiming its own accelerated renderer, taking over the
+dispatch table for windows as for off-screen contexts, and finishing
+Mesa's frame into the window's buffer just before entry 24 runs:
+`glwin`, an unmodified GLUT program, reports `GL_RENDERER: AMD TURKS`, GL
+3.2, and its window on the Tiger desktop shows the white frame and the
+shaded triangle turning (`build/shot-glwin-mesa.png`, a screenshot of the
+emulated display). 141 frames in 10 s under emulation, each read back
+from the card and copied by the CPU.
+
+**Not right yet.** `malloc: Deallocation of a pointer not malloced` once
+per run. The row length of a window's buffer is assumed. The copy per
+frame; the proper path is a surface the kext presents. One Mesa context
+current per process. Nothing on the 7570's own monitor confirmed by the
+user.

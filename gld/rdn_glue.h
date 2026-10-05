@@ -32,6 +32,8 @@ void rdn_mesa_context_destroyed(void *gld_ctx);
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
 /* True if the context's GL entry points are now Mesa's. */
 int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
+/* Finish the frame and put it into the drawable's buffer. */
+void rdn_mesa_present(void *gld_ctx);
 
 /* RadeonNIGLDriver.c: one line into the bundle's log, if it has one. */
 void rdn_log(const char *fmt, ...);

@@ -5,9 +5,10 @@
  * software renderer the bundle forwards to); what changes is where the GL
  * calls go. When the engine asks the driver to set up dispatch, the
  * application's whole table is filled with entry points that call Mesa's
- * r600. Only off-screen drawables (CGLSetOffScreen) so far: the picture is
- * rendered by the card and copied into the application's buffer when it
- * flushes, as the off-screen frontend does.
+ * r600. Off-screen drawables (CGLSetOffScreen) and windows: the picture is
+ * rendered by the card and copied into the buffer Apple's code expects it
+ * in, when the application flushes or presents. Slow for being a copy, but
+ * it needs nothing from the window server.
  *
  * One Mesa context is current per process, not per thread, for now.
  *
@@ -42,7 +43,29 @@
  */
 #define APP_DISPATCH_ENTRIES	684
 
-/* An off-screen drawable as gldAttachDrawable describes it. */
+/* gldAttachDrawable's type for a window: kCGLPFAWindow. */
+#define DRAWABLE_WINDOW		0x50
+
+/*
+ * What gldAttachDrawable's record says, as far as it is understood. The
+ * off-screen record starts with width, height, row bytes and base; from
+ * word 4 on, off-screen and window records agree: width, height, the same
+ * again, 1, the type, a word, and the base address of the buffer to draw
+ * into. For a window that buffer is the one Apple's software renderer
+ * presents; its row length is taken to be the width.
+ */
+struct drawable_record {
+	uint32_t head[4];
+	uint32_t width;
+	uint32_t height;
+	uint32_t width2;
+	uint32_t height2;
+	uint32_t one;
+	uint32_t type;
+	uint32_t unknown;
+	void *base;
+};
+
 struct offscreen_drawable {
 	uint32_t width;
 	uint32_t height;
@@ -64,6 +87,7 @@ static struct context contexts[MAX_CONTEXTS];
 static int resolved, usable = -1;
 
 void *rdn_current_rend;
+static void (*mesa_finish)(void);
 
 static struct context *find(void *gld_ctx)
 {
@@ -113,10 +137,17 @@ void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 		return;
 	c->type = type;
 	c->bound = 0;
-	if (type == DRAWABLE_OFFSCREEN && drawable)
+	memset(&c->drawable, 0, sizeof(c->drawable));
+	if (type == DRAWABLE_OFFSCREEN && drawable) {
 		memcpy(&c->drawable, drawable, sizeof(c->drawable));
-	else
-		memset(&c->drawable, 0, sizeof(c->drawable));
+	} else if (type == DRAWABLE_WINDOW && drawable) {
+		const struct drawable_record *r = drawable;
+
+		c->drawable.width = r->width;
+		c->drawable.height = r->height;
+		c->drawable.rowbytes = r->width * 4;
+		c->drawable.base = r->base;
+	}
 	/* The next GL call binds the new drawable. */
 	if (c->rend && c->rend == rdn_current_rend)
 		rdn_current_rend = NULL;
@@ -142,7 +173,8 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
 	void *app_table;
 	unsigned n;
 
-	if (!c || c->type != DRAWABLE_OFFSCREEN || !c->drawable.base)
+	if (!c || !c->drawable.base ||
+	    (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
 		return 0;
 	if (usable < 0) {
 		/* A context to find out whether the card is there at all. */
@@ -156,6 +188,7 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
 	if (!usable)
 		return 0;
 	if (!resolved) {
+		mesa_finish = (void (*)(void))OSMesaGetProcAddress("glFinish");
 		n = rdn_dispatch_resolve(lookup, missing);
 		rdn_log("Mesa provides %u of the %u GL entry points", n,
 			rdn_dispatch_entries);
@@ -199,4 +232,16 @@ void rdn_make_current(void *rend)
 	OSMesaPixelStore(OSMESA_ROW_LENGTH, (GLint)(c->drawable.rowbytes / 4));
 	c->bound = 1;
 	rdn_current_rend = rend;
+}
+
+void rdn_mesa_present(void *gld_ctx)
+{
+	struct context *c = find(gld_ctx);
+
+	if (!c || !c->rend || !c->drawable.base || !mesa_finish)
+		return;
+	if (c->rend != rdn_current_rend)
+		rdn_make_current(c->rend);
+	if (c->rend == rdn_current_rend)
+		mesa_finish();
 }
