@@ -392,6 +392,16 @@ IOMemoryDescriptor *RadeonNI::apertureDescriptor()
 	return fDevice->getDeviceMemoryWithRegister(FB_BAR);
 }
 
+bool RadeonNI::screen(struct rdn_fb *fb)
+{
+	if (!fModeSet)
+		return false;
+	*fb = fFb;
+	if (!fb->bpp)
+		fb->bpp = 32;
+	return true;
+}
+
 bool RadeonNI::selftestTarget(struct rdn_accel *accel,
 			      struct rdn_selftest_target *target)
 {

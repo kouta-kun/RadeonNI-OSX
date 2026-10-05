@@ -84,6 +84,8 @@ public:
 	volatile void *aperture();
 	UInt32 apertureSize();
 	IOMemoryDescriptor *apertureDescriptor();
+	/* What is on screen now, at any depth; false before the first mode. */
+	bool screen(struct rdn_fb *fb);
 	/* The screen as a render target; false unless it is 32 bits deep. */
 	bool selftestTarget(struct rdn_accel *accel,
 			    struct rdn_selftest_target *target);

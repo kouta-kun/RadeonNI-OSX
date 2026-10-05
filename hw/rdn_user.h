@@ -50,7 +50,7 @@ struct rdn_user_info {
 	uint32_t max_tile_pipes;
 	uint32_t max_pipes;
 	uint32_t num_ses;
-	/* The screen: a 32-bit surface at fb_offset, or all zero. */
+	/* The screen's surface at fb_offset, or all zero before a mode is set. */
 	uint32_t fb_offset;
 	uint32_t fb_width;
 	uint32_t fb_height;

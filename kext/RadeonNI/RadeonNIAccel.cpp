@@ -124,6 +124,24 @@ RadeonNIAccel *RadeonNIAccel::withFramebuffer(RadeonNI *fb, IOService *provider)
 	accel->fEngineUp = accel->startEngine();
 	accel->setProperty("RadeonNIEngine", accel->fEngineUp);
 
+	/*
+	 * The 2D accelerator plug-in the system loads for the framebuffer
+	 * (ga/), when the personality asks for it.
+	 */
+	if (fb->getProperty("GAPlugin") == kOSBooleanTrue) {
+		OSDictionary *types = OSDictionary::withCapacity(1);
+		OSString *plugin = OSString::withCString("RadeonNIGA.plugin");
+
+		if (types && plugin) {
+			types->setObject("ACCF0000-0000-0000-0000-000a2789904e", plugin);
+			fb->setProperty("IOCFPlugInTypes", types);
+		}
+		if (plugin)
+			plugin->release();
+		if (types)
+			types->release();
+	}
+
 	/* The framebuffer points at its accelerator by registry path. */
 	if (accel->getPath(path, &len, gIOServicePlane)) {
 		fb->setProperty(kIOAccelTypesKey, path);
@@ -265,7 +283,7 @@ IOReturn RadeonNIAccel::newUserClient(task_t owningTask, void *securityID,
 
 void RadeonNIAccel::getInfo(struct rdn_user_info *info)
 {
-	struct rdn_selftest_target t;
+	struct rdn_fb fb;
 
 	bzero(info, sizeof(*info));
 	IOLockLock(fLock);
@@ -282,12 +300,12 @@ void RadeonNIAccel::getInfo(struct rdn_user_info *info)
 	info->max_tile_pipes = fAccel.cfg.max_tile_pipes;
 	info->max_pipes = fAccel.cfg.max_pipes;
 	info->num_ses = fAccel.cfg.num_ses;
-	if (fFramebuffer && fFramebuffer->selftestTarget(&fAccel, &t)) {
-		info->fb_offset = (uint32_t)(t.gpu_addr - fAccel.vram_base);
-		info->fb_width = t.width;
-		info->fb_height = t.height;
-		info->fb_pitch_pixels = t.pitch_pixels;
-		info->fb_bits_per_pixel = 32;
+	if (fFramebuffer && fFramebuffer->screen(&fb)) {
+		info->fb_offset = fb.aperture_offset;
+		info->fb_width = fb.width;
+		info->fb_height = fb.height;
+		info->fb_pitch_pixels = fb.pitch_pixels;
+		info->fb_bits_per_pixel = fb.bpp;
 	}
 	IOLockUnlock(fLock);
 }
