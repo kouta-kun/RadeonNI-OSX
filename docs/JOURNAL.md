@@ -675,3 +675,39 @@ userspace on x86 is the code that runs in the big-endian Tiger kernel, and it
 worked on the first load. Milestone 3's "single fixed mode" step is reached
 in the sense that the kext drives the display; it is not yet an
 `IOFramebuffer`, so Tiger does not know the screen exists.
+
+## 2026-10-04 — IOFramebuffer: Tiger draws its desktop on the 7570
+
+**Tried.** `RadeonNI` is now an `IOFramebuffer` subclass with one display
+mode (the EDID's preferred timing, 32 bpp, XRGB): hardware bring-up in
+`start()` before `IOFramebuffer::start()`, aperture range at the start of
+BAR0, pixel and timing information, DDC block from the EDID read at start,
+one connection. Loaded with `kextload` into the running guest.
+
+**Observed.**
+
+- "framebuffer started"; the service registers under the card's node, but
+  nothing attaches: no `IODisplayConnect`, no user client, and the pattern
+  stays on screen. The window server does not pick up a framebuffer that
+  appears after it has started.
+- After `sudo killall WindowServer` (the login session restarts):
+  `display0` (`IODisplayConnect`) with `AppleDisplay` and an
+  `IOFramebufferUserClient` appear under `RadeonNI`.
+- `system_profiler SPDisplaysDataType` lists a second display on
+  `pci1002,675d`: 1366 x 768, 32-bit colour, alongside the QEMU VGA at
+  800 x 600 as main display. It reports 4 MB of VRAM, which is the size of
+  the aperture range we expose (one surface).
+- The user sees the screen blank and then the Mac OS X screen being drawn,
+  very slowly.
+- The slowness is the harness: with `x-no-mmap=on` QEMU traps every
+  framebuffer write. `scripts/tiger.sh passthru` now only traces with
+  `TIGER_TRACE=1`.
+- Host kernel untainted.
+
+**Concluded.**
+
+- RESEARCH.md's open question is answered: an `IOFramebuffer` loaded with
+  `kextload` after boot is used only after the window server restarts.
+- Tiger accepts the framebuffer and extends the desktop onto it at the
+  native resolution. Still missing for milestone 3: more than one mode,
+  resolution and depth switching, the cursor, gamma.

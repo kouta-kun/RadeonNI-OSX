@@ -34,9 +34,10 @@ registers. That needs the patched QEMU (`patches/qemu/`). OpenBIOS assigns
 neither the I/O BAR nor the expansion ROM. `radeon` is blacklisted on the
 host (`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host
 kernel oops; see the JOURNAL. Milestone 3 is in progress: `kext/RadeonNI`
-links `hw/`, and in `start()` POSTs the card, reads the EDID, sets the mode
-and draws the pattern (confirmed on screen). It is still an `IOService`;
-making it an `IOFramebuffer` subclass is the next step.
+is an `IOFramebuffer` subclass that links `hw/`; with one fixed mode Tiger
+draws its desktop on the 7570 at 1366x768. Still to do: the mode list from
+EDID, resolution and depth switching, cursor, gamma. After `kextload` the
+window server must be restarted to pick the screen up.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -89,9 +90,10 @@ Keep these current as part of the work, and commit small and often.
   clicks at screenshot coordinates). Look at the screenshot before clicking.
 - `scripts/tiger.sh {create|install|cdrom|run|passthru|snapshot|restore|ssh}`:
   Tiger guest lifecycle. Screen on VNC `127.0.0.1:5901`, ssh on port 2222.
-  `passthru <addr>` attaches the card with `x-no-mmap=on` and writes the
-  register trace to `traces/`; it needs sudo, and so does `guest-ctl.py`
-  while that guest runs.
+  `passthru <addr>` attaches the card; it needs sudo, and so does
+  `guest-ctl.py` while that guest runs. With `TIGER_TRACE=1` it adds
+  `x-no-mmap=on` and writes the register trace to `traces/`, which makes
+  framebuffer drawing extremely slow.
 
 - `scripts/kext.sh {build|load|unload|log}`: build `kext/RadeonNI` inside the
   running guest with its Makefile and load it from `/tmp` with `kextload`.

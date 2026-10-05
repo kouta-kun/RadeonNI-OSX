@@ -12,8 +12,8 @@
 
 #include "RadeonNI.h"
 
-#define super IOService
-OSDefineMetaClassAndStructors(RadeonNI, IOService)
+#define super IOFramebuffer
+OSDefineMetaClassAndStructors(RadeonNI, IOFramebuffer)
 
 /* Aperture: 64-bit memory BAR at 0x10. Registers: 64-bit memory BAR at 0x18. */
 #define FB_BAR			kIOPCIConfigBaseAddress0
@@ -21,6 +21,10 @@ OSDefineMetaClassAndStructors(RadeonNI, IOService)
 
 /* DDC line of the DVI-I connector (AtomBIOS i2c id). */
 #define DVI_DDC_ID		0x93
+
+/* The single display mode and its single depth. */
+#define MODE_ID			1
+#define DEPTH_32		0
 
 /*
  * OS layer for the hardware library. The card's registers are
@@ -137,14 +141,15 @@ bool RadeonNI::loadBios()
 	return true;
 }
 
-/* POST if needed, read the EDID, set its preferred mode, show the pattern. */
+/*
+ * POST if needed, read the EDID and work out the mode and the surface. The
+ * pattern is drawn so that there is something to see until the window
+ * server takes the screen over.
+ */
 bool RadeonNI::bringUp()
 {
-	static UInt8 edid[RDN_EDID_MAX_SIZE];
 	struct rdn_i2c_bus bus;
-	struct rdn_mode mode;
-	struct rdn_fb fb;
-	int len, r;
+	int r;
 
 	r = rdn_card_post(&fCard);
 	if (r) {
@@ -155,13 +160,13 @@ bool RadeonNI::bringUp()
 	      (unsigned long)readReg(0x5428));
 
 	rdn_i2c_bus_by_id(&fCard, DVI_DDC_ID, &bus);
-	len = rdn_edid_read(&fCard, &bus, edid);
-	if (len < 0 || !rdn_edid_preferred_mode(edid, &mode)) {
-		IOLog("RadeonNI: no EDID on the DVI connector (%d)\n", len);
+	fEdidLen = rdn_edid_read(&fCard, &bus, fEdid);
+	if (fEdidLen < 0 || !rdn_edid_preferred_mode(fEdid, &fMode)) {
+		IOLog("RadeonNI: no EDID on the DVI connector (%d)\n", fEdidLen);
 		return false;
 	}
-	IOLog("RadeonNI: EDID %d bytes, preferred %ux%u at %lu kHz\n", len,
-	      mode.hdisplay, mode.vdisplay, (unsigned long)mode.clock);
+	IOLog("RadeonNI: EDID %d bytes, preferred %ux%u at %lu kHz\n", fEdidLen,
+	      fMode.hdisplay, fMode.vdisplay, (unsigned long)fMode.clock);
 
 	fFbMap = fDevice->mapDeviceMemoryWithRegister(FB_BAR);
 	if (!fFbMap) {
@@ -169,29 +174,38 @@ bool RadeonNI::bringUp()
 		return false;
 	}
 
-	bzero(&fb, sizeof(fb));
-	fb.width = mode.hdisplay;
-	fb.height = mode.vdisplay;
-	fb.pitch_pixels = (mode.hdisplay + 63) & ~63;
-	fb.big_endian_pixels = true;
+	bzero(&fFb, sizeof(fFb));
+	fFb.width = fMode.hdisplay;
+	fFb.height = fMode.vdisplay;
+	fFb.pitch_pixels = (fMode.hdisplay + 63) & ~63;
+	fFb.big_endian_pixels = true;
 
 	rdn_pattern_draw((volatile uint32_t *)fFbMap->getVirtualAddress(),
-			 fb.width, fb.height, fb.pitch_pixels);
+			 fFb.width, fFb.height, fFb.pitch_pixels);
 
 	r = rdn_display_init(&fCard);
-	if (!r)
-		r = rdn_modeset(&fCard, &mode, &fb,
-				rdn_edid_is_hdmi(edid, len));
+	if (r) {
+		IOLog("RadeonNI: display init failed (%d)\n", r);
+		return false;
+	}
+	return programMode() == kIOReturnSuccess;
+}
+
+IOReturn RadeonNI::programMode()
+{
+	int r = rdn_modeset(&fCard, &fMode, &fFb,
+			    rdn_edid_is_hdmi(fEdid, fEdidLen));
+
 	IOLog("RadeonNI: modeset returned %d, CRTC0_CONTROL %08lx\n", r,
 	      (unsigned long)readReg(0x6e70));
-	return r == 0;
+	if (r)
+		return kIOReturnIOError;
+	fModeSet = true;
+	return kIOReturnSuccess;
 }
 
 bool RadeonNI::start(IOService *provider)
 {
-	if (!super::start(provider))
-		return false;
-
 	fDevice = OSDynamicCast(IOPCIDevice, provider);
 	if (!fDevice)
 		return false;
@@ -225,21 +239,27 @@ bool RadeonNI::start(IOService *provider)
 
 	if (!loadBios() || rdn_card_init(&fCard, &fOS, fBios)) {
 		IOLog("RadeonNI: no usable VBIOS\n");
-		stop(provider);
+		cleanUp();
 		return false;
 	}
 	fCardReady = true;
 
+	/* The hardware has to be up before IOFramebuffer starts asking. */
 	if (!bringUp()) {
-		stop(provider);
+		cleanUp();
 		return false;
 	}
 
-	registerService();
+	if (!super::start(provider)) {
+		IOLog("RadeonNI: IOFramebuffer::start failed\n");
+		cleanUp();
+		return false;
+	}
+	IOLog("RadeonNI: framebuffer started\n");
 	return true;
 }
 
-void RadeonNI::stop(IOService *provider)
+void RadeonNI::cleanUp()
 {
 	if (fCardReady) {
 		rdn_card_fini(&fCard);
@@ -258,6 +278,238 @@ void RadeonNI::stop(IOService *provider)
 		fRegMap = 0;
 	}
 	fRegs = 0;
-	IOLog("RadeonNI: stopped\n");
+}
+
+void RadeonNI::stop(IOService *provider)
+{
 	super::stop(provider);
+	cleanUp();
+	IOLog("RadeonNI: stopped\n");
+}
+
+/*
+ * IOFramebuffer
+ */
+
+IOReturn RadeonNI::enableController(void)
+{
+	return fModeSet ? kIOReturnSuccess : programMode();
+}
+
+/* The visible surface, at the start of the aperture. */
+IODeviceMemory *RadeonNI::getApertureRange(IOPixelAperture aperture)
+{
+	IODeviceMemory *bar;
+
+	if (aperture != kIOFBSystemAperture)
+		return 0;
+	bar = fDevice->getDeviceMemoryWithRegister(FB_BAR);
+	if (!bar)
+		return 0;
+	return IODeviceMemory::withSubRange(bar, 0,
+		fFb.pitch_pixels * 4 * fFb.height);
+}
+
+const char *RadeonNI::getPixelFormats(void)
+{
+	static const char formats[] = IO32BitDirectPixels "\0";
+
+	return formats;
+}
+
+IOItemCount RadeonNI::getDisplayModeCount(void)
+{
+	return 1;
+}
+
+IOReturn RadeonNI::getDisplayModes(IODisplayModeID *allDisplayModes)
+{
+	allDisplayModes[0] = MODE_ID;
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNI::getInformationForDisplayMode(IODisplayModeID displayMode,
+	IODisplayModeInformation *info)
+{
+	UInt64 hz1616;
+
+	if (displayMode != MODE_ID)
+		return kIOReturnUnsupportedMode;
+
+	bzero(info, sizeof(*info));
+	info->nominalWidth = fMode.hdisplay;
+	info->nominalHeight = fMode.vdisplay;
+	/* Refresh rate in 16.16 fixed point: clock / (htotal * vtotal). */
+	hz1616 = ((UInt64)fMode.clock * 1000ULL << 16) /
+		((UInt64)fMode.htotal * fMode.vtotal);
+	info->refreshRate = (IOFixed1616)hz1616;
+	info->maxDepthIndex = DEPTH_32;
+	info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag |
+		kDisplayModeDefaultFlag;
+	return kIOReturnSuccess;
+}
+
+UInt64 RadeonNI::getPixelFormatsForDisplayMode(IODisplayModeID displayMode,
+	IOIndex depth)
+{
+	return 0;
+}
+
+IOReturn RadeonNI::getPixelInformation(IODisplayModeID displayMode,
+	IOIndex depth, IOPixelAperture aperture, IOPixelInformation *pixelInfo)
+{
+	if (displayMode != MODE_ID || depth != DEPTH_32)
+		return kIOReturnUnsupportedMode;
+	if (aperture != kIOFBSystemAperture)
+		return kIOReturnUnsupportedMode;
+
+	bzero(pixelInfo, sizeof(*pixelInfo));
+	pixelInfo->bytesPerRow = fFb.pitch_pixels * 4;
+	pixelInfo->bytesPerPlane = 0;
+	pixelInfo->bitsPerPixel = 32;
+	pixelInfo->pixelType = kIORGBDirectPixels;
+	pixelInfo->componentCount = 3;
+	pixelInfo->bitsPerComponent = 8;
+	pixelInfo->componentMasks[0] = 0x00ff0000;
+	pixelInfo->componentMasks[1] = 0x0000ff00;
+	pixelInfo->componentMasks[2] = 0x000000ff;
+	strncpy(pixelInfo->pixelFormat, IO32BitDirectPixels,
+		sizeof(pixelInfo->pixelFormat));
+	pixelInfo->activeWidth = fFb.width;
+	pixelInfo->activeHeight = fFb.height;
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNI::getCurrentDisplayMode(IODisplayModeID *displayMode,
+	IOIndex *depth)
+{
+	if (displayMode)
+		*displayMode = MODE_ID;
+	if (depth)
+		*depth = DEPTH_32;
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNI::setDisplayMode(IODisplayModeID displayMode, IOIndex depth)
+{
+	if (displayMode != MODE_ID || depth != DEPTH_32)
+		return kIOReturnUnsupportedMode;
+	/* There is one mode and it is already set. */
+	return fModeSet ? kIOReturnSuccess : programMode();
+}
+
+IOReturn RadeonNI::getStartupDisplayMode(IODisplayModeID *displayMode,
+	IOIndex *depth)
+{
+	return getCurrentDisplayMode(displayMode, depth);
+}
+
+/* Direct colour: there is no colour table to load. */
+IOReturn RadeonNI::setCLUTWithEntries(IOColorEntry *colors, UInt32 index,
+	UInt32 numEntries, IOOptionBits options)
+{
+	return kIOReturnSuccess;
+}
+
+/* The hardware table holds a linear ramp; gamma is not applied yet. */
+IOReturn RadeonNI::setGammaTable(UInt32 channelCount, UInt32 dataCount,
+	UInt32 dataWidth, void *data)
+{
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNI::getTimingInfoForDisplayMode(IODisplayModeID displayMode,
+	IOTimingInformation *info)
+{
+	IODetailedTimingInformationV2 *t;
+
+	if (displayMode != MODE_ID)
+		return kIOReturnUnsupportedMode;
+
+	bzero(info, sizeof(*info));
+	info->appleTimingID = kIOTimingIDInvalid;
+	info->flags = kIODetailedTimingValid;
+
+	t = &info->detailedInfo.v2;
+	t->signalConfig = kIODigitalSignal;
+	t->pixelClock = (UInt64)fMode.clock * 1000ULL;
+	t->minPixelClock = t->pixelClock;
+	t->maxPixelClock = t->pixelClock;
+	t->horizontalActive = fMode.hdisplay;
+	t->horizontalBlanking = fMode.htotal - fMode.hdisplay;
+	t->horizontalSyncOffset = fMode.hsync_start - fMode.hdisplay;
+	t->horizontalSyncPulseWidth = fMode.hsync_end - fMode.hsync_start;
+	t->verticalActive = fMode.vdisplay;
+	t->verticalBlanking = fMode.vtotal - fMode.vdisplay;
+	t->verticalSyncOffset = fMode.vsync_start - fMode.vdisplay;
+	t->verticalSyncPulseWidth = fMode.vsync_end - fMode.vsync_start;
+	t->horizontalSyncConfig = (fMode.flags & RDN_MODE_NHSYNC) ?
+		0 : kIOSyncPositivePolarity;
+	t->verticalSyncConfig = (fMode.flags & RDN_MODE_NVSYNC) ?
+		0 : kIOSyncPositivePolarity;
+	t->numLinks = 1;
+	return kIOReturnSuccess;
+}
+
+IOItemCount RadeonNI::getConnectionCount(void)
+{
+	return 1;
+}
+
+IOReturn RadeonNI::setAttributeForConnection(IOIndex connectIndex,
+	IOSelect attribute, UInt32 value)
+{
+	return super::setAttributeForConnection(connectIndex, attribute, value);
+}
+
+IOReturn RadeonNI::getAttributeForConnection(IOIndex connectIndex,
+	IOSelect attribute, UInt32 *value)
+{
+	switch (attribute) {
+	case kConnectionEnable:
+		/* The display answered over DDC when we started. */
+		if (value)
+			*value = 1;
+		return kIOReturnSuccess;
+	case kConnectionFlags:
+		if (value)
+			*value = 0;
+		return kIOReturnSuccess;
+	default:
+		return super::getAttributeForConnection(connectIndex, attribute,
+							value);
+	}
+}
+
+IOReturn RadeonNI::connectFlags(IOIndex connectIndex,
+	IODisplayModeID displayMode, IOOptionBits *flags)
+{
+	if (displayMode != MODE_ID)
+		return kIOReturnUnsupportedMode;
+	*flags = kDisplayModeValidFlag | kDisplayModeSafeFlag;
+	return kIOReturnSuccess;
+}
+
+bool RadeonNI::hasDDCConnect(IOIndex connectIndex)
+{
+	return fEdidLen > 0;
+}
+
+/* Blocks are numbered from 1. The EDID was read when the driver started. */
+IOReturn RadeonNI::getDDCBlock(IOIndex connectIndex, UInt32 blockNumber,
+	IOSelect blockType, IOOptionBits options, UInt8 *data,
+	IOByteCount *length)
+{
+	UInt32 offset;
+	IOByteCount n;
+
+	if (blockType != kIODDCBlockTypeEDID || blockNumber < 1)
+		return kIOReturnUnsupported;
+	offset = (blockNumber - 1) * RDN_EDID_BLOCK_SIZE;
+	if (fEdidLen <= 0 || offset + RDN_EDID_BLOCK_SIZE > (UInt32)fEdidLen)
+		return kIOReturnUnsupported;
+	n = *length < RDN_EDID_BLOCK_SIZE ? *length : RDN_EDID_BLOCK_SIZE;
+	bcopy(fEdid + offset, data, n);
+	*length = n;
+	return kIOReturnSuccess;
 }

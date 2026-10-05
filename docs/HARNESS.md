@@ -279,6 +279,13 @@ With a passthrough guest running:
     scripts/kext.sh log       # the driver's lines from the kernel log
     scripts/kext.sh unload
 
+After `load`, Tiger's window server has to be restarted before it uses the
+new screen: `scripts/tiger.sh ssh 'sudo killall WindowServer'`.
+
+`scripts/tiger.sh passthru` does not trace by default, so that drawing is at
+normal speed. `TIGER_TRACE=1` adds `x-no-mmap=on` and the trace events; every
+framebuffer write is then trapped and the desktop takes minutes to draw.
+
 Notes for Apple gcc 4.0.1 on PowerPC: no `-mkernel`; link the objects before
 `-lkmodc++ -lkmod -lcc_kext`; `OSBundleLibraries` for `com.apple.kernel.*`
 at version 6.0.

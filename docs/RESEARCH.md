@@ -196,5 +196,5 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 - The report of an HD 6570 under Linux on a G5 Quad, first-hand.
 - ~~Whether OpenBIOS assigns the 7570's BARs under `mac99`.~~ BAR0 and BAR2 yes; I/O and ROM no (2026-10-04).
 - Whether the G5's Open Firmware assigns large BARs to a card with no FCode.
-- Whether an `IOFramebuffer` loaded with `kextload` after boot is picked up by WindowServer without logging out.
+- ~~Whether an `IOFramebuffer` loaded with `kextload` after boot is picked up by WindowServer without logging out.~~ No: it is used only after the window server restarts (`sudo killall WindowServer`), 2026-10-04.
 - The licence of osx86-driver-radeonhd.

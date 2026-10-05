@@ -7,8 +7,9 @@
 #   scripts/tiger.sh run [qemu args...]  boot the disk
 #   scripts/tiger.sh passthru <addr> [trace-name]
 #                                        boot with the host PCI device <addr>
-#                                        (e.g. 0000:01:00.0) on vfio-pci, MMIO
-#                                        traced to traces/<trace-name>.log
+#                                        (e.g. 0000:01:00.0) on vfio-pci; with
+#                                        TIGER_TRACE=1 every access is traced
+#                                        to traces/<trace-name>.log (slow)
 #   scripts/tiger.sh snapshot <name>     save a qcow2 snapshot (guest off)
 #   scripts/tiger.sh restore <name>      revert to a snapshot (guest off)
 #   scripts/tiger.sh ssh [cmd...]        ssh into the guest
@@ -73,12 +74,17 @@ passthru)
     name=${2:-passthru-$(date +%Y%m%d-%H%M%S)}
     drv=$(basename "$(readlink "/sys/bus/pci/devices/$addr/driver" 2>/dev/null)" 2>/dev/null || true)
     [ "$drv" = vfio-pci ] || { echo "$addr is bound to '${drv:-nothing}', not vfio-pci" >&2; exit 1; }
-    mkdir -p "$root/traces"
     base_args
-    exec "$qemu" "${args[@]}" -boot c \
-        -device "vfio-pci,host=$addr,x-no-mmap=on" \
-        -trace 'vfio_region_*' -trace 'vfio_pci_*_config' \
-        -D "$root/traces/$name.log"
+    # Tracing traps every access to the card, including each framebuffer
+    # write, which makes drawing very slow. It is off unless TIGER_TRACE=1.
+    if [ "${TIGER_TRACE:-0}" = 1 ]; then
+        mkdir -p "$root/traces"
+        exec "$qemu" "${args[@]}" -boot c \
+            -device "vfio-pci,host=$addr,x-no-mmap=on" \
+            -trace 'vfio_region_*' -trace 'vfio_pci_*_config' \
+            -D "$root/traces/$name.log"
+    fi
+    exec "$qemu" "${args[@]}" -boot c -device "vfio-pci,host=$addr"
     ;;
 snapshot)
     qemu-img snapshot -c "${1:?snapshot name required}" "$disk"
