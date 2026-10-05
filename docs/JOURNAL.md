@@ -1022,3 +1022,34 @@ shader compilation, r600, our winsys, our command processor code, the card.
 Not yet done for A2: the same on big-endian under `qemu-ppc`. What the
 monitor showed is for the user to confirm; the framebuffer readback is
 right.
+
+## 2026-10-05 — Host reset by an uncorrected hardware error during the big-endian tests
+
+**What happened.** Around 00:50 the host reset without any kernel message.
+The previous boot's log ends at 00:49:19 in the middle of normal activity;
+the next boot starts at 00:52:37 and reports `x86/amd: Previous system
+reset reason [0x08000800]: an uncorrected error caused a data fabric sync
+flood event`. Files written in the last seconds (freshly linked
+`rdn_tool`, Mesa objects) were left empty. The repository itself is intact
+(`git fsck` clean).
+
+**What was running.** Userspace tests against the card with no kernel
+driver bound: at 00:49:07 the x86 Mesa test, at 00:49:08 the big-endian
+Mesa test under `qemu-ppc` (which returned in a second, reported no error
+and read back the previous run's picture, i.e. drew nothing). After that,
+not in the surviving log: a rebuild, `rdn_tool modeset`, and the first run
+of the drawing self-test with a byte-swapped indirect buffer (`-S`).
+
+**Not known.** Which of those caused it, and how. Candidates: the card
+raising a fatal PCIe error after the command processor was fed something
+it could not digest (the big-endian Mesa stream, or the swapped indirect
+buffer); a modeset on a GPU already in a bad state. Nothing was running on
+the card at the time of earlier, harmless hangs, so there is no comparison.
+
+**State afterwards.** Card un-POSTed and driverless, as after any reboot
+(the audio function is back on `snd_hda_intel`). Tiger guest not running.
+No hardware test has been run since; the user decides how to go on.
+
+**Also learned.** In the big-endian Mesa run the readback matched the
+previous x86 run pixel for pixel, including a background colour the
+big-endian run was told to change: on big-endian nothing is drawn yet.

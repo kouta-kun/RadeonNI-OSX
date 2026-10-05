@@ -59,7 +59,9 @@ been planned in detail.
 - A2's x86 half works by readback (2026-10-05): Mesa 26.2.4's `r600`
   renders fixed-function GL on the card through `mesa/winsys` and `hw/`,
   with no Linux DRM (`scripts/build-mesa.sh`, `build/x86/rdn_gltest`). The
-  big-endian run under `qemu-ppc` is not done.
+  big-endian run under `qemu-ppc` starts the command processor but draws
+  nothing, and the host reset during those tests (see the journal,
+  2026-10-05, and the host safety rules below).
 - A3 to A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` installed in
   `/System/Library/Extensions`; the snapshots do not. It is inert unless
@@ -205,6 +207,11 @@ The host is the user's server, reached over ssh. Stop and ask before:
 - Enabling `mmiotrace` (it takes all CPUs but one offline).
 - Starting a `mac99` passthrough guest in a host boot where `radeon` has
   been bound to the 7570: that combination oopsed the host kernel once.
+- Running anything that drives the card's command processor from the host
+  (`rdn_tool accel`, `rdn_gltest`, natively or under `qemu-ppc`): on
+  2026-10-05 the host reset with "an uncorrected error caused a data fabric
+  sync flood event" during big-endian tests of that kind. Until the user
+  has decided how such tests are to be contained, do not run them.
 - Writing to the card's flash. Nothing is ever flashed.
 - Abandoning a design decision below.
 

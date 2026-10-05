@@ -222,7 +222,7 @@ app / WindowServer -> OpenGL.framework -> GLEngine (gli*)
 |---|---|---|---|
 | A0 | Prove the plug-in route, no hardware | A GL program in the guest runs through our `gld*` bundle and shows the effect of a dispatch entry we replaced | **Criterion met 2026-10-05** for an off-screen context: one entry (`glClear`) replaced. Replacing all 686 for the life of a context is still unproven (GLD-INTERFACE.md, "Not known yet") |
 | A1 | Command processor from Linux userspace (x86, real card) | `rdn_tool` draws a triangle into the scanout buffer; user confirms | **Works by framebuffer readback 2026-10-05** (`rdn_tool accel`, `rdn_tool grab`); the user has not yet confirmed it on the monitor |
-| A2 | Mesa on our winsys (x86 Linux, real card, no Linux DRM) | Mesa renders an animated test on the monitor; then the big-endian build under `qemu-ppc` does the same | **x86 half works by readback 2026-10-05** (`build/x86/rdn_gltest`); big-endian run not done; not yet confirmed on the monitor |
+| A2 | Mesa on our winsys (x86 Linux, real card, no Linux DRM) | Mesa renders an animated test on the monitor; then the big-endian build under `qemu-ppc` does the same | **x86 half works by readback 2026-10-05** (`build/x86/rdn_gltest`); the big-endian run draws nothing yet, and the host reset during those tests (journal, 2026-10-05): **blocked on the user's decision about how to contain them**; not yet confirmed on the monitor |
 | A3 | Kext accelerator + Mesa in Tiger | A full-screen CGL program in the guest renders on the 7570 | not started |
 | A4 | Windowed OpenGL | A windowed GL program on the desktop; a renderer query reports our renderer and GL 2.0 | not started |
 | A5 | Quartz Extreme | Quartz Debug reports it enabled; user confirms the effects | not started |
