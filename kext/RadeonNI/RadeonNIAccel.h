@@ -82,6 +82,7 @@ public:
 	void setSurfaceRegion(UInt32 wid, const IOAccelDeviceRegion *rgn,
 			      UInt32 rects);
 	bool getSurfaceRegion(UInt32 wid, struct rdn_user_region *region);
+	void forgetSurface(UInt32 wid);
 
 private:
 	RadeonNI *fFramebuffer;
@@ -92,7 +93,7 @@ private:
 	bool fEngineUp;
 	/* Hand out surface clients (RadeonNISurface.h)? */
 	bool fSurfaces;
-	enum { kMaxSurfaces = 8 };
+	enum { kMaxSurfaces = 32 };
 	struct {
 		UInt32 wid;
 		bool used;

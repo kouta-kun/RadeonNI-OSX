@@ -29,6 +29,8 @@ IOReturn RadeonNISurfaceClient::clientClose(void)
 {
 	IOLog("RadeonNI: surface client %p (window %lu) closed after %lu calls\n",
 	      this, (unsigned long)fWid, (unsigned long)fCalls);
+	if (fAccel && fWid)
+		fAccel->forgetSurface(fWid);
 	terminate();
 	return kIOReturnSuccess;
 }

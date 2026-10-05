@@ -50,6 +50,11 @@
 #define DRAWABLE_WINDOW		0x50
 /* Not Apple's: the card's own screen, for the window server's context. */
 #define DRAWABLE_SCREEN		0x7570
+/*
+ * Not Apple's either: a program's window as a surface of the window
+ * server's, shown by the card itself at the place the kext is told.
+ */
+#define DRAWABLE_SURFACE	0x7571
 #define MAX_SCREEN_RECTS	256
 
 /*
@@ -99,6 +104,12 @@ struct context {
 	int direct;
 	uint32_t screen_width, screen_height, screen_pitch;
 	int origin_x, origin_y;
+	/*
+	 * For DRAWABLE_SURFACE: the window server's names for it; origin_*
+	 * is its top left on the screen once the kext knows (placed).
+	 */
+	unsigned long connection, window, surface;
+	int placed;
 	int bound;
 	/*
 	 * The engine's context as gldCreateContext was told, so that the
@@ -109,6 +120,7 @@ struct context {
 	int dispatched;
 	/* Bound to nothing that is shown (no drawable yet). */
 	int nowhere;
+	unsigned swaps;
 };
 
 #define MAX_CONTEXTS 64
@@ -173,6 +185,56 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 }
 
 /* Read the engine's record; false if there is nothing to draw into. */
+/*
+ * Where the window server has the surface now, from the kext: size as the
+ * drawable, place and rectangles kept in the context. The base only says
+ * that there is one.
+ */
+static int surface_drawable(struct context *c, struct drawable *d)
+{
+	static int16_t rects[MAX_SCREEN_RECTS][4];
+	volatile uint32_t *pixels;
+	uint32_t count = 0, i;
+	unsigned width, height;
+	int32_t b[4];
+
+	memset(d, 0, sizeof(*d));
+	if (!c->mesa ||
+	    !rdn_target_screen(&pixels, &c->screen_width, &c->screen_height,
+			       &c->screen_pitch) ||
+	    !rdn_surface_size(c->connection, c->window, c->surface, &width, &height))
+		return 0;
+	d->width = width;
+	d->height = height;
+	d->base = (void *)pixels;
+
+	/*
+	 * The place and the visible part come from the kext, once the
+	 * window server has told it. Until then the program can draw; nothing
+	 * is shown.
+	 */
+	c->screen_rects = 0;
+	c->placed = 0;
+	if (!rdn_target_surface_region((uint32_t)c->surface, b, rects,
+				       MAX_SCREEN_RECTS, &count) ||
+	    b[2] <= 0 || b[3] <= 0 || count > MAX_SCREEN_RECTS)
+		return 1;
+	c->origin_x = b[0];
+	c->origin_y = b[1];
+	/* Experiment: RDN_GLD_SURFACE_AT=x shows the surface x pixels further right. */
+	if (getenv("RDN_GLD_SURFACE_AT"))
+		c->origin_x += atoi(getenv("RDN_GLD_SURFACE_AT"));
+	for (i = 0; i < count; i++) {
+		c->screen_rect[i][0] = rects[i][0] - b[0];
+		c->screen_rect[i][1] = rects[i][1] - b[1];
+		c->screen_rect[i][2] = rects[i][2];
+		c->screen_rect[i][3] = rects[i][3];
+	}
+	c->screen_rects = count;
+	c->placed = 1;
+	return 1;
+}
+
 static int read_record(const struct context *c, struct drawable *d)
 {
 	const uint32_t *r = c->record;
@@ -181,6 +243,8 @@ static int read_record(const struct context *c, struct drawable *d)
 		*d = c->screen;
 		return d->base != NULL;
 	}
+	if (c->type == DRAWABLE_SURFACE)
+		return surface_drawable((struct context *)c, d);
 	memset(d, 0, sizeof(*d));
 	if (!r || (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
 		return 0;
@@ -209,6 +273,50 @@ void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 	rdn_log("attach: context %p, type 0x%lx, %ux%u, rowbytes %u, base %p",
 		gld_ctx, type, (unsigned)d.width, (unsigned)d.height,
 		(unsigned)d.rowbytes, d.base);
+}
+
+int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,
+			    unsigned long window, unsigned long surface)
+{
+	struct context *c = find(gld_ctx);
+
+	if (!c)
+		return 0;
+	/* The device is opened with the first Mesa context. */
+	if (!c->mesa)
+		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
+	if (!c->mesa)
+		return 0;
+	c->type = DRAWABLE_SURFACE;
+	c->connection = connection;
+	c->window = window;
+	c->surface = surface;
+	c->record = NULL;
+	c->bound = 0;
+	if (c->rend && c->rend == rdn_current_rend)
+		rdn_current_rend = NULL;
+	rdn_log("attach: context %p draws on surface 0x%lx", gld_ctx, surface);
+	return 1;
+}
+
+int rdn_mesa_is_surface(void *gld_ctx)
+{
+	struct context *c = find(gld_ctx);
+
+	return c && c->type == DRAWABLE_SURFACE;
+}
+
+void rdn_mesa_detach(void *gld_ctx)
+{
+	struct context *c = find(gld_ctx);
+
+	if (!c)
+		return;
+	c->type = 0;
+	c->record = NULL;
+	c->bound = 0;
+	if (c->rend && c->rend == rdn_current_rend)
+		rdn_current_rend = NULL;
 }
 
 int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
@@ -360,8 +468,12 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
 	struct context *c = find(gld_ctx);
 	struct drawable d;
 
-	/* A context taken over early stays Mesa's whatever its drawable. */
-	if (!c || (!c->dispatched && !read_record(c, &d)))
+	/*
+	 * A context taken over early stays Mesa's whatever its drawable,
+	 * and a surface is always ours.
+	 */
+	if (!c || (!c->dispatched && c->type != DRAWABLE_SURFACE &&
+		   !read_record(c, &d)))
 		return 0;
 	return install(c, engine_table, "dispatch set-up");
 }
@@ -452,6 +564,32 @@ void rdn_make_current(void *rend)
 		return;
 	}
 	rdn_origin_x = rdn_origin_y = 0;
+	if (c->type == DRAWABLE_SURFACE) {
+		if (!OSMesaMakeCurrentSurface(c->mesa, RDN_TARGET_SCREEN_HANDLE,
+					      (GLsizei)c->screen_width,
+					      (GLsizei)c->screen_height,
+					      (GLsizei)(c->screen_pitch * 4), 0,
+					      c->origin_x, c->origin_y,
+					      (GLsizei)d.width, (GLsizei)d.height)) {
+			rdn_log("OSMesaMakeCurrentSurface failed for context %p",
+				c->gld_ctx);
+			return;
+		}
+		/* Only what the window server lets show of the window. */
+		if (c->placed && c->screen_rects) {
+			OSMesaReadbackRects(c->mesa, (GLint)c->screen_rects,
+					    &c->screen_rect[0][0]);
+		} else {
+			GLint none[4] = { 0, 0, 0, 0 };
+
+			OSMesaReadbackRects(c->mesa, 1, none);
+		}
+		c->drawable = d;
+		c->bound = 1;
+		c->nowhere = 0;
+		rdn_current_rend = rend;
+		return;
+	}
 	if (c->type == DRAWABLE_SCREEN && c->direct) {
 		if (!OSMesaMakeCurrentDirect(c->mesa, RDN_TARGET_SCREEN_HANDLE,
 					     (GLsizei)c->screen_width,
@@ -514,6 +652,37 @@ static int drawable_changed(const struct context *c)
 	return !read_record(c, &d) || memcmp(&d, &c->drawable, sizeof(d)) != 0;
 }
 
+int rdn_swap(void *rend)
+{
+	int i, tries;
+
+	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].rend == rend &&
+		    contexts[i].type == DRAWABLE_SURFACE) {
+			if (contexts[i].swaps++ % 100 < 2)
+				rdn_log("swap: surface 0x%lx at %d,%d, %u rectangles, bound %d",
+					contexts[i].surface, contexts[i].origin_x,
+					contexts[i].origin_y,
+					(unsigned)contexts[i].screen_rects,
+					contexts[i].bound);
+			/*
+			 * A first frame can come before the window server
+			 * has told the kext where the window is.
+			 */
+			for (tries = 0; tries < 50; tries++) {
+				struct drawable d;
+
+				if (surface_drawable(&contexts[i], &d) &&
+				    contexts[i].placed)
+					break;
+				usleep(10000);
+			}
+			rdn_mesa_present(contexts[i].gld_ctx);
+			return 1;
+		}
+	return 0;
+}
+
 void rdn_mesa_present(void *gld_ctx)
 {
 	struct context *c = find(gld_ctx);
@@ -521,7 +690,9 @@ void rdn_mesa_present(void *gld_ctx)
 
 	if (!c || !c->rend || !mesa_finish || !read_record(c, &d))
 		return;
-	if (c->rend != rdn_current_rend || !c->bound || drawable_changed(c))
+	/* A surface may have moved or been covered since the last frame. */
+	if (c->rend != rdn_current_rend || !c->bound || drawable_changed(c) ||
+	    c->type == DRAWABLE_SURFACE)
 		rdn_make_current(c->rend);
 	if (c->rend == rdn_current_rend && c->bound)
 		mesa_finish();

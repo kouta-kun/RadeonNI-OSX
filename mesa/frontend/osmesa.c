@@ -113,6 +113,9 @@ struct osmesa_buffer
    bool direct;
    unsigned direct_handle, direct_stride, direct_offset;
    struct pipe_resource *direct_res;
+   /* That surface's size, and where on it this drawable is shown. */
+   unsigned target_width, target_height;
+   int target_x, target_y;
 
    struct osmesa_buffer *next;  /**< next in linked list */
 };
@@ -254,6 +257,33 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
    }
 
    pipe->texture_unmap(pipe, transfer);
+}
+
+
+/*
+ * Copy one rectangle of a direct drawable (its own coordinates, y from the
+ * top) to its place on the target surface, as far as both hold it.
+ */
+static void
+osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
+                 struct pipe_resource *res, int x, int y, int w, int h)
+{
+   int x0 = MAX2(x, 0), y0 = MAX2(y, 0);
+   int x1 = MIN2(x + w, (int)osbuffer->width);
+   int y1 = MIN2(y + h, (int)osbuffer->height);
+   struct pipe_box box;
+
+   /* The part that falls on the target. */
+   x0 = MAX2(x0, -osbuffer->target_x);
+   y0 = MAX2(y0, -osbuffer->target_y);
+   x1 = MIN2(x1, (int)osbuffer->target_width - osbuffer->target_x);
+   y1 = MIN2(y1, (int)osbuffer->target_height - osbuffer->target_y);
+   if (x1 <= x0 || y1 <= y0)
+      return;
+   u_box_2d(x0, y0, x1 - x0, y1 - y0, &box);
+   pipe->resource_copy_region(pipe, osbuffer->direct_res, 0,
+                              osbuffer->target_x + x0, osbuffer->target_y + y0,
+                              0, res, 0, &box);
 }
 
 
@@ -405,25 +435,25 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
       struct pipe_context *pipe = osmesa->st->pipe;
       struct pipe_box box;
 
+      if (getenv("RDN_DEBUG_DIRECT"))
+         fprintf(stderr, "flush_front: direct_res %p, %dx%d at %d,%d of %ux%u, %d rects (%d %d %d %d)\n",
+                 (void *)osbuffer->direct_res, osbuffer->width, osbuffer->height,
+                 osbuffer->target_x, osbuffer->target_y, osbuffer->target_width,
+                 osbuffer->target_height, osmesa->num_rects,
+                 osmesa->num_rects ? osmesa->rects[0] : 0, osmesa->num_rects ? osmesa->rects[1] : 0,
+                 osmesa->num_rects ? osmesa->rects[2] : 0, osmesa->num_rects ? osmesa->rects[3] : 0);
+
       if (!osbuffer->direct_res)
          return false;
       if (osmesa->num_rects > 0) {
          for (int i = 0; i < osmesa->num_rects; i++) {
             const GLint *r = osmesa->rects + i * 4;
-            int x0 = MAX2(r[0], 0), y0 = MAX2(r[1], 0);
-            int x1 = MIN2(r[0] + r[2], (int)osbuffer->width);
-            int y1 = MIN2(r[1] + r[3], (int)osbuffer->height);
 
-            if (x1 <= x0 || y1 <= y0)
-               continue;
-            u_box_2d(x0, y0, x1 - x0, y1 - y0, &box);
-            pipe->resource_copy_region(pipe, osbuffer->direct_res, 0, x0, y0,
-                                       0, res, 0, &box);
+            osmesa_show_rect(pipe, osbuffer, res, r[0], r[1], r[2], r[3]);
          }
       } else {
-         u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
-         pipe->resource_copy_region(pipe, osbuffer->direct_res, 0, 0, 0, 0,
-                                    res, 0, &box);
+         osmesa_show_rect(pipe, osbuffer, res, 0, 0, osbuffer->width,
+                          osbuffer->height);
       }
       pipe->flush(pipe, NULL, 0);
       return true;
@@ -510,6 +540,10 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT &&
           !osbuffer->direct_res) {
          struct winsys_handle whandle;
+         struct pipe_resource target = templat;
+
+         target.width0 = osbuffer->target_width;
+         target.height0 = osbuffer->target_height;
 
          memset(&whandle, 0, sizeof(whandle));
          whandle.type = WINSYS_HANDLE_TYPE_KMS;
@@ -517,7 +551,7 @@ osmesa_st_framebuffer_validate(struct st_context *st,
          whandle.stride = osbuffer->direct_stride;
          whandle.offset = osbuffer->direct_offset;
          osbuffer->direct_res =
-            screen->resource_from_handle(screen, &templat, &whandle,
+            screen->resource_from_handle(screen, &target, &whandle,
                                          PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
       }
       out[i] = osbuffer->textures[statts[i]] =
@@ -860,6 +894,17 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaMakeCurrentDirect(OSMesaContext osmesa, GLuint handle, GLsizei width,
                         GLsizei height, GLsizei stride, GLuint offset)
 {
+   return OSMesaMakeCurrentSurface(osmesa, handle, width, height, stride,
+                                   offset, 0, 0, width, height);
+}
+
+
+GLAPI GLboolean GLAPIENTRY
+OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
+                         GLsizei target_width, GLsizei target_height,
+                         GLsizei stride, GLuint offset, GLint x, GLint y,
+                         GLsizei width, GLsizei height)
+{
    enum pipe_format color_format;
    struct osmesa_buffer *osbuffer;
 
@@ -877,7 +922,9 @@ OSMesaMakeCurrentDirect(OSMesaContext osmesa, GLuint handle, GLsizei width,
         osbuffer->height != (unsigned)height ||
         osbuffer->direct_handle != handle ||
         osbuffer->direct_stride != (unsigned)stride ||
-        osbuffer->direct_offset != offset)) {
+        osbuffer->direct_offset != offset ||
+        osbuffer->target_width != (unsigned)target_width ||
+        osbuffer->target_height != (unsigned)target_height)) {
       osmesa_destroy_buffer(osbuffer);
       osmesa->current_buffer = NULL;
    }
@@ -896,6 +943,11 @@ OSMesaMakeCurrentDirect(OSMesaContext osmesa, GLuint handle, GLsizei width,
    osbuffer->direct_handle = handle;
    osbuffer->direct_stride = stride;
    osbuffer->direct_offset = offset;
+   osbuffer->target_width = target_width;
+   osbuffer->target_height = target_height;
+   /* Only the place changes when a window moves: the buffer is kept. */
+   osbuffer->target_x = x;
+   osbuffer->target_y = y;
    osmesa->type = GL_UNSIGNED_BYTE;
 
    st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base);

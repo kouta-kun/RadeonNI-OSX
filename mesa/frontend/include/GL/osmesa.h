@@ -261,6 +261,20 @@ OSMesaMakeCurrentDirect( OSMesaContext ctx, GLuint handle, GLsizei width,
                          GLsizei height, GLsizei stride, GLuint offset );
 
 
+/*
+ * osx-gpu: the same, for a drawable of width x height pixels that is
+ * shown with its top left corner at x, y of the named surface (a window on
+ * the screen). OSMesaReadbackRects' rectangles are in the drawable's own
+ * coordinates. Calling it again with another x, y moves the drawable
+ * without losing its contents.
+ */
+GLAPI GLboolean APIENTRY
+OSMesaMakeCurrentSurface( OSMesaContext ctx, GLuint handle,
+                          GLsizei target_width, GLsizei target_height,
+                          GLsizei stride, GLuint offset, GLint x, GLint y,
+                          GLsizei width, GLsizei height );
+
+
 
 /*
  * Return an integer value like glGetIntegerv.

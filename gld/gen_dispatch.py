@@ -115,6 +115,15 @@ def main():
     out.append('\treturn found;')
     out.append('}')
     out.append('')
+    # Presenting: the engine's own entry, unless the bundle shows the
+    # context's picture itself (a window taken as a surface).
+    out.append('static void (*engine_swap)(GLIContext ctx);')
+    out.append('static void rdn_swap_entry(GLIContext ctx)')
+    out.append('{')
+    out.append('\tif (!rdn_swap(ctx) && engine_swap)')
+    out.append('\t\tengine_swap(ctx);')
+    out.append('}')
+    out.append('')
     out.append('#include <stddef.h>')
     out.append('#define FITS(field) (offsetof(GLIFunctionDispatch, field) / sizeof(void *) < entries)')
     out.append('')
@@ -125,6 +134,10 @@ def main():
     out.append('')
     for ret, name, params, names in entries:
         out.append('\tif (m_%s && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name, name))
+    out.append('\tif (FITS(swap_APPLE) && disp->swap_APPLE != rdn_swap_entry) {')
+    out.append('\t\tengine_swap = disp->swap_APPLE;')
+    out.append('\t\tdisp->swap_APPLE = rdn_swap_entry;')
+    out.append('\t}')
     out.append('\treturn n;')
     out.append('}')
     out.append('')

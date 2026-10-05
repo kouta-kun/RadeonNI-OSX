@@ -453,6 +453,17 @@ bool RadeonNIAccel::getSurfaceRegion(UInt32 wid, struct rdn_user_region *region)
 	return found;
 }
 
+void RadeonNIAccel::forgetSurface(UInt32 wid)
+{
+	int i;
+
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces; i++)
+		if (fShapes[i].used && fShapes[i].wid == wid)
+			fShapes[i].used = false;
+	IOLockUnlock(fLock);
+}
+
 IOMemoryDescriptor *RadeonNIAccel::apertureMemory(void)
 {
 	return fFramebuffer ? fFramebuffer->apertureDescriptor() : 0;

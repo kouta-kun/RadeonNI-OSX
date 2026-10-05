@@ -61,6 +61,26 @@ extern int rdn_trace;
  * screen cannot be reached.
  */
 int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface);
+/*
+ * The context draws on a window that the window server manages as surface
+ * `surface` in the kext; the card shows it there itself. False if Mesa is
+ * not available.
+ */
+int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,
+			    unsigned long window, unsigned long surface);
+/* RadeonNIGLDriver.c: the surface's size as the window server has it. */
+int rdn_surface_size(unsigned long cid, unsigned long wid, unsigned long sid,
+		     unsigned *width, unsigned *height);
+int rdn_mesa_is_surface(void *gld_ctx);
+/* The context has no drawable any more. */
+void rdn_mesa_detach(void *gld_ctx);
+/*
+ * The program asked for the picture to be shown (glSwapAPPLE, which is
+ * what CGLFlushDrawable calls). True if the bundle did it; false if the
+ * engine should, as for a window that is a buffer of the software
+ * renderer's.
+ */
+int rdn_swap(void *rend);
 /* True if the context's GL entry points are now Mesa's. */
 int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
 /* Finish the frame and put it into the drawable's buffer. */

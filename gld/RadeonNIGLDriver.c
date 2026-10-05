@@ -390,6 +390,41 @@ static void present_hook(void *gld_ctx, long table)
 	}
 }
 
+/*
+ * For a context the software renderer never set up (a window taken as a
+ * surface), the engine's driver table is empty. Every entry gets a
+ * function that says it was called (the first few times, when logging)
+ * and does nothing, so that what the engine wants of it can be seen; the
+ * one that presents is then replaced by present_hook().
+ */
+static unsigned stub_calls[33];
+
+static long table_stub(int entry)
+{
+	if (logf && stub_calls[entry]++ < 4) {
+		fprintf(logf, "[%d] driver table entry %d called\n", (int)getpid(), entry);
+		fflush(logf);
+	}
+	return 0;
+}
+
+#define S(n) static long table_stub_##n(long a, long b, long c, long d, long e, \
+				       long f, long g, long h) \
+	{ return table_stub(n); }
+S(0) S(1) S(2) S(3) S(4) S(5) S(6) S(7) S(8) S(9) S(10) S(11) S(12) S(13) S(14) S(15) S(16) S(17) S(18) S(19) S(20) S(21) S(22) S(23) S(24) S(25) S(26) S(27) S(28) S(29) S(30) S(31) S(32) 
+#undef S
+
+static void table_fill(long table)
+{
+	static const gld_fn stubs[33] = { table_stub_0, table_stub_1, table_stub_2, table_stub_3, table_stub_4, table_stub_5, table_stub_6, table_stub_7, table_stub_8, table_stub_9, table_stub_10, table_stub_11, table_stub_12, table_stub_13, table_stub_14, table_stub_15, table_stub_16, table_stub_17, table_stub_18, table_stub_19, table_stub_20, table_stub_21, table_stub_22, table_stub_23, table_stub_24, table_stub_25, table_stub_26, table_stub_27, table_stub_28, table_stub_29, table_stub_30, table_stub_31, table_stub_32 };
+	gld_fn *t = (gld_fn *)table;
+	int i;
+
+	for (i = 0; i < 33; i++)
+		if (!t[i])
+			t[i] = stubs[i];
+}
+
 /* The context of the window server that draws on the screen, if any. */
 static void *screen_ctx;
 
@@ -430,15 +465,57 @@ int rdn_windows_top_down(void)
  * whose record names a buffer (those started from an ssh session), which
  * otherwise lose what they set up before their window existed.
  */
+static int app_surfaces(void);
+
 static int early_takeover(void)
 {
 	/* The file is for programs whose environment is not ours to set. */
-	return getenv("RDN_GLD_EARLY") != NULL ||
+	return app_surfaces() || getenv("RDN_GLD_EARLY") != NULL ||
 	       access("/tmp/rdngld.early", F_OK) == 0;
 }
 
 /* gldCreateContext's sixth argument, less this, is the engine's context. */
 #define ENGINE_CTX_CREATE_ARG	0x360
+
+static long (*bind_surface)(long, long, long, long, long);
+
+/*
+ * The size of a window's surface, from the window server
+ * (CGSGetSurfaceBounds, which the software renderer uses too; its last
+ * argument is taken to be a rectangle of four floats). The kext only
+ * learns the surface's place a moment after it is bound, and a program
+ * may draw its one frame before that.
+ */
+int rdn_surface_size(unsigned long cid, unsigned long wid, unsigned long sid,
+		     unsigned *width, unsigned *height)
+{
+	int (*bounds)(unsigned long, unsigned long, unsigned long, float *) =
+		(int (*)(unsigned long, unsigned long, unsigned long, float *))
+		dlsym(RTLD_DEFAULT, "CGSGetSurfaceBounds");
+	float r[4] = { 0, 0, 0, 0 };
+
+	if (!bounds || bounds(cid, wid, sid, r) || r[2] < 1 || r[3] < 1 ||
+	    r[2] > 16384 || r[3] > 16384)
+		return 0;
+	*width = (unsigned)r[2];
+	*height = (unsigned)r[3];
+	return 1;
+}
+
+/*
+ * Windows as surfaces (see forward()): on with RDN_GLD_SURFACE=1 or a file
+ * /tmp/rdngld.surface, until it has been seen to work.
+ */
+static int app_surfaces(void)
+{
+	static int known = -1;
+
+	if (known < 0)
+		known = getenv("RDN_GLD_SURFACE") != NULL ||
+			access("/tmp/rdngld.surface", F_OK) == 0;
+	return known;
+}
+static const long *display_words;
 
 static int in_window_server(void)
 {
@@ -589,6 +666,42 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	 * set-up that follows. The return values are the ones the software
 	 * renderer gives applications.
 	 */
+	/*
+	 * A program's window, the way a hardware driver takes it: the record
+	 * is connection, window, surface; OpenGL's callback has the window
+	 * server manage the surface in the kext (it then tells the kext
+	 * where the window is and leaves that part of the screen alone), and
+	 * the card puts Mesa's picture there. The software renderer is not
+	 * involved. 0x24 is the mode the window server gives its own
+	 * surface: a window, 32 bits.
+	 */
+	if (!in_window_server() && app_surfaces()) {
+		if (idx == IDX_gldAttachDrawable && b == 0x50 && c &&
+		    bind_surface && display_words) {
+			const unsigned long *r = (const unsigned long *)c;
+			long err = bind_surface(r[0], r[1], r[2], 0x24,
+						display_words[0]);
+
+			if (logf)
+				fprintf(logf, "[%d]   surface 0x%lx of window 0x%lx bound -> %lx\n",
+					(int)getpid(), r[2], r[1], err);
+			if (!err && rdn_mesa_attach_surface((void *)a, r[0], r[1], r[2]))
+				return 2;
+		} else if (idx == IDX_gldAttachDrawable &&
+			   rdn_mesa_is_surface((void *)a)) {
+			rdn_mesa_detach((void *)a);
+			return 0;
+		}
+		if ((idx == IDX_gldInitDispatch || idx == IDX_gldUpdateDispatch) &&
+		    rdn_mesa_is_surface((void *)a)) {
+			if (b) {
+				table_fill(b);
+				if (rdn_mesa_dispatch((void *)a, (void *)b))
+					present_hook((void *)a, b);
+			}
+			return idx == IDX_gldInitDispatch ? 4 : 0;
+		}
+	}
 	if (in_window_server()) {
 		if (idx == IDX_gldAttachDrawable) {
 			/* The record's third word is the surface ID. */
@@ -706,6 +819,22 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	describe(idx, a, b, c, d, ret);
 	ret = adjust(idx, a, b, c, d, ret);
 #ifdef RDN_MESA
+	/*
+	 * gldInitializeLibrary's fifth argument is OpenGL's glcBindSurface
+	 * (by its address): bind(connection, window, surface, kernel surface
+	 * ID, renderer) has the window server take the window's surface as
+	 * an accelerated one, through CGSBindSurface.
+	 */
+	if (idx == IDX_gldInitializeLibrary && e) {
+		bind_surface = (long (*)(long, long, long, long, long))e;
+		/*
+		 * The first argument is an array with one word per display
+		 * (a Mach port name by its look: the display's accelerator
+		 * or framebuffer); the callback wants the word of the
+		 * display the surface is on.
+		 */
+		display_words = (const long *)a;
+	}
 	/*
 	 * The sixth argument of gldCreateContext points 0x360 bytes into
 	 * the engine's context (10.4.11, by comparison with the table

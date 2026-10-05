@@ -1533,3 +1533,54 @@ drawn completely by the card: textured board, all pieces, reflections
   is still wrong. Why the record is not filled in that one combination is
   not known.
 
+## 2026-10-05 — Application windows as surfaces: the protocol found, a GLUT window shown by the card
+
+**Step 1 (which form of window record a launch gets).** Nine controlled
+launches of Chess (warm, in the background, disk busy, from ssh, first
+after a window server restart, with and without the early takeover): all
+got the filled, buffer form. The unfilled form seen earlier could not be
+reproduced. Dropped as a line of attack.
+
+**Step 3 (how a hardware driver takes a window).** By symbol lists and by
+reading `glcBindSurface` in OpenGL.framework:
+- Apple's hardware GL bundles import no window server functions at all.
+  The software renderer imports `CGSBindSurface`, `CGSGetSurfaceBounds`,
+  `CGSLockWindowBits`, `CGSFlushSurface`.
+- `gldInitializeLibrary`'s first argument is an array with one word per
+  display (0x3207 here; a Mach port by its look), its fifth is
+  `glcBindSurface(connection, window, surface, mode, display word)`,
+  which calls `CGSBindSurface(connection, window, surface, 2, mode,
+  display ID)`.
+- The record of a window's `gldAttachDrawable` starts connection, window,
+  surface; the surface ID comes from the same allocator as
+  `IOAccelCreateAccelID`.
+- Calling the callback with mode 0x24 makes the window server open a
+  surface client in the kext, `setIDMode(surface ID, 0x24)`, and
+  `setShape(0, ...)` with the window's GL area on the screen (3,44
+  540x488 for Chess); it then leaves that area alone, and at times asks
+  `readLock`/`readLockOptions(2)` and `control(1, ...)`, which the kext
+  refuses.
+- With no software renderer behind the context the engine's driver table
+  is never called; a swap reaches the driver as `glSwapAPPLE` in the
+  program's dispatch table.
+
+**Built on it** (`/tmp/rdngld.surface` or `RDN_GLD_SURFACE=1`): the bundle
+binds the surface itself, does not forward the attach, gives Mesa a
+drawable of the surface's size (`CGSGetSurfaceBounds`) and, at
+`glSwapAPPLE`, has the GPU copy it to where the kext says the window is
+(`OSMesaMakeCurrentSurface`).
+
+**Observed.** `glwin` (GLUT, animating) is shown that way: 4241 presents
+in about ten seconds, readback shows its triangle in the window. Chess,
+which draws one frame and waits, stays white: its swap arrives with the
+right place and is bound, but the window server asks to read the surface
+(`readLock`) and, refused, paints the window's white backing there.
+
+**Also found.** The kext's table of surface shapes was never emptied
+(eight entries); after a few launches new surfaces got no shape. Fixed
+(forgotten on close, 32 entries).
+
+**Next.** The kext must know where a surface's pixels are so that it can
+answer `readLock`: the drawable has to be a linear buffer in video memory
+that the bundle registers with the kext.
+
