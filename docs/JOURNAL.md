@@ -1796,3 +1796,9 @@ guest, twice. Starting a guest with `TIGER_EVDEV` set has not been run.
 **Not tried.** `usb-host` on an added UHCI controller (Tiger has
 `AppleUSBUHCI.kext`); scripted clicks from `guest-ctl.py` with the relative
 mouse first.
+
+**Seen by the user afterwards (surfaces as textures):** resizing the Chess
+window stutters a little, with nothing wrong in the picture. So the
+window server's texture does follow a surface whose buffer moves; how has
+not been looked at.
+
