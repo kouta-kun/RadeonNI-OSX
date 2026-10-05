@@ -167,7 +167,12 @@ Harness:
 ## First run on the real G5 (not planned in detail yet)
 
 `scripts/make-g5-package.sh --with-vbios` produces the package; the user
-installs it with `sudo ./install.sh`. Things to look at first on the Mac:
+installs it with `sudo ./install.sh`. Alternatively the whole system:
+`images/tiger-g5.qcow2` (2026-10-05) is a copy of the guest's disk with
+that package installed (phase 1 kext, no acceleration keys) and unpacked
+in `~/RadeonNI-g5`; it loads the kext at boot under QEMU. Write it to a
+disk of 32 GB or more with `sudo qemu-img convert -p -O raw
+images/tiger-g5.qcow2 /dev/sdX`. It has not booted on the G5. Things to look at first on the Mac:
 `ioreg -p IODeviceTree -n pci1002,675d -w0` (did Open Firmware assign BAR0
 and BAR2, and the ROM?), `sudo dmesg | grep RadeonNI`, and whether the
 6600 LE stays the console.

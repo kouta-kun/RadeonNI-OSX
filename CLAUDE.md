@@ -30,6 +30,10 @@ System Preferences and a software cursor.
   the guest with the G5 package, then uninstalled).
 - `scripts/make-g5-package.sh` builds `build/RadeonNI-g5.tar.gz` for the
   real Power Mac G5. It has never run on a real Mac.
+- `images/tiger-g5.qcow2` (2026-10-05) is a copy of the guest's disk with
+  the G5 package installed, to be written to a disk for the real G5
+  (`docs/PLAN.md`, "First run on the real G5"). Never booted there. The
+  guest's own disk has the snapshot `before-g5-image` from the same moment.
 - The tag `working-framebuffer` marks the confirmed phase 1 state including
   the G5 install package.
 - The guest: snapshots `clean-install` and `pre-kext-install` (no kext

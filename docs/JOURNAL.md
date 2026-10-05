@@ -1898,3 +1898,35 @@ in that path. Next: dump the arrays of one wrong draw from Quake itself.
 
 **Workaround for the user:** `+set r_primitives 3`.
 
+
+## 2026-10-05 — A disk image for the real G5, with the kext installed
+
+The user wants to start on the real G5 by writing the guest's disk to a
+hard disk.
+
+**Checked first.** The guest's disk has an Apple Partition Map with one
+HFS+ volume (`ER`/`PM` blocks read with `qemu-io`). The system is 10.4.11
+(8S165) and has the Late 2005 G5's drivers:
+`PowerMac11_2_PlatformPlugin` and `PowerMac11_2_ThermalProfile` inside
+`AppleMacRISC4PE.kext`, `AppleK2SATA`, `AppleSMU`, the NVIDIA kexts for
+the 6600 LE. So the image should boot there; that has not been tried.
+
+**Done.** Snapshot `before-g5-image` of `images/tiger.qcow2` (guest off,
+accelerated state, no kext installed). `qemu-img convert` of that state
+into `images/tiger-g5.qcow2` (no snapshots inside). Booted the copy with
+the card passed through, unpacked `build/RadeonNI-g5` (built with
+`--with-vbios` from `working-quartz-extreme-25-g88b9000`) into
+`~/RadeonNI-g5` and ran `sudo ./install.sh`. After a restart the kext
+was loaded at boot by itself, posted the card and set 1366x768
+(`dmesg`: "framebuffer started"); by the log only, nobody looked at the
+monitor. The working disk never had the kext installed.
+
+The installed kext is phase 1's: its personality has the VBIOS and no
+`Accelerator` key, no microcode. The GL bundle and the GA plug-in are in
+that image's `/System/Library/Extensions` and stay inert that way.
+
+**Side effect.** The copy was booted twice under `mac99`, so its caches
+are the emulated G4's; the G5 has to rebuild them on its first boot.
+
+To write it: `sudo qemu-img convert -p -O raw images/tiger-g5.qcow2
+/dev/sdX`.
