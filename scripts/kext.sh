@@ -22,6 +22,8 @@
 # 2 the registered shim, 3 both.
 # RDN_SURFACES=1 makes the accelerator hand out surface user clients, which
 # for now only accept and log what they are asked.
+# RDN_HWCURSOR=1 makes the kext use the card's hardware cursor instead of
+# letting IOFramebuffer draw the cursor with the CPU.
 # RDN_GA=1 names the 2D accelerator plug-in (scripts/ga.sh) on the
 # framebuffer.
 # RDN_ACCELCAPS=n publishes an AccelCaps property of that value on the
@@ -72,6 +74,8 @@ if os.environ.get("RDN_ACCEL") == "1":
             os.environ["RDN_AGPSHIM"])
     if os.environ.get("RDN_SURFACES") == "1":
         extra += "\t\t\t<key>Surfaces</key>\n\t\t\t<true/>\n"
+    if os.environ.get("RDN_HWCURSOR") == "1":
+        extra += "\t\t\t<key>HWCursor</key>\n\t\t\t<true/>\n"
     if os.environ.get("RDN_GA") == "1":
         extra += "\t\t\t<key>GAPlugin</key>\n\t\t\t<true/>\n"
     if os.environ.get("RDN_SELFTEST") == "1":

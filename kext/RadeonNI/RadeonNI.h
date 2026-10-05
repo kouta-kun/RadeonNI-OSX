@@ -19,6 +19,7 @@
 extern "C" {
 #include "rdn_accel.h"
 #include "rdn_card.h"
+#include "rdn_cursor.h"
 #include "rdn_i2c.h"
 #include "rdn_mode.h"
 #include "rdn_pattern.h"
@@ -73,6 +74,11 @@ public:
 		IOSelect blockType, IOOptionBits options, UInt8 *data,
 		IOByteCount *length);
 
+	/* The hardware cursor, when the HWCursor property asks for it. */
+	virtual IOReturn getAttribute(IOSelect attribute, UInt32 *value);
+	virtual IOReturn setCursorImage(void *cursorImage);
+	virtual IOReturn setCursorState(SInt32 x, SInt32 y, bool visible);
+
 	/* Register access for the OS layer. */
 	UInt32 readReg(UInt32 offset);
 	void writeReg(UInt32 offset, UInt32 value);
@@ -110,6 +116,11 @@ private:
 	struct rdn_mode fModes[kMaxModes];
 	UInt32 fModeCount;
 	UInt32 fSurfaceBytes;
+
+	/* The hardware cursor: what was last asked for. */
+	bool fHWCursor, fCursorLoaded, fCursorVisible, fCursorLogged;
+	SInt32 fCursorX, fCursorY;
+	UInt32 fCursorData[RDN_CURSOR_SIZE * RDN_CURSOR_SIZE];
 
 	/* What is on screen now. */
 	IODisplayModeID fCurrentMode;

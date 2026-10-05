@@ -22,6 +22,11 @@ OSDefineMetaClassAndStructors(RadeonNI, IOFramebuffer)
 
 /* DDC line of the DVI-I connector (AtomBIOS i2c id). */
 #define DVI_DDC_ID		0x93
+/*
+ * Where the hardware cursor's picture is kept in video memory: above
+ * every screen surface, below the accelerator's ring (RadeonNIAccel.cpp).
+ */
+#define CURSOR_OFFSET		(31u << 20)
 
 /*
  * Display mode IDs are 1 + the index of the EDID detailed timing. Depth
@@ -268,6 +273,10 @@ IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 	fCurrentMode = id;
 	fCurrentDepth = depth;
 	fModeSet = true;
+	/* The mode set leaves the cursor's registers to us. */
+	if (fHWCursor && fCursorLoaded)
+		rdn_cursor_set(&fCard, CURSOR_OFFSET, fCursorX, fCursorY,
+			       fCursorVisible);
 	loadColors();
 	return kIOReturnSuccess;
 }
@@ -331,6 +340,7 @@ bool RadeonNI::start(IOService *provider)
 	}
 	IOLog("RadeonNI: framebuffer started\n");
 
+	fHWCursor = getProperty("HWCursor") == kOSBooleanTrue;
 	/*
 	 * The accelerator is announced only when the personality asks for
 	 * it: the window server and OpenGL act on it as soon as it is there.
@@ -376,6 +386,81 @@ void RadeonNI::stop(IOService *provider)
 /*
  * For the accelerator
  */
+
+/*
+ * The hardware cursor. IOFramebuffer draws the cursor itself, with the
+ * CPU, unless the driver says it has one; it then hands over every new
+ * cursor picture and every move.
+ */
+
+IOReturn RadeonNI::getAttribute(IOSelect attribute, UInt32 *value)
+{
+	if (attribute == kIOHardwareCursorAttribute && fHWCursor) {
+		if (value)
+			*value = 1;
+		return kIOReturnSuccess;
+	}
+	return super::getAttribute(attribute, value);
+}
+
+IOReturn RadeonNI::setCursorImage(void *cursorImage)
+{
+	IOHardwareCursorDescriptor desc;
+	IOHardwareCursorInfo info;
+	volatile UInt32 *dst;
+	UInt32 x, y, w, h;
+
+	if (!fHWCursor || !aperture())
+		return kIOReturnUnsupported;
+	bzero(&desc, sizeof(desc));
+	desc.majorVersion = kHardwareCursorDescriptorMajorVersion;
+	desc.minorVersion = kHardwareCursorDescriptorMinorVersion;
+	desc.height = RDN_CURSOR_SIZE;
+	desc.width = RDN_CURSOR_SIZE;
+	desc.bitDepth = 32;
+	bzero(&info, sizeof(info));
+	info.majorVersion = kHardwareCursorInfoMajorVersion;
+	info.minorVersion = kHardwareCursorInfoMinorVersion;
+	info.hardwareCursorData = (UInt8 *)fCursorData;
+	if (!convertCursorImage(cursorImage, &desc, &info)) {
+		fCursorLoaded = false;
+		rdn_cursor_set(&fCard, CURSOR_OFFSET, 0, 0, false);
+		return kIOReturnUnsupported;
+	}
+	w = info.cursorWidth;
+	h = info.cursorHeight;
+	if (w > RDN_CURSOR_SIZE || h > RDN_CURSOR_SIZE)
+		return kIOReturnUnsupported;
+	if (!fCursorLogged) {
+		fCursorLogged = true;
+		IOLog("RadeonNI: hardware cursor %lux%lu, first pixels %08lx %08lx %08lx %08lx\n",
+		      (unsigned long)w, (unsigned long)h,
+		      (unsigned long)fCursorData[0], (unsigned long)fCursorData[1],
+		      (unsigned long)fCursorData[w], (unsigned long)fCursorData[w + 1]);
+	}
+
+	/* The card reads little-endian words; the rest is transparent. */
+	dst = (volatile UInt32 *)((volatile UInt8 *)aperture() + CURSOR_OFFSET);
+	for (y = 0; y < RDN_CURSOR_SIZE; y++)
+		for (x = 0; x < RDN_CURSOR_SIZE; x++)
+			dst[y * RDN_CURSOR_SIZE + x] = (x < w && y < h) ?
+				OSSwapHostToLittleInt32(fCursorData[y * w + x]) : 0;
+	fCursorLoaded = true;
+	rdn_cursor_set(&fCard, CURSOR_OFFSET, fCursorX, fCursorY, fCursorVisible);
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNI::setCursorState(SInt32 x, SInt32 y, bool visible)
+{
+	if (!fHWCursor)
+		return kIOReturnUnsupported;
+	fCursorX = x;
+	fCursorY = y;
+	fCursorVisible = visible;
+	if (fCursorLoaded)
+		rdn_cursor_set(&fCard, CURSOR_OFFSET, x, y, visible);
+	return kIOReturnSuccess;
+}
 
 volatile void *RadeonNI::aperture()
 {

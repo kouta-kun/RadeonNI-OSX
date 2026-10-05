@@ -29,7 +29,7 @@ CFLAGS_COMMON = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter
 CFLAGS_UPSTREAM = $(CFLAGS_COMMON) -Wno-sign-compare -Wno-type-limits \
 	-Wno-unused-variable -Wno-unused-but-set-variable
 
-HW_OBJS   = hw/rdn_mem.o hw/rdn_gpu.o hw/rdn_cp.o hw/rdn_selftest.o hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_mode.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
+HW_OBJS   = hw/rdn_cursor.o hw/rdn_mem.o hw/rdn_gpu.o hw/rdn_cp.o hw/rdn_selftest.o hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_mode.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
 HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h hw/linux/*.h)
 
 TESTS     = atom_replay i2c_edid modeset_replay accel_replay mem_alloc
