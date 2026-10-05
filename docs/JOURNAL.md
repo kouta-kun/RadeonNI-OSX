@@ -1584,3 +1584,43 @@ right place and is bound, but the window server asks to read the surface
 answer `readLock`: the drawable has to be a linear buffer in video memory
 that the bundle registers with the kext.
 
+## 2026-10-05 — Chess, started normally, drawn and shown by the card
+
+**What the window server does with a program's surface** (GL trace of the
+window server, `/tmp/rdngld.trace`): in its own picture it draws an
+untextured white rectangle over the surface's area (texturing off, colour
+ffffffff, no blending) and flushes that to the screen with everything
+else. Putting the surface there is left to the driver. It also read-locks
+the surface now and then (`readLockOptions(2)`), and unlocks.
+
+**Built.**
+- The bundle keeps each surface's finished picture in a linear buffer in
+  video memory (64-pixel row multiple) that it allocates and registers
+  with the kext (`RDN_UC_SURFACE_BUFFER`); the frame is copied there and
+  to the screen at every `glSwapAPPLE`.
+- The kext answers read locks by mapping that part of the aperture,
+  read-only, into the asking task, and lists the registered surfaces
+  (`RDN_UC_SURFACE_LIST`).
+- In the window server, after each `glFlush`, the bundle copies every
+  listed surface's picture over its visible rectangles
+  (`OSMesaShowStore`).
+- The drawable's size comes from `CGSGetSurfaceBounds` at once; the kext
+  learns the place a moment later, and the first swap waits for it (up to
+  half a second).
+
+**Observed (readback, 7570 as the only display).** `open
+/Applications/Chess.app`: the board with its textures, all pieces and
+reflections, in its window, right way up. It survives hiding and showing
+the program. A Finder window moved over it covers it correctly. A second
+GL window (`glwin`) runs beside it. Quitting leaves nothing behind; no
+crash log, no panic.
+
+**Wrong.** Where a window's shadow falls on a surface there is a white
+band: the window server takes the shadow's area out of the surface's
+shape and draws its white rectangle plus shadow there. Translucent things
+over a surface need the surface inside the window server's own
+compositing (as a texture), which this is not.
+
+**Not seen by the user yet.** Still opt-in: `/tmp/rdngld.surface` in the
+guest (or `RDN_GLD_SURFACE=1`).
+

@@ -80,11 +80,16 @@ been planned in detail.
   `docs/QUARTZ-EXTREME.md` has the gates, what the window server does and
   what is not done. The GPU copies each finished update to the screen;
   `/tmp/rdngld.copy` in the guest selects the older CPU copy. Open: it
-  looks a bit slow; and Apple's Chess is only drawn correctly by the card
-  when started from an ssh session with `RDN_GLD_EARLY=1` (journal,
-  2026-10-05, last entry). The Tiger build of Mesa needs
-  `-fno-strict-aliasing` (display lists break without it). The software cursor flickered slightly; use
-  `RDN_HWCURSOR=1`.
+  looks a bit slow. The Tiger build of Mesa needs `-fno-strict-aliasing`
+  (display lists break without it).
+- A4's second half works by readback (2026-10-05), not yet seen by the
+  user, and is opt-in (`touch /tmp/rdngld.surface` in the guest): a
+  program's OpenGL window is a window server surface, drawn by Mesa and
+  shown by the card, no CPU copy. Apple's Chess, started normally, is
+  correct that way. How it works and what is wrong (shadows over a
+  surface) is in the journal's last entries. Without the file, windows
+  go through the software renderer's buffer as before, and Chess is
+  wrong.
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
