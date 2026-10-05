@@ -19,6 +19,9 @@ REF_MODESET2 ?= traces/ref-radeon-3.phase-a3.txt
 # The same guest's driver start, for the one-time display setup
 REF_INIT   ?= traces/ref-radeon-3.phase-a1.txt
 
+FW_PFP     ?= firmware/TURKS_pfp.bin
+FW_ME      ?= firmware/TURKS_me.bin
+
 CFLAGS_COMMON = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter
 
 # Files taken from Linux are built with the warnings they do not pass
@@ -26,10 +29,10 @@ CFLAGS_COMMON = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter
 CFLAGS_UPSTREAM = $(CFLAGS_COMMON) -Wno-sign-compare -Wno-type-limits \
 	-Wno-unused-variable -Wno-unused-but-set-variable
 
-HW_OBJS   = hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_mode.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
-HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h)
+HW_OBJS   = hw/rdn_gpu.o hw/rdn_cp.o hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_mode.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
+HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h hw/linux/*.h)
 
-TESTS     = atom_replay i2c_edid modeset_replay
+TESTS     = atom_replay i2c_edid modeset_replay accel_replay
 
 X86_TESTS = $(addprefix build/x86/,$(TESTS))
 PPC_TESTS = $(addprefix build/ppc/,$(TESTS))
@@ -89,6 +92,9 @@ test: all
 			$(call run_test,modeset_replay,$(VBIOS) $(EDID) $(REF_MODESET) - 0 $(REF_INIT)); \
 			$(call run_test,modeset_replay,$(VBIOS) $(EDID) $(REF_MODESET2) 0 1); \
 		else echo "SKIP modeset_replay: need $(EDID) and $(REF_MODESET)"; fi; \
+		if [ -f $(FW_PFP) ] && [ -f $(FW_ME) ] && [ -f $(REF_INIT) ]; then \
+			$(call run_test,accel_replay,$(VBIOS) $(FW_PFP) $(FW_ME) $(REF_INIT)); \
+		else echo "SKIP accel_replay: need $(FW_PFP), $(FW_ME) and $(REF_INIT)"; fi; \
 	fi
 
 clean:

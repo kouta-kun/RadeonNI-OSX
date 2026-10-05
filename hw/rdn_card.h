@@ -21,14 +21,31 @@ struct rdn_card {
 	bool crtc_on;
 };
 
+/*
+ * The register BAR is 128 KB. Registers beyond it (the 3D engine's context
+ * registers) are reached through the index/data pair at its start, as
+ * Linux's r100_mm_rreg() and r100_mm_wreg() do.
+ */
+#define RDN_MMIO_SIZE		0x20000
+#define RDN_MMIO_INDEX		0x0000
+#define RDN_MMIO_DATA		0x0004
+
 static inline uint32_t rdn_rreg(struct rdn_card *card, uint32_t reg)
 {
-	return card->os->mmio_read32(card->os->cookie, reg);
+	if (reg < RDN_MMIO_SIZE)
+		return card->os->mmio_read32(card->os->cookie, reg);
+	card->os->mmio_write32(card->os->cookie, RDN_MMIO_INDEX, reg);
+	return card->os->mmio_read32(card->os->cookie, RDN_MMIO_DATA);
 }
 
 static inline void rdn_wreg(struct rdn_card *card, uint32_t reg, uint32_t val)
 {
-	card->os->mmio_write32(card->os->cookie, reg, val);
+	if (reg < RDN_MMIO_SIZE) {
+		card->os->mmio_write32(card->os->cookie, reg, val);
+		return;
+	}
+	card->os->mmio_write32(card->os->cookie, RDN_MMIO_INDEX, reg);
+	card->os->mmio_write32(card->os->cookie, RDN_MMIO_DATA, val);
 }
 
 /*
