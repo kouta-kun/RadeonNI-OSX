@@ -1236,3 +1236,20 @@ installed: the first real application, using NSOpenGL in a window.
 **Concluded.** An unmodified Apple OpenGL application runs on the driver.
 Still open from the previous entry: the stray `malloc` warning, the copy
 per frame, threads, and the user's own look at the 7570's monitor.
+
+## 2026-10-05 — Stray free fixed; full screen looked at; a window left on the 7570
+
+- The `malloc` warning: a pixel format answer is a chain of records linked
+  through word 0. Only the first carried our renderer ID, so CGL gave the
+  second to Apple's float renderer to destroy, which freed the middle of
+  our block. Every record now carries the ID; the warning is gone.
+- Full screen (A3's criterion as first written): the software renderer
+  returns no format when `kCGLPFAFullScreen` (54) is in the attribute
+  list, which CGL does pass on. Flag bits alone do not help. It needs the
+  bundle to answer that request and to handle the attach itself; not done.
+  Windows work, which matters more.
+- For the user's check: `glwin` left running for twelve hours with its
+  window at (200,200) on the 7570's own screen, 1920x1080. A grab of that
+  screen from video memory shows the Tiger desktop and the window with
+  Mesa's picture in it (the triangle is smeared in the grab only, because
+  reading the screen back takes longer than a frame).
