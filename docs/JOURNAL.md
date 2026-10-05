@@ -1973,3 +1973,16 @@ kext. Read over ssh:
 The package with `install.sh --accel` and the microcode is unpacked in
 the G5's `~/RadeonNI-g5` (the earlier one moved to `~/RadeonNI-g5.old`);
 not installed yet, the user runs it.
+
+## 2026-10-05 — The G5 boots with the accelerator; Quartz Extreme in use there
+
+The user ran `sudo ./install.sh --accel` on the G5 and restarted. Read
+over ssh 45 s after boot: the installed personality has `Accelerator`,
+the kext is loaded, and `~/gl/qe` says "display 0 (1366x768 at 0,0):
+Quartz Extreme in use". So the accelerator starting at boot from an
+installed kext works, and on the real machine. Not yet seen: what the
+user sees on the monitor, the kernel log, any OpenGL program.
+
+Host: `/etc/ssh/sshd_config.d/10-tiger.conf` (asked for by the user)
+adds `diffie-hellman-group14-sha1` and `ssh-rsa` so that Tiger's OpenSSH
+4.5 can connect to the host; negotiation from the G5 checked.

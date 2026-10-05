@@ -40,7 +40,11 @@ System Preferences and a software cursor.
   use it. Reach the G5 like the guest but on port 22: user `tiger`, key
   `private/ssh/tiger_rsa`, the old-algorithm options from
   `scripts/tiger.sh ssh`; `sudo` there asks for the password (`tiger`).
-  Open Firmware assigns the card's ROM BAR there (journal).
+  Open Firmware assigns the card's ROM BAR there (journal). Since the
+  same day it boots with `install.sh --accel` and `~/gl/qe` reports
+  Quartz Extreme in use; the user has not yet said what they see.
+- The host's sshd accepts Tiger's old ssh algorithms
+  (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including
   the G5 install package.
 - The guest: snapshots `clean-install` and `pre-kext-install` (no kext
