@@ -73,7 +73,13 @@ been planned in detail.
   off-screen and in windows; each frame is copied into the buffer Apple's
   code presents. Not done: full-screen contexts, presenting without the
   copy.
-- A5 to A7 have not started.
+- A5 (Quartz Extreme) is in progress by trial and error in the guest.
+  `docs/QUARTZ-EXTREME.md` lists what the window server checks and how far
+  it gets: every gate found so far is met (`RDN_ACCEL=1 RDN_ACCELCAPS=3
+  RDN_AGPSHIM=3 scripts/kext.sh up`) except a 2D accelerator (GA) plug-in
+  for the framebuffer, which does not exist yet. Nothing is composited with
+  OpenGL yet.
+- A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` installed in
   `/System/Library/Extensions`; the snapshots do not. It is inert unless
   the kext is loaded with `RDN_ACCEL=1`.
@@ -93,6 +99,8 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
 - `docs/REFERENCE-TRACE.md`: how the Linux driver's trace was captured, its
   phases and findings.
 - `docs/GLD-INTERFACE.md`: Apple's OpenGL driver interface as observed.
+- `docs/QUARTZ-EXTREME.md`: what the window server requires before it
+  composites with OpenGL, and how far it gets with us.
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
   Treat `[I]` as a hypothesis; fix the document when reality differs.
 
@@ -183,6 +191,12 @@ Keep these current as part of the work, and commit small and often.
   `scripts/build-mesa.sh darwin [targets]` builds Mesa with it;
   `.../build-darwin/src/gallium/targets/rdn/rdn_gltest` is the test program
   to copy into the guest (`-s` draws on the screen).
+- `scripts/guest-cycle.sh down`, then `sudo scripts/tiger.sh passthru
+  0000:10:00.0` in the background, then `scripts/guest-cycle.sh ready`: a
+  clean guest restart (a loaded framebuffer kext cannot be unloaded) with
+  the card's error masking re-applied. `TIGER_BOOTARGS=debug=0x100` makes
+  a guest kernel panic print its backtrace on the emulated screen.
+- `tools/guest/qe.c`: is Quartz Extreme in use on each display.
 - `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built kext
   with `g5/install.sh`, `g5/uninstall.sh` and `g5/README.txt` into
   `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real Mac.

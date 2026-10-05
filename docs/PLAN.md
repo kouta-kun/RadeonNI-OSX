@@ -225,7 +225,7 @@ app / WindowServer -> OpenGL.framework -> GLEngine (gli*)
 | A2 | Mesa on our winsys (x86 Linux, real card, no Linux DRM) | Mesa renders an animated test on the monitor; then the big-endian build under `qemu-ppc` does the same | **Works by readback 2026-10-05** on x86 and big-endian (`qemu-ppc`), pixel-identical; not yet confirmed on the monitor |
 | A3 | Kext accelerator + Mesa in Tiger | A full-screen CGL program in the guest renders on the 7570 | **Mostly done 2026-10-05**: kext engine and user client; Mesa built for Tiger; CGL contexts (off-screen and window) render through Mesa on the card. Not done: a full-screen context |
 | A4 | Windowed OpenGL | A windowed GL program on the desktop; a renderer query reports our renderer and GL 2.0 | **First form confirmed on the monitor by the user 2026-10-05** (tag `working-cpu-copy`): a GLUT program in a window renders through Mesa on the card (reports AMD TURKS, GL 3.2), by copying each frame into the window's buffer. Not done: presenting without the copy |
-| A5 | Quartz Extreme | Quartz Debug reports it enabled; user confirms the effects | not started |
+| A5 | Quartz Extreme | Quartz Debug reports it enabled; user confirms the effects | **In progress 2026-10-05**, by trial and error in the guest (QUARTZ-EXTREME.md): the window server's gates are mapped and met except one, a 2D accelerator (GA) plug-in; asked by hand it creates its context on our renderer. Nothing is composited with OpenGL yet |
 | A6 | Core Image | Hardware-rendered Core Image filters (Dashboard ripple) | not started |
 | A7 | Hardening | GART and interrupts, hardware cursor, 2D GA plug-in, performance, piglit subset | not started |
 

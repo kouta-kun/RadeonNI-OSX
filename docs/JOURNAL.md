@@ -1270,3 +1270,32 @@ per frame, threads, and the user's own look at the 7570's monitor.
   a read back and a CPU copy, and the window server composites in software.
 - Tagged `working-cpu-copy`. The user chose trial and error in the guest
   for Quartz Extreme over capturing the window server on the real G5.
+
+## 2026-10-05 — Quartz Extreme by trial and error: the window server's gates
+
+**Tried**, each a guest restart or a window server restart: `AccelCaps` on
+the accelerator; the whole aperture as VRAM; the stock configuration's AGP
+requirement changed to PCI (then restored); the window server's own check
+functions called from `gdb` in a test process and in the window server;
+registry shim objects to satisfy the AGP checks; a pixel format record made
+by the bundle; `CGXGLAccelForDisplayDevice` called from the debugger.
+
+**Observed.** All in `docs/QUARTZ-EXTREME.md`. Highlights:
+- The window server never contacted kext or bundle until asked by hand.
+- Three guest kernel panics while building the shim (host unaffected):
+  `IOPCIDevice::attach` and a registered PCI nub's generic calls
+  dereference a missing bridge. Panic text is readable with
+  `TIGER_BOOTARGS=debug=0x100`.
+- Apple's software renderer returns no pixel format inside the window
+  server, whatever is asked.
+- With the gates met, the window server creates its context on our
+  renderer and `qe` reports "Quartz Extreme in use" for the 7570's display,
+  but nothing is composited with it, and after a restart it does not try.
+- The reason it does not try: a display only gets the flags the update
+  path needs if `IOPSAllocateBlitEngine` succeeds, that is, if the
+  framebuffer has a 2D accelerator (GA) plug-in.
+
+**Concluded.** Next is a GA plug-in for the framebuffer (public interface,
+`IOGraphicsInterface.h`; VMsvga2 has an MIT one to learn from). After
+that, whatever the window server asks of its context and of the
+`IOAccelSurface` user client.
