@@ -16,6 +16,8 @@
 # Output: traces/<name>.log (QEMU trace), traces/<name>.serial (guest console).
 # Phases are delimited in the trace by config writes to the Interrupt Line
 # register (0x3c) of the VGA function: 0xa1, 0xa2, ... (see guest-init below).
+# The serial log also carries one "ATOM" line per AtomBIOS table execution
+# (kprobe on atom_execute_table), printed before the marker that ends a phase.
 
 set -euo pipefail
 
@@ -74,8 +76,22 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 
+# Log every AtomBIOS table execution with its parameter block: table index
+# and the first eight parameter words (as the CPU sees them, little-endian).
+mount -t tracefs trace /sys/kernel/tracing
+T=/sys/kernel/tracing
+ARGS='index=%si:u32 size=%cx:u32 p0=+0(%dx):x32 p1=+4(%dx):x32 p2=+8(%dx):x32 p3=+12(%dx):x32 p4=+16(%dx):x32 p5=+20(%dx):x32 p6=+24(%dx):x32 p7=+28(%dx):x32'
+echo "p:atom radeon:atom_execute_table $ARGS" >> $T/kprobe_events
+echo "p:atomu radeon:atom_execute_table_scratch_unlocked $ARGS" >> $T/kprobe_events
+echo 1 > $T/events/kprobes/enable
+atomlog() {
+    grep -E 'atomu?:' $T/trace | sed -E 's/^.* ([0-9.]+): (atomu?): \([^)]*\)/ATOM \1 \2/'
+    echo > $T/trace
+}
+
 DEV=01:01.0
 mark() {
+    atomlog
     echo "=== MARK $1 $2"
     setpci -s $DEV 3c.b=$1
 }

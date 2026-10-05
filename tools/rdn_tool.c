@@ -5,6 +5,7 @@
  *   rdn_tool [options] status      report POST state (read-only)
  *   rdn_tool [options] post        bring the card up (ASIC_Init if needed)
  *   rdn_tool [options] vramtest    write/read patterns through the aperture
+ *   rdn_tool [options] peek REG...  read registers (hex offsets)
  *   rdn_tool [options] edid [file] probe every DDC line for an EDID; save
  *                                  the first one found to file
  *
@@ -462,6 +463,14 @@ int main(int argc, char **argv)
 		}
 		printf("post returned %d\n", ret);
 		print_status(&card);
+	} else if (!strcmp(cmd, "peek")) {
+		int i;
+
+		for (i = optind + 1; i < argc; i++) {
+			uint32_t reg = (uint32_t)strtoul(argv[i], NULL, 16);
+
+			printf("%05x = %08x\n", reg, rdn_rreg(&card, reg));
+		}
 	} else if (!strcmp(cmd, "edid")) {
 		ret = edid_probe(&card, optind + 1 < argc ? argv[optind + 1] : NULL);
 	} else if (!strcmp(cmd, "vramtest")) {
