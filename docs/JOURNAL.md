@@ -1214,3 +1214,25 @@ per run. The row length of a window's buffer is assumed. The copy per
 frame; the proper path is a surface the kext presents. One Mesa context
 current per process. Nothing on the 7570's own monitor confirmed by the
 user.
+
+## 2026-10-05 — Apple's Chess renders through Mesa on the card
+
+**Tried.** `open -a Chess` in the guest with the Mesa-backed bundle
+installed: the first real application, using NSOpenGL in a window.
+
+**Observed.**
+- First attempt: Chess drew a frame and crashed in the copy into its
+  window's buffer (`osmesa_read_buffer` → `memcpy`). The row length of a
+  window's buffer is not its width: word 27 of the drawable record holds
+  the row length in pixels (the width rounded up to 16) and the bytes per
+  pixel. The engine also changes the record in place when the window is
+  resized, so the bundle now reads it before every use instead of copying
+  it at attach time.
+- After that: Chess stays up and shows its board, textured and lit, with
+  all pieces and their reflections (`build/shot-chess-mesa.png`, a
+  screenshot of the emulated display; the rendering is done by the 7570).
+  `glwin` at 333x251 and `glprobe` still pass.
+
+**Concluded.** An unmodified Apple OpenGL application runs on the driver.
+Still open from the previous entry: the stray `malloc` warning, the copy
+per frame, threads, and the user's own look at the 7570's monitor.

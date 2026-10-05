@@ -47,26 +47,22 @@
 #define DRAWABLE_WINDOW		0x50
 
 /*
- * What gldAttachDrawable's record says, as far as it is understood. The
- * off-screen record starts with width, height, row bytes and base; from
- * word 4 on, off-screen and window records agree: width, height, the same
- * again, 1, the type, a word, and the base address of the buffer to draw
- * into. For a window that buffer is the one Apple's software renderer
- * presents; its row length is taken to be the width.
+ * What gldAttachDrawable's record says, as far as it is understood, for
+ * off-screen drawables and windows alike (docs/GLD-INTERFACE.md): words
+ * 4 and 5 are width and height, word 11 the base address of the buffer to
+ * draw into, word 27 the row length in pixels (the width rounded up to 16
+ * for a window) in its high half and the bytes per pixel in its low half.
+ * The engine owns the record and changes it in place when a window is
+ * resized, so it is read again before every use.
  */
-struct drawable_record {
-	uint32_t head[4];
-	uint32_t width;
-	uint32_t height;
-	uint32_t width2;
-	uint32_t height2;
-	uint32_t one;
-	uint32_t type;
-	uint32_t unknown;
-	void *base;
+enum {
+	REC_WIDTH = 4,
+	REC_HEIGHT = 5,
+	REC_BASE = 11,
+	REC_ROW = 27
 };
 
-struct offscreen_drawable {
+struct drawable {
 	uint32_t width;
 	uint32_t height;
 	uint32_t rowbytes;
@@ -78,7 +74,9 @@ struct context {
 	void *rend;
 	OSMesaContext mesa;
 	long type;
-	struct offscreen_drawable drawable;
+	const uint32_t *record;
+	/* What Mesa is bound to now; compared with the record. */
+	struct drawable drawable;
 	int bound;
 };
 
@@ -129,32 +127,39 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 	memset(c, 0, sizeof(*c));
 }
 
+/* Read the engine's record; false if there is nothing to draw into. */
+static int read_record(const struct context *c, struct drawable *d)
+{
+	const uint32_t *r = c->record;
+
+	memset(d, 0, sizeof(*d));
+	if (!r || (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
+		return 0;
+	d->width = r[REC_WIDTH];
+	d->height = r[REC_HEIGHT];
+	d->rowbytes = (r[REC_ROW] >> 16) * (r[REC_ROW] & 0xffff);
+	d->base = (void *)(uintptr_t)r[REC_BASE];
+	return d->base && d->width && d->height && (r[REC_ROW] & 0xffff) == 4 &&
+	       d->rowbytes >= d->width * 4;
+}
+
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 {
 	struct context *c = find(gld_ctx);
+	struct drawable d;
 
 	if (!c)
 		return;
 	c->type = type;
+	c->record = drawable;
 	c->bound = 0;
-	memset(&c->drawable, 0, sizeof(c->drawable));
-	if (type == DRAWABLE_OFFSCREEN && drawable) {
-		memcpy(&c->drawable, drawable, sizeof(c->drawable));
-	} else if (type == DRAWABLE_WINDOW && drawable) {
-		const struct drawable_record *r = drawable;
-
-		c->drawable.width = r->width;
-		c->drawable.height = r->height;
-		c->drawable.rowbytes = r->width * 4;
-		c->drawable.base = r->base;
-	}
 	/* The next GL call binds the new drawable. */
 	if (c->rend && c->rend == rdn_current_rend)
 		rdn_current_rend = NULL;
+	read_record(c, &d);
 	rdn_log("attach: context %p, type 0x%lx, %ux%u, rowbytes %u, base %p",
-		gld_ctx, type, (unsigned)c->drawable.width,
-		(unsigned)c->drawable.height, (unsigned)c->drawable.rowbytes,
-		c->drawable.base);
+		gld_ctx, type, (unsigned)d.width, (unsigned)d.height,
+		(unsigned)d.rowbytes, d.base);
 }
 
 static void *lookup(const char *name)
@@ -173,8 +178,9 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
 	void *app_table;
 	unsigned n;
 
-	if (!c || !c->drawable.base ||
-	    (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
+	struct drawable d;
+
+	if (!c || !read_record(c, &d))
 		return 0;
 	if (usable < 0) {
 		/* A context to find out whether the card is there at all. */
@@ -207,12 +213,13 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table)
 void rdn_make_current(void *rend)
 {
 	struct context *c = NULL;
+	struct drawable d;
 	int i;
 
 	for (i = 0; i < MAX_CONTEXTS; i++)
 		if (contexts[i].gld_ctx && contexts[i].rend == rend)
 			c = &contexts[i];
-	if (!c || !c->drawable.base) {
+	if (!c || !read_record(c, &d)) {
 		rdn_log("GL call on engine context %p, which has no drawable of ours", rend);
 		return;
 	}
@@ -222,26 +229,36 @@ void rdn_make_current(void *rend)
 		return;
 	/*
 	 * 32-bit ARGB words in the host's byte order, which is what both
-	 * CGL's off-screen buffers and OSMESA_BGRA with GL_UNSIGNED_BYTE are.
+	 * CGL's buffers and OSMESA_BGRA with GL_UNSIGNED_BYTE are.
 	 */
-	if (!OSMesaMakeCurrent(c->mesa, c->drawable.base, GL_UNSIGNED_BYTE,
-			       (GLsizei)c->drawable.width, (GLsizei)c->drawable.height)) {
+	if (!OSMesaMakeCurrent(c->mesa, d.base, GL_UNSIGNED_BYTE,
+			       (GLsizei)d.width, (GLsizei)d.height)) {
 		rdn_log("OSMesaMakeCurrent failed for context %p", c->gld_ctx);
 		return;
 	}
-	OSMesaPixelStore(OSMESA_ROW_LENGTH, (GLint)(c->drawable.rowbytes / 4));
+	OSMesaPixelStore(OSMESA_ROW_LENGTH, (GLint)(d.rowbytes / 4));
+	c->drawable = d;
 	c->bound = 1;
 	rdn_current_rend = rend;
+}
+
+/* True if the engine's record no longer says what Mesa is bound to. */
+static int drawable_changed(const struct context *c)
+{
+	struct drawable d;
+
+	return !read_record(c, &d) || memcmp(&d, &c->drawable, sizeof(d)) != 0;
 }
 
 void rdn_mesa_present(void *gld_ctx)
 {
 	struct context *c = find(gld_ctx);
+	struct drawable d;
 
-	if (!c || !c->rend || !c->drawable.base || !mesa_finish)
+	if (!c || !c->rend || !mesa_finish || !read_record(c, &d))
 		return;
-	if (c->rend != rdn_current_rend)
+	if (c->rend != rdn_current_rend || !c->bound || drawable_changed(c))
 		rdn_make_current(c->rend);
-	if (c->rend == rdn_current_rend)
+	if (c->rend == rdn_current_rend && c->bound)
 		mesa_finish();
 }

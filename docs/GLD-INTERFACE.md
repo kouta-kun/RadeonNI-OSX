@@ -114,7 +114,9 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
 - `gldAttachDrawable(ctx, 0x50, record, ...)` for a window. From word 4 on
   the record matches the off-screen one: width, height, the same again, 1,
   the type, a word, and at word 11 the base address of a buffer of 32-bit
-  ARGB pixels (row length assumed to be the width). The first three words
+  ARGB pixels. Word 27 holds the row length in pixels in its high half
+  (the width rounded up to a multiple of 16) and the bytes per pixel in
+  its low half; the off-screen record has the same word. The first three words
   look like connection, window and surface identifiers.
 - The table the driver fills at `gldInitDispatch` (33 entries) is what the
   engine calls to do the work. Counted per frame of a test program: entry

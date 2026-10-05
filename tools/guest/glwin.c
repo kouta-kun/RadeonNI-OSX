@@ -97,7 +97,8 @@ int main(int argc, char **argv)
 	if (argc > 4)
 		skip = atoi(argv[4]);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
-	glutInitWindowSize(320, 240);
+	glutInitWindowSize(getenv("GLWIN_W") ? atoi(getenv("GLWIN_W")) : 320,
+			   getenv("GLWIN_H") ? atoi(getenv("GLWIN_H")) : 240);
 	glutInitWindowPosition(x, y);
 	glutCreateWindow("glwin");
 	glutDisplayFunc(display);
