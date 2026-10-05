@@ -80,7 +80,8 @@ been planned in detail.
   `docs/QUARTZ-EXTREME.md` has the gates, what the window server does and
   what is not done. The GPU copies each finished update to the screen;
   `/tmp/rdngld.copy` in the guest selects the older CPU copy. Open: it
-  looks a bit slow, and the software cursor flickers slightly.
+  looks a bit slow. The software cursor flickered slightly; use
+  `RDN_HWCURSOR=1`.
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
@@ -178,7 +179,9 @@ Keep these current as part of the work, and commit small and often.
   shows every `gld*` call made to it (`/tmp/rdngld.log` in the guest).
 - `RDN_HWCURSOR=1` with `scripts/kext.sh up`: the card's hardware cursor
   (`hw/rdn_cursor.c`) instead of `IOFramebuffer` drawing the cursor with
-  the CPU. Not yet confirmed on the monitor.
+  the CPU. Confirmed on the monitor by the user (2026-10-05) with
+  `~/gl/curmove` (`tools/guest/curmove.c`), which moves the pointer over a
+  display for a given time.
 - `scripts/ga.sh {build|install|uninstall}`: the 2D accelerator plug-in
   (`ga/RadeonNIGA.plugin`) the window server wants before it tries Quartz
   Extreme; built and installed in the guest like the GL bundle.

@@ -1403,3 +1403,12 @@ is not in the scanout surface, so it cannot be read back.
 assumed the converted pixels are packed at the cursor's width and that
 their colours are already multiplied by alpha.
 
+## 2026-10-05 — Hardware cursor confirmed on the monitor by the user
+
+`tools/guest/curmove.c` moved the pointer over the 7570's display
+(mouse-moved events, 60 a second). **The user:** the arrow looks fine, it
+moves with no corruption and leaves nothing behind; some blur they put
+down to the TV. So both assumptions held: `convertCursorImage` with a
+32-bit descriptor gives rows packed at the cursor's width, colours
+already multiplied by alpha.
+

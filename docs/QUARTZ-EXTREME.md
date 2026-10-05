@@ -150,9 +150,9 @@ bit slow and the cursor flickers slightly.
   (correct, slower).
 - Applications' OpenGL windows are still drawn into their windows' buffers
   (A4), not into surfaces of their own.
-- The software cursor is drawn by `IOFramebuffer` with the CPU into the
-  screen the GPU now draws on; whether it leaves marks has to be seen on
-  the monitor. A hardware cursor would settle it.
+- The software cursor, drawn by `IOFramebuffer` with the CPU into the
+  screen the GPU copies to, flickered slightly. The hardware cursor
+  (`RDN_HWCURSOR=1`) replaces it and is confirmed by the user.
 - `glGetIntegerv(GL_VIEWPORT)` and the raster position are not moved to
   the region's corner. The window server has not used them.
 
