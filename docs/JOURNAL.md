@@ -1624,3 +1624,40 @@ compositing (as a texture), which this is not.
 **Not seen by the user yet.** Still opt-in: `/tmp/rdngld.surface` in the
 guest (or `RDN_GLD_SURFACE=1`).
 
+## 2026-10-05 — Dragging a surface window: white, flicker and trails, and the fix
+
+**Seen by the user** (and in their recording): Chess as a surface is
+complete and the right way up; dragged, its window flickers, stays white
+at some positions and leaves copies of the board behind.
+
+**Cause.** The surface was laid over the window server's finished frame
+after its flush, at the shape the kext had been told. While the window
+server drags a window that shape is one step behind its drawing, so the
+board went to the old place (trail) and the new place kept the window
+server's white rectangle; and two copies to the screen per frame flicker.
+A window that moves itself (`tools/guest/surfmove.c`) does not show it:
+there the shape arrives first.
+
+**Fix.** The window server's placeholder is recognised as it is drawn: a
+quad with texturing off and white, whose texture coordinates are the part
+of the surface it stands for. The bundle watches those calls in the
+window server (`gen_dispatch.py`, `WATCHED`) and copies that part of the
+surface's picture over the quad in the window server's own drawing buffer
+at that moment (`OSMesaDrawStore`). What the window server draws
+afterwards (windows in front, shadows, the Dock, translucent panels) lands
+on top, and it all reaches the screen in the window server's one flush. A
+swap now stores the picture and calls `CGSFlushSurface(connection,
+window, surface, NULL)`, which has the window server draw the area again;
+writing to the screen from the program is kept only behind
+`RDN_GLD_DIRECT_SWAP=1`.
+
+**Observed (readback).** Chess dragged slowly and fast with
+`tools/guest/drag.c` (mouse events posted inside the guest; QMP's
+absolute positions land in the wrong place without the emulated display):
+right at a held mid-drag position and after release, no white, no copies
+left behind. The speech panel and the Dock are blended over the board;
+the white box and the white shadow band of the earlier entry are gone.
+
+**Not measured.** Every frame of a program now goes through the window
+server, which is slower than writing to the screen.
+

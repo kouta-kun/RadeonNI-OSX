@@ -86,8 +86,10 @@ been planned in detail.
   user, and is opt-in (`touch /tmp/rdngld.surface` in the guest): a
   program's OpenGL window is a window server surface, drawn by Mesa and
   shown by the card, no CPU copy. Apple's Chess, started normally, is
-  correct that way. How it works and what is wrong (shadows over a
-  surface) is in the journal's last entries. Without the file, windows
+  correct that way, also while its window is dragged (the user saw
+  the first version flicker and leave trails; the fix is checked by
+  readback only). How it works is in the journal's last entries.
+  `~/gl/drag x0 y0 x1 y1` drags with the mouse from inside the guest. Without the file, windows
   go through the software renderer's buffer as before, and Chess is
   wrong.
 - A6 and A7 have not started.
