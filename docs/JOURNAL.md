@@ -1876,3 +1876,25 @@ problem.
 timings or generated. Not known: whether Quake's key input works full
 screen (it did not in a window, the user says).
 
+## 2026-10-05 — Quake 3 in a map: floors and ceilings black; narrowed to client arrays with two texture units
+
+**Seen by the user** full screen in a map: very dark, floors and ceilings
+pure black, walls about right.
+
+**Narrowed with Quake's own switches** (readback of q3dm1, and the user's
+eyes): right with `r_lightmap 1` (lightmaps alone), `r_vertexLight 1`
+(textures alone), `r_ext_multitexture 0` (two passes) and with
+`r_primitives 3` (the same multitextured draws, vertex by vertex with
+`glMultiTexCoord`). Wrong with the default: multitexturing from client
+arrays (`glDrawElements`, `GL_UNSIGNED_INT`, separate coordinate arrays
+with stride 0, `glLockArraysEXT`, the second unit's array left enabled).
+Mipmapping and compiled vertex arrays make no difference.
+
+**Not reproduced.** `tools/guest/mtex.c` draws that way in every
+combination I could think of (two coordinate sets told apart by a
+half-black texture, lock, stale enabled array, contents changed between
+draws) and is right each time. So the cause is something else Quake does
+in that path. Next: dump the arrays of one wrong draw from Quake itself.
+
+**Workaround for the user:** `+set r_primitives 3`.
+
