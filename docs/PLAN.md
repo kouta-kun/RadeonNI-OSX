@@ -9,9 +9,9 @@ wherever its criterion involves video output.
 | # | Milestone | State |
 |---|---|---|
 | 0 | Know the card, capture ground truth | **Done 2026-10-04** (see REFERENCE-TRACE.md, HARDWARE.md) |
-| 1 | Tiger in QEMU with the card passed through | Nearly done: the card is an `IOPCIDevice` in Tiger with BAR0 and BAR2 assigned by unpatched OpenBIOS; register access from inside the guest still to be shown (probe kext) |
+| 1 | Tiger in QEMU with the card passed through | **Done 2026-10-04**: `IOPCIDevice` with BAR0/BAR2 assigned; a probe kext reads the registers through BAR2 (needs the QEMU PCI-hole patch) |
 | 2 | Cold POST and modeset from Linux userspace | In progress: cold POST works on the real card and VRAM is usable without microcode; EDID and modeset not started |
-| 3 | `IOFramebuffer` kext in Tiger on QEMU | Not started |
+| 3 | `IOFramebuffer` kext in Tiger on QEMU | Skeleton only: probe kext builds in the guest, loads by hand, matches the card and reads registers |
 
 ## Needed from the user
 

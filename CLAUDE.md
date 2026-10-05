@@ -23,14 +23,14 @@ Milestone 2 is in progress: our library cold-POSTs the real card (same
 register sequence as Linux, with or without the I/O BAR) and the video
 memory works without the MC microcode. EDID over DDC and the DCE5 modeset
 are next. The target mode is the EDID's preferred one, 1366x768. Milestone 1
-is nearly done: the Tiger guest (10.4.11, Xcode 2.5, snapshot
-`clean-install`, user `tiger` / password `tiger`, `scripts/tiger.sh ssh`)
-boots with the card passed through and sees it as an `IOPCIDevice` with
-BAR0 at `0x90000000` and BAR2 at `0xa0000000`. OpenBIOS assigns neither the
-I/O BAR nor the expansion ROM. Next there: a probe kext that maps BAR2 and
-reads registers. `radeon` is blacklisted on the host
-(`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host kernel
-oops; see the JOURNAL.
+is done: the Tiger guest (10.4.11, Xcode 2.5, snapshot `clean-install`,
+user `tiger` / password `tiger`, `scripts/tiger.sh ssh`) boots with the card
+passed through, sees it as an `IOPCIDevice` with BAR0 at `0x90000000` and
+BAR2 at `0xa0000000`, and the probe kext in `kext/RadeonNI` reads its
+registers. That needs the patched QEMU (`patches/qemu/`). OpenBIOS assigns
+neither the I/O BAR nor the expansion ROM. `radeon` is blacklisted on the
+host (`/etc/modprobe.d/osx-gpu.conf`) because unbinding it led to a host
+kernel oops; see the JOURNAL. Milestone 3 has only that probe skeleton.
 `docs/PLAN.md` has the milestone states and the list of things needed from
 the user; check it first.
 
@@ -87,7 +87,8 @@ Keep these current as part of the work, and commit small and often.
   register trace to `traces/`; it needs sudo, and so does `guest-ctl.py`
   while that guest runs.
 
-The kext does not exist yet. Add its commands here when it does.
+- `scripts/kext.sh {build|load|unload|log}`: build `kext/RadeonNI` inside the
+  running guest with its Makefile and load it from `/tmp` with `kextload`.
 
 ## Architecture
 
@@ -105,6 +106,9 @@ The kext does not exist yet. Add its commands here when it does.
   index/data behaviour.
 - `tools/rdn_tool.c` is the Linux sysfs implementation of the OS layer and
   the milestone 2 front end.
+- `kext/RadeonNI/` is the Tiger kext, built in the guest by a plain Makefile
+  (no Xcode project). Today it is a probe `IOService`; it will become the
+  `IOFramebuffer` subclass and link the `hw/` library.
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.

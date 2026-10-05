@@ -260,5 +260,25 @@ while `guest-wait.sh` is running.
 
 ## Patches
 
-None yet. Patches to QEMU or OpenBIOS live in `patches/` as `git format-patch`
-files against a recorded upstream commit, and are described here.
+Patches live in `patches/qemu/` and are applied by `scripts/build-qemu.sh`
+when it unpacks the source. After adding one to an existing tree, apply it by
+hand and run `ninja qemu-system-ppc` in `third_party/qemu/`.
+
+| Patch | Why |
+|---|---|
+| `0001-uninorth-widen-mac99-pci-hole.patch` | `mac99`'s main PCI bus exposed only `0x80000000`-`0x8fffffff` to the CPU. OpenBIOS puts the card's BARs at `0x90000000` and `0xa0000000`, which read as zeros without reaching the device. The patch widens the alias to `0x80000000`-`0xefffffff`. |
+
+OpenBIOS is not patched.
+
+## Building and loading the kext
+
+With a passthrough guest running:
+
+    scripts/kext.sh build     # tar hw/ and kext/ to the guest, make there
+    scripts/kext.sh load      # root-owned copy in /tmp/rdnkext, kextload
+    scripts/kext.sh log       # the driver's lines from the kernel log
+    scripts/kext.sh unload
+
+Notes for Apple gcc 4.0.1 on PowerPC: no `-mkernel`; link the objects before
+`-lkmodc++ -lkmod -lcc_kext`; `OSBundleLibraries` for `com.apple.kernel.*`
+at version 6.0.

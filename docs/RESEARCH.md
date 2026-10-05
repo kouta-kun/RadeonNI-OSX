@@ -149,7 +149,7 @@ pc297, MacRumors, 2022–2025: [thread](https://forums.macrumors.com/threads/rad
 | Aspect | Status |
 |---|---|
 | Config space, MMIO BARs, INTx | Works [V] |
-| 64-bit BARs | OpenBIOS maps them in 32-bit space [V]; `mac99` PCI hole is 0x80000000 + 0x70000000 [V]; the 7570's 256 MB BAR0 is assigned at 0x90000000 by unpatched OpenBIOS [V, 2026-10-04] |
+| 64-bit BARs | OpenBIOS maps them in 32-bit space [V]; the 0x80000000 + 0x70000000 PCI hole is the U3 (G5) variant; the 32-bit `mac99` main bus exposes only 0x80000000 + 0x10000000 and needs a QEMU patch for anything larger [V, 2026-10-04]; the 7570's 256 MB BAR0 is assigned at 0x90000000 by unpatched OpenBIOS [V, 2026-10-04] |
 | PCIe | `mac99` only has UniNorth PCI/AGP bridges [V] |
 | ROM | OpenBIOS assigns neither the expansion ROM nor the I/O BAR of the 7570 [V, 2026-10-04]; the ROM can be supplied with `romfile=` or read from a file |
 | `x-vga` | Designed for PCs; do not use [I] |

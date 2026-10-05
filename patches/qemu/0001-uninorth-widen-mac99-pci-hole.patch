@@ -1,0 +1,18 @@
+--- a/hw/pci-host/uninorth.c
++++ b/hw/pci-host/uninorth.c
+@@ -152,9 +152,14 @@
+     memory_region_init_io(&s->pci_io, OBJECT(s), &unassigned_io_ops, obj,
+                           "unin-pci-isa-mmio", 0x00800000);
+ 
++    /*
++     * osx-gpu: expose 0x80000000-0xefffffff instead of the first 256 MB
++     * only. OpenBIOS assigns large BARs of passed-through devices above
++     * 0x90000000, which the CPU could not reach otherwise.
++     */
+     memory_region_init_alias(&s->pci_hole, OBJECT(s),
+                              "unin-pci-hole", &s->pci_mmio,
+-                             0x80000000ULL, 0x10000000ULL);
++                             0x80000000ULL, 0x70000000ULL);
+ 
+     sysbus_init_mmio(sbd, &h->conf_mem);
+     sysbus_init_mmio(sbd, &h->data_mem);

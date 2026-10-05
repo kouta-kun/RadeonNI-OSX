@@ -473,3 +473,44 @@ effect, `scripts/card-bind.sh vfio`, then
 The user chose the load-from-file route over patching OpenBIOS to assign the
 ROM BAR. Reading the VBIOS from the expansion ROM is deferred to the real G5
 and listed in PLAN.md under "Deferred to the real G5".
+
+## 2026-10-04 — Probe kext reads the card's registers from inside Tiger; QEMU patched
+
+**Tried.** `kext/RadeonNI`: an `IOService` matching `IOPCIMatch 0x675d1002`
+that maps BAR2 with `mapDeviceMemoryWithRegister` and logs `CRTC_CONTROL`,
+`CONFIG_MEMSIZE` and `MC_SEQ_MISC0`. Built in the guest with a plain
+Makefile (`scripts/kext.sh build`), loaded with `kextload` from `/tmp`.
+
+**Observed.**
+
+- Build problems, in order: `-mkernel` is not accepted by Apple's PowerPC
+  gcc 4.0.1 (use `-static` only); `OSBundleLibraries` versions of 8.0.0 for
+  `com.apple.kernel.*` are rejected on 10.4.11, 6.0 is accepted (Apple's own
+  ATI kexts ask for 1.0.0b1); with `-lkmodc++` before the objects on the
+  link line, `kld` fails with undefined `.constructors_used` /
+  `.destructors_used`, so the libraries go after the objects.
+- First load: the kext matched, mapped BAR2 at physical `0xa0000000`, and
+  read 0 from every register. The host trace showed no access at all.
+- Cause: in QEMU 11.1.1 the 32-bit `mac99` main PCI bus aliases only
+  `0x80000000`-`0x8fffffff` of PCI memory into the CPU's address space
+  (`hw/pci-host/uninorth.c`; the 0x70000000-sized hole RESEARCH.md quoted is
+  the U3/G5 variant). OpenBIOS's own `ranges` property says the same 256 MB,
+  yet it assigned the card's BARs at `0x90000000` and `0xa0000000`.
+- Patch `patches/qemu/0001-uninorth-widen-mac99-pci-hole.patch`: the alias
+  now covers `0x80000000`-`0xefffffff`. OpenBIOS is unchanged.
+- Second load, patched QEMU: `CRTC0..5_CONTROL` = `00400110`,
+  `CONFIG_MEMSIZE` = 0, `MC_SEQ_MISC0` = 0, the values of the un-POSTed card.
+  The host trace shows the same eight reads at `region2+0x6e70` ... with the
+  same values. Unload works. Host kernel untainted throughout.
+
+**Concluded.**
+
+- Milestone 1's criterion is met: `IOPCIDevice` in `ioreg`, BARs assigned,
+  and BAR2 accessible from kernel code in Tiger, byte order included.
+  BAR0 (the aperture) has the same mapping path but has not been touched
+  from the guest yet.
+- The device tree still advertises a 256 MB memory range for the bus, and
+  the bridge's address-select register still describes 256 MB. Tiger mapped
+  the BAR anyway. If something later depends on those, OpenBIOS and the
+  bridge register need the matching change.
+- The in-guest build loop works and takes seconds.
