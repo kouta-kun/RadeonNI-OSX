@@ -4,6 +4,9 @@
 # (and rdn_gltest next to it).
 #
 #   scripts/build-mesa.sh [x86]     fetch if needed, prepare, configure, build
+#   scripts/build-mesa.sh darwin [targets]
+#                                   for Mac OS X 10.4 on PowerPC, in the
+#                                   toolchain container (scripts/darwin.sh)
 #   scripts/build-mesa.sh ppc       the GL test program for big-endian
 #                                   PowerPC Linux, static, to run under
 #                                   third_party/qemu/qemu-ppc
@@ -95,8 +98,50 @@ INI
     ninja -C build-ppc src/gallium/targets/rdn/rdn_gltest
     ls -l build-ppc/src/gallium/targets/rdn/rdn_gltest
     ;;
+darwin)
+    # Mac OS X 10.4 on PowerPC, with the toolchain container
+    # (scripts/darwin.sh image). Extra arguments are ninja targets.
+    compat=$tp/darwin8-compat
+    mkdir -p "$compat"
+    rsync -a --delete "$root/mesa/darwin8/" "$compat/src/"
+    "$root/scripts/darwin.sh" sh -c "powerpc-apple-darwin8-gcc -O2 -Wall \
+        -mmacosx-version-min=10.4 -c -o $compat/tiger_compat.o \
+        $root/mesa/darwin8/tiger_compat.c && \
+        powerpc-apple-darwin8-ar rcs $compat/libtigercompat.a $compat/tiger_compat.o"
+    cat > "$tp/mesa-darwin-cross.ini" <<INI
+[binaries]
+c = 'powerpc-apple-darwin8-gcc'
+cpp = 'powerpc-apple-darwin8-g++'
+objc = 'powerpc-apple-darwin8-gcc'
+ar = 'powerpc-apple-darwin8-ar'
+strip = 'powerpc-apple-darwin8-strip'
+ranlib = 'powerpc-apple-darwin8-ranlib'
+pkg-config = 'false'
+
+[built-in options]
+c_args = ['-mmacosx-version-min=10.4', '-isystem', '$compat/src/include']
+cpp_args = ['-mmacosx-version-min=10.4', '-isystem', '$compat/src/include', '-include', '$compat/src/tiger_compat.h']
+objc_args = ['-mmacosx-version-min=10.4', '-isystem', '$compat/src/include']
+objc_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '$compat/libtigercompat.a']
+c_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '$compat/libtigercompat.a']
+cpp_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-static-libstdc++', '$compat/libtigercompat.a']
+
+[host_machine]
+system = 'darwin'
+cpu_family = 'ppc'
+cpu = 'ppc7400'
+endian = 'big'
+INI
+    shift || true
+    [ -f build-darwin/build.ninja ] || "$root/scripts/darwin.sh" meson setup build-darwin \
+        "${common[@]}" --cross-file "$tp/mesa-darwin-cross.ini" \
+        -Dxmlconfig=disabled -Dshader-cache=disabled \
+        -Dzlib:default_library=static -Dexpat:default_library=static \
+        --wrap-mode=nodownload
+    "$root/scripts/darwin.sh" ninja -C build-darwin "$@"
+    ;;
 *)
-    echo "usage: $0 [x86|ppc]" >&2
+    echo "usage: $0 [x86|ppc|darwin]" >&2
     exit 2
     ;;
 esac
