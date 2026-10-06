@@ -2740,3 +2740,24 @@ file; no file, no glthread. On the G5 the file names `Quake3` and
 nothing in the environment, 115.5 with `RDN_GLTHREAD=0`; Doom 3 `bench`
 21.5 fps from the list. The installer does not create the file; the
 package's README says how.
+
+## 2026-10-06 — The GeForce 6600 LE on the same benchmarks
+
+Same G5, same scripts, 1920x1080 at 32 bpp, Apple's `GeForce` 4.1.8.
+
+| | Radeon, no glthread | Radeon, glthread | GeForce 6600 LE |
+|---|---|---|---|
+| Doom 3 `bench` | 16.3 | 21.3 to 21.5 | 26.2 |
+| Doom 3 `bench2` | 17.6 | 22.1 | 18.7 |
+| Quake 3 `four` | 115.5 | 144.0 | 127.8 |
+| Quake 3 `four`, no sound | 130.5 | 163.3 | 139.1 |
+
+Each GeForce figure is two runs that agree to the decimal. This
+morning's Quake 3 on the Radeon was 47.8.
+
+Profiles of the two saves on the GeForce (`sample`, main thread): Apple's
+OpenGL driver running 39 % (`bench`) and 27 % (`bench2`), waiting in the
+kernel under OpenGL calls 7 % and 5 %, the rest Doom's own code, which is
+most of `bench2`. So the GeForce is not waiting for its GPU in these
+scenes either; both cards are limited by the processor, and the
+difference between them is how much of it the driver takes.
