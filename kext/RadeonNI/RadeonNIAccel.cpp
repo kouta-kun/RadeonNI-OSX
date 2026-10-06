@@ -453,6 +453,18 @@ IOReturn RadeonNIAccel::power(UInt32 state, UInt32 what, UInt32 *sclk,
 	return r ? kIOReturnIOError : kIOReturnSuccess;
 }
 
+IOReturn RadeonNIAccel::regRead(UInt32 offset, UInt32 *value)
+{
+	struct rdn_card *card = fAccel.card;
+
+	if (!card || (offset & 3) || offset >= RDN_MMIO_SIZE)
+		return kIOReturnBadArgument;
+	IOLockLock(fLock);
+	*value = rdn_rreg(card, offset);
+	IOLockUnlock(fLock);
+	return kIOReturnSuccess;
+}
+
 void RadeonNIAccel::syncForCPU(void)
 {
 	IOLockLock(fLock);
@@ -690,6 +702,8 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 0, 1 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodPower,
 		  kIOUCScalarIScalarO, 2, 3 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodRegRead,
+		  kIOUCScalarIScalarO, 1, 1 },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -770,6 +784,11 @@ IOReturn RadeonNIUserClient::methodPower(UInt32 state, UInt32 what,
 					 UInt32 *temperature)
 {
 	return fAccel->power(state, what, sclk, mclk, temperature);
+}
+
+IOReturn RadeonNIUserClient::methodRegRead(UInt32 offset, UInt32 *value)
+{
+	return fAccel->regRead(offset, value);
 }
 
 IOReturn RadeonNIUserClient::methodSyncForCPU(void)

@@ -2239,3 +2239,38 @@ measured at 650 MHz.
 default at start (not before the lines are understood). The QEMU guest's
 bundle is older than all of this. `power` can be called by any local
 user.
+
+## 2026-10-06 — The lines: what the user saw, what was ruled out, a register peek for the next time
+
+**The user:** vertical stripes, white and black alternating, still, the
+whole screen, nothing of the desktop to make out. Still there after
+`rdnuc power boot 3`, after a mode set from ssh (`cgmode set 0 1920 1080
+16`, then 32) and after switching the monitor off and on. But during that
+mode switch, and again when the G5 restarted, they saw the desktop and
+its fade to black correctly. Their reading: not a driver thing.
+
+**Ruled out from ssh while the stripes were on the monitor:** no Quake
+process; the screen in video memory was the desktop with the menu bar
+clock advancing (two grabs); Quartz's gamma table was a clean ramp
+(`tools/guest/gamma.c`, new); the kext that was replaced this morning
+already had yesterday's HDMI changes, so the new kext boots the display
+the same way.
+
+**Not explained.** Identical rows and no picture look like a display
+controller that repeats its line buffer, but the desktop came back by
+itself during a mode switch and at logout, the two moments when the
+window server fades with the gamma table and hides the cursor. Which of
+this morning's steps started it is not known either: nobody was looking
+at the monitor between the restart at 09:05 and the report at about
+09:12.
+
+**For the next time:** `RDN_UC_REG_READ` in the kext and `rdnuc reg off
+[n]` read registers of the register BAR. After the restart (09:21):
+CRTC control 0x6e70 = 0x00410311 (read requests on), cursor 64x64 at
+aperture offset 0x01f00000. A Quake 3 run ended with `killall`, at the
+boot clocks, changes none of the display, cursor, PLL or memory arbiter
+registers I dump except the cursor's position.
+
+**Also measured:** at the boot clocks, with the swap and buffer changes,
+the demo runs at 80.8 fps. So most of the gain is the driver fixes; the
+engine clock is worth 80.8 -> 96.4.

@@ -6,6 +6,7 @@
  *   rdnuc grab file.ppm    save the screen as the card holds it
  *   rdnuc peek off [n]     print n words of video memory at aperture offset off
  *   rdnuc alloc            allocate, write, read back and free video memory
+ *   rdnuc reg off [n]      print n registers from offset off of the register BAR
  *   rdnuc power [performance|boot [what]]
  *                          print the card's clocks and temperature, after
  *                          switching power state if one is named; what is
@@ -126,6 +127,17 @@ int main(int argc, char **argv)
 			}
 		fclose(f);
 		printf("saved %ux%u\n", (unsigned)info.fb_width, (unsigned)info.fb_height);
+	} else if (!strcmp(cmd, "reg") && argc > 2) {
+		unsigned long off = strtoul(argv[2], NULL, 0);
+		int i, n = argc > 3 ? atoi(argv[3]) : 1, v;
+
+		for (i = 0; i < n; i++) {
+			v = 0;
+			if (IOConnectMethodScalarIScalarO(conn, RDN_UC_REG_READ, 1, 1,
+							  (int)(off + 4 * i), &v))
+				return 1;
+			printf("0x%05lx: 0x%08x\n", off + 4 * i, (unsigned)v);
+		}
 	} else if (!strcmp(cmd, "power")) {
 		int state = RDN_UC_POWER_QUERY, what = 7;
 		int sclk = 0, mclk = 0, temp = 0;

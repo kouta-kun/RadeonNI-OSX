@@ -80,6 +80,7 @@ public:
 	void syncForCPU(void);
 	IOReturn power(UInt32 state, UInt32 what, UInt32 *sclk, UInt32 *mclk,
 		       UInt32 *temperature);
+	IOReturn regRead(UInt32 offset, UInt32 *value);
 	IOMemoryDescriptor *apertureMemory(void);
 	UInt32 apertureBytes(void);
 	/* The shapes of the window server's surfaces, by surface ID. */
@@ -155,6 +156,7 @@ public:
 				     UInt32 width, UInt32 height);
 	IOReturn methodSurfaceList(struct rdn_user_surfaces *list, IOByteCount *size);
 	IOReturn methodSurfaceLocked(UInt32 *wid);
+	IOReturn methodRegRead(UInt32 offset, UInt32 *value);
 	IOReturn methodPower(UInt32 state, UInt32 what, UInt32 *sclk,
 			     UInt32 *mclk, UInt32 *temperature);
 

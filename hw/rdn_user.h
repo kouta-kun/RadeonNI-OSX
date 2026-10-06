@@ -64,6 +64,11 @@ enum {
 	 * be idle and fails if it does not become so.
 	 */
 	RDN_UC_POWER,
+	/*
+	 * scalar in: register offset (a multiple of 4 inside the register
+	 * BAR); out: its value. Reads only, for diagnosis.
+	 */
+	RDN_UC_REG_READ,
 	RDN_UC_METHOD_COUNT
 };
 
