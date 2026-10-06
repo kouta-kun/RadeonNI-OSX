@@ -2778,3 +2778,24 @@ puts the user's config back after each run.
 
 With antialiasing the GeForce is limited by its GPU at last. The Radeon
 has not run these yet (the GeForce is in the machine).
+
+## 2026-10-06 — Doom 3 quality settings on the Radeon: no change in speed, and no antialiasing
+
+Radeon back in, glthread on from the list, `d3quality.sh`:
+
+| | bench | bench2 |
+|---|---|---|
+| As configured | 21.5 | 22.2 |
+| Ultra | 21.5 | 22.1 |
+| Ultra and `r_multiSamples 4` | 21.3 | 22.1 |
+
+The same to a few tenths at all three: limited by the processor, with
+the GPU's work not showing at all. But the third line is not antialiased:
+our bundle's pixel formats carry no sample buffers
+(`gld/RadeonNIGLDriver.c`, the comment at `kCGLPFASampleBuffers`) and the
+front end's visual has one sample, so a program that asks for 4 samples
+runs without them and is not told. The game does not report it. So the
+GeForce's 5.0 and 3.6 fps with antialiasing have no Radeon number to
+stand against: ours does less work there. Multisampling is a known gap
+now. Anisotropic filtering and uncompressed textures do go through Mesa.
+No out-of-memory line at ultra; 50 C afterwards.
