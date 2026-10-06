@@ -21,6 +21,7 @@ extern "C" {
 #include "rdn_card.h"
 #include "rdn_cursor.h"
 #include "rdn_i2c.h"
+#include "rdn_mc.h"
 #include "rdn_mode.h"
 #include "rdn_pattern.h"
 }

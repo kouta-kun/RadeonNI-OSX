@@ -50,7 +50,7 @@ chmod +x "$stage/install.sh" "$stage/uninstall.sh"
 git -C "$root" describe --tags --always --dirty > "$stage/VERSION"
 
 "$root/scripts/fetch-firmware.sh"
-cp "$root/firmware/TURKS_pfp.bin" "$root/firmware/TURKS_me.bin" "$root/firmware/LICENSE.radeon" "$stage/"
+cp "$root/firmware/TURKS_pfp.bin" "$root/firmware/TURKS_me.bin" "$root/firmware/TURKS_mc.bin" "$root/firmware/LICENSE.radeon" "$stage/"
 
 for arg in "$@"; do
     case "$arg" in

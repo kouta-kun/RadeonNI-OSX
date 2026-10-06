@@ -110,6 +110,13 @@ perl -MMIME::Base64 -e '
             close($f);
             $extra .= "\t\t\t<key>$fw->[0]</key>\n\t\t\t<data>$blob</data>\n";
         }
+        # The memory controller's microcode: only used with rdn_mc=1.
+        if (open(my $f, "<", "$dir/TURKS_mc.bin")) {
+            binmode($f);
+            my $blob = encode_base64(<$f>, "");
+            close($f);
+            $extra .= "\t\t\t<key>FW_MC</key>\n\t\t\t<data>$blob</data>\n";
+        }
         $extra .= "\t\t\t<key>AccelCaps</key>\n\t\t\t<integer>3</integer>\n";
         $extra .= "\t\t\t<key>AGPShim</key>\n\t\t\t<integer>3</integer>\n";
         $extra .= "\t\t\t<key>Surfaces</key>\n\t\t\t<true/>\n";

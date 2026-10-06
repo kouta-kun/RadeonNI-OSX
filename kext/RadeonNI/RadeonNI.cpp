@@ -258,6 +258,26 @@ bool RadeonNI::bringUp()
 	IOLog("RadeonNI: CONFIG_MEMSIZE %lu MB\n",
 	      (unsigned long)readReg(0x5428));
 
+	/*
+	 * rdn_mc=1 as a boot argument: load the memory controller's
+	 * microcode, as Linux does on this card, before anything is kept in
+	 * video memory. An experiment; without the argument nothing happens.
+	 */
+	if (PE_parse_boot_arg("rdn_mc", &i) && i) {
+		OSData *mc = OSDynamicCast(OSData, getProperty("FW_MC"));
+
+		if (!mc) {
+			IOLog("RadeonNI: rdn_mc: no FW_MC in the personality\n");
+		} else {
+			r = rdn_mc_load_microcode(&fCard, mc->getBytesNoCopy(),
+						  mc->getLength());
+			IOLog("RadeonNI: memory controller microcode: %d (0 loaded and trained, 1 not needed), "
+			      "MC_SEQ_SUP_CNTL 0x%08lx, CONFIG_MEMSIZE %lu MB\n", r,
+			      (unsigned long)readReg(0x28c8),
+			      (unsigned long)readReg(0x5428));
+		}
+	}
+
 	rdn_i2c_bus_by_id(&fCard, DVI_DDC_ID, &bus);
 	fEdidLen = rdn_edid_read(&fCard, &bus, fEdid);
 	if (fEdidLen < 0) {
