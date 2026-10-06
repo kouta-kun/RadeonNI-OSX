@@ -175,7 +175,7 @@ bool RadeonNIAccel::startEngine(void)
 {
 	struct rdn_accel_fw fw;
 	UInt32 pfpSize = 0, meSize = 0, apertureSize = fFramebuffer->apertureSize();
-	int r, keepBootClocks = 0;
+	int r, keepBootClocks = 0, gart = 0;
 
 	fPfp = copyFirmware("FW_PFP", &pfpSize);
 	fMe = copyFirmware("FW_ME", &meSize);
@@ -214,6 +214,9 @@ bool RadeonNIAccel::startEngine(void)
 	      (unsigned long)((apertureSize - HEAP_OFFSET) >> 20),
 	      (unsigned long)(fHiddenSize >> 20));
 
+	if (PE_parse_boot_arg("rdn_gart", &gart) && gart)
+		startGart();
+
 	/*
 	 * ASIC_Init leaves the card at slow boot clocks. Go to the PowerPlay
 	 * table's performance state: voltage and engine clock, and the
@@ -250,6 +253,63 @@ bool RadeonNIAccel::startEngine(void)
 		}
 	}
 	return true;
+}
+
+/*
+ * One page of system memory that stays where it is, and its address as
+ * the card sees it on the bus (on a G5 that is not its physical address:
+ * the memory descriptor goes through the machine's I/O mapper).
+ */
+static IOBufferMemoryDescriptor *gartPage(UInt32 *bus)
+{
+	IOBufferMemoryDescriptor *page =
+		IOBufferMemoryDescriptor::withOptions(kIOMemoryPhysicallyContiguous,
+						      RDN_GART_PAGE_SIZE,
+						      RDN_GART_PAGE_SIZE);
+	IOByteCount length = 0;
+
+	if (!page)
+		return 0;
+	if (page->prepare() != kIOReturnSuccess) {
+		page->release();
+		return 0;
+	}
+	bzero(page->getBytesNoCopy(), RDN_GART_PAGE_SIZE);
+	*bus = (UInt32)page->getPhysicalSegment(0, &length);
+	return page;
+}
+
+void RadeonNIAccel::startGart(void)
+{
+	UInt32 dummyBus = 0, testBus = 0;
+	uint64_t table = 0;
+	int r;
+
+	fGartDummy = gartPage(&dummyBus);
+	fGartTest = gartPage(&testBus);
+	if (!fGartDummy || !fGartTest || !dummyBus || !testBus ||
+	    rdn_mem_alloc(&fMem, RDN_GART_TABLE_BYTES, RDN_GART_PAGE_SIZE, &table)) {
+		IOLog("RadeonNI: GART: no memory for its pages or its table\n");
+		return;
+	}
+	fGartTable = (UInt32)table;
+	/* The card fetches the pages itself. */
+	fFramebuffer->device()->setBusMasterEnable(true);
+
+	IOLockLock(fLock);
+	r = rdn_gart_enable(&fGart, &fAccel, fGartTable, dummyBus);
+	if (!r) {
+		rdn_gart_set_page(&fGart, 0, testBus);
+		rdn_gart_flush(&fGart);
+		r = rdn_ib_selftest(&fAccel, rdn_gart_addr(0),
+				    (uint32_t *)fGartTest->getBytesNoCopy());
+		if (r)
+			rdn_gart_disable(&fGart);
+	}
+	IOLockUnlock(fLock);
+	IOLog("RadeonNI: GART: table at 0x%lx, dummy page at bus 0x%lx, test page at bus 0x%lx: %s (%d)\n",
+	      fGartTable, dummyBus, testBus,
+	      r ? "FAILED, switched off" : "the GPU ran a command buffer from system memory", r);
 }
 
 void RadeonNIAccel::retire(IOService *provider)

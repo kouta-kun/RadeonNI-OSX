@@ -138,6 +138,14 @@ bool rdn_fence_done(struct rdn_accel *accel, uint32_t seq);
 int rdn_fence_wait(struct rdn_accel *accel, uint32_t seq, uint32_t timeout_ms);
 
 /*
+ * Run a three-word command buffer that is anywhere the GPU can address:
+ * `cpu` is where the CPU writes it (16 words), `gpu_addr` where the GPU
+ * finds it. It sets a scratch register, which is then read back. For
+ * memory other than video memory (rdn_gart.h).
+ */
+int rdn_ib_selftest(struct rdn_accel *accel, uint64_t gpu_addr, uint32_t *cpu);
+
+/*
  * Run an indirect buffer of `words` words at GPU address `addr`, followed
  * by a fence. Its words are in the ring's byte order: big-endian when the
  * accelerator was started `swapped`, little-endian otherwise.

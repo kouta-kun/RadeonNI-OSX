@@ -494,3 +494,36 @@ void rdn_accel_fini(struct rdn_accel *accel)
 	if (accel->card)
 		rdn_cp_stop(accel);
 }
+
+int rdn_ib_selftest(struct rdn_accel *accel, uint64_t gpu_addr, uint32_t *cpu)
+{
+	struct rdn_card *card = accel->card;
+	uint32_t words[16], seq = 0, tmp = 0;
+	unsigned i;
+	int r;
+
+	words[0] = PACKET3(PACKET3_SET_CONFIG_REG, 1);
+	words[1] = (RING_TEST_REG - PACKET3_SET_CONFIG_REG_START) >> 2;
+	words[2] = 0x600DCAFE;
+	for (i = 3; i < 16; i++)
+		words[i] = 0x80000000;	/* type 2: nothing */
+	/* In the CPU's order when the command processor swaps, else little-endian. */
+	for (i = 0; i < 16; i++)
+		cpu[i] = accel->swapped ? words[i] : rdn_swap_le32(words[i]);
+
+	rdn_wreg(card, RING_TEST_REG, 0xCAFEDEAD);
+	r = rdn_ib_submit(accel, gpu_addr, 16, &seq);
+	if (r)
+		return r;
+	r = rdn_fence_wait(accel, seq, 1000);
+	for (i = 0; i < 1000; i++) {
+		tmp = rdn_rreg(card, RING_TEST_REG);
+		if (tmp == 0x600DCAFE)
+			return 0;
+		rdn_udelay(accel, 10);
+	}
+	rdn_log(card->os, RDN_LOG_ERROR,
+		"command buffer at 0x%X%08X did not run (fence %d, scratch 0x%08X)",
+		(unsigned)(gpu_addr >> 32), (unsigned)gpu_addr, r, (unsigned)tmp);
+	return -EINVAL;
+}

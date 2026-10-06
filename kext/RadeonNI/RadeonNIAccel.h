@@ -17,6 +17,7 @@
 
 #include <IOKit/IOLocks.h>
 #include <IOKit/IOUserClient.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/graphics/IOAccelerator.h>
 #include <IOKit/pci/IOAGPDevice.h>
 
@@ -24,6 +25,7 @@
 
 extern "C" {
 #include "rdn_accel.h"
+#include "rdn_gart.h"
 #include "rdn_mem.h"
 #include "rdn_pm.h"
 #include "rdn_user.h"
@@ -128,6 +130,11 @@ private:
 	RadeonNIAGPShim *fShim;
 
 	bool startEngine(void);
+	/* rdn_gart=1: the page table for system memory, and a test of it. */
+	void startGart(void);
+	struct rdn_gart fGart;
+	IOBufferMemoryDescriptor *fGartDummy, *fGartTest;
+	UInt32 fGartTable;
 	void *copyFirmware(const char *key, UInt32 *size);
 };
 
