@@ -141,6 +141,26 @@ void rdn_log(const char *fmt, ...)
 }
 #endif
 
+int rdn_trace_wanted(const char *name)
+{
+	static const char *only;
+	static int looked;
+	const char *at;
+	size_t len = strlen(name);
+
+	if (!looked) {
+		only = getenv("RDN_GLD_TRACE_ONLY");
+		looked = 1;
+	}
+	if (!only)
+		return 1;
+	for (at = only; (at = strstr(at, name)) != NULL; at += len)
+		if ((at == only || at[-1] == ',') &&
+		    (at[len] == 0 || at[len] == ','))
+			return 1;
+	return 0;
+}
+
 static void setup(void)
 {
 	const char *path = getenv("RDN_GLD_LOG");

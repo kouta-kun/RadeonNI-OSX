@@ -120,7 +120,7 @@ def main():
         out.append('static %s t_%s(%s)' % (ret, name, full))
         out.append('{')
         out.append('\tRDN_ENTER(ctx);')
-        out.append('\tif (__builtin_expect(rdn_trace, 0))')
+        out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
         out.append('\t\t%s;' % trace_call(name, params, names))
         if name in APPLE_ONLY:
             arg, values = APPLE_ONLY[name]

@@ -472,8 +472,27 @@ static bool rdn_cs_validate(struct radeon_cmdbuf *rcs)
    return true;
 }
 
+/*
+ * RDN_SYNC in the environment, for finding races between the CPU and the
+ * GPU: bit 0 waits for every command buffer to finish when it is
+ * submitted, bit 1 gives every draw a command buffer of its own.
+ */
+static unsigned rdn_sync_mode(void)
+{
+   static int mode = -1;
+
+   if (mode < 0) {
+      const char *s = getenv("RDN_SYNC");
+
+      mode = s ? atoi(s) : 0;
+   }
+   return mode;
+}
+
 static bool rdn_cs_check_space(struct radeon_cmdbuf *rcs, unsigned dw)
 {
+   if (rdn_sync_mode() & 2)
+      return false;
    return rcs->current.max_dw - rcs->current.cdw >= dw;
 }
 
@@ -559,6 +578,8 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
       list_addtail(&ib->list, &ws->pending_ibs);
       ws->num_flushes++;
       simple_mtx_unlock(&ws->lock);
+      if (rdn_sync_mode() & 1)
+         rdn_fence_wait(ws, fence, OS_TIMEOUT_INFINITE);
 
       for (i = 0; i < cs->num_buffers; i++) {
          rdn_fence_set(&cs->buffers[i].bo->last_use, fence);

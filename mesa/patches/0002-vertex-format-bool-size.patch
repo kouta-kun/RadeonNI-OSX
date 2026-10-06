@@ -1,0 +1,27 @@
+diff --git a/src/mesa/main/glthread.h b/src/mesa/main/glthread.h
+index c2debd7..6d00aca 100644
+--- a/src/mesa/main/glthread.h
++++ b/src/mesa/main/glthread.h
+@@ -92,14 +92,18 @@ struct gl_pixelstore_attrib
+ union gl_vertex_format_user {
+    struct {
+       GLenum16 Type;        /**< datatype: GL_FLOAT, GL_INT, etc */
+-      bool Bgra;            /**< true if GL_BGRA, else GL_RGBA */
++      /* uint8_t, not bool: bool has four bytes on 32-bit Darwin PowerPC,
++       * and "All" must cover every field. */
++      uint8_t Bgra;         /**< true if GL_BGRA, else GL_RGBA */
+       uint8_t Size:5;       /**< components per element (1,2,3,4) */
+-      bool Normalized:1;    /**< GL_ARB_vertex_program */
+-      bool Integer:1;       /**< Integer-valued? */
+-      bool Doubles:1;       /**< double values are not converted to floats */
++      uint8_t Normalized:1; /**< GL_ARB_vertex_program */
++      uint8_t Integer:1;    /**< Integer-valued? */
++      uint8_t Doubles:1;    /**< double values are not converted to floats */
+    };
+    uint32_t All;
+ };
++static_assert(sizeof(union gl_vertex_format_user) == 4,
++              "gl_vertex_format_user::All must cover the fields");
+ 
+ #define MESA_PACK_VFORMAT(type, size, normalized, integer, doubles) \
+    (union gl_vertex_format_user){{ \

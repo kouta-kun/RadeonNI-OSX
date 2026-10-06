@@ -2072,3 +2072,60 @@ before the diagnostics is `~/RadeonNI-g5.prev2` there.
 look. If not: `sudo nvram boot-args="rdn_dvi=1"` on the G5 and restart.
 Still open: IODisplay does not get our EDID (`AppleDisplay` vendor
 `unkn`).
+
+## 2026-10-06 — Quake 3's black floors: `bool` has four bytes on Tiger PowerPC, Mesa's vertex format assumed one
+
+Done on the real G5 over ssh (the card is there), Quake 3 full screen on
+q3dm1, pictures by `~/gl/rdnuc grab`.
+
+**The G5 shows the same bug**, darker than under QEMU (walls too), with
+the same pattern: right with `r_primitives 3` and with
+`r_ext_multitexture 0`. `r_primitives 3` had been saved in the config by
+my earlier runs and travelled with the disk image; the default is 0
+(restored).
+
+**It is not a race.** With `/tmp/rdngld.trace` the same draws come out
+right. `RDN_SYNC` (new, in the winsys: bit 0 waits for every command
+buffer, bit 1 gives every draw its own) changes nothing in any
+combination. So what the trace changed was not the timing.
+
+**Bisected by call.** `RDN_GLD_TRACE_ONLY=name,name` (new) limits the
+trace to the calls named. Tracing `glTexCoordPointer` alone, or
+`glColorPointer` alone, makes the picture right; `glDrawElements`, the
+lock calls and `glVertexPointer` do not. So a log call before Mesa's
+`_mesa_TexCoordPointer` matters: what it leaves on the stack.
+
+**Cause.** In the disassembly `update_array()` stores 16 bits of a local
+and compares 32. The local is `union gl_vertex_format_user`
+(`src/mesa/main/glthread.h`): a struct of `GLenum16 Type; bool Bgra;` and
+four bit-fields, overlaid with `uint32_t All`, and
+`_mesa_update_array_format()` returns early when `All` is unchanged. On
+32-bit Darwin PowerPC `bool` has four bytes, so the struct has twelve,
+and `All` is `Type` plus two bytes of padding nobody writes. When the
+stack's leftovers there happened to equal the array's, a pointer call
+with the same type and another size was taken for "no change": Quake's
+`glTexCoordPointer(2, GL_FLOAT, 0, ...)` on the second unit kept the
+default size 4, so the lightmap coordinates were fetched with stride 16
+from an array of stride 8. Immediate mode never comes here, and my
+`mtex` test had other leftovers. This is Mesa's assumption, not a
+compiler bug.
+
+**Fix.** `mesa/patches/0002-vertex-format-bool-size.patch`: `uint8_t` for
+those fields and a static assertion that the union has four bytes.
+Rebuilt, installed on the G5 (`~/RadeonNIGLDriver.prev3` is the binary
+from before today): Quake 3 with its default settings is lit correctly,
+untraced (grab). Not yet seen by the user.
+
+**Looked for more of the kind:** a scan of the built parts of Mesa for
+unions containing `bool` finds nothing else that overlays one with an
+integer. That is a heuristic; other code may assume one byte in other
+ways (the display list breakage at `-Os` with strict aliasing has not
+been looked at in this light). `-mone-byte-bool` for the whole build
+would need libstdc++ rebuilt the same way.
+
+**Open.**
+- `r_primitives -1` (strips with `glArrayElement`) draws no level at
+  all: the screen keeps Quake's texture table from the end of loading.
+- Sauerbraten's sky and weapon should be looked at again with this fix.
+- The QEMU guest's installed bundle is older than both of today's
+  changes (`scripts/gld.sh install-mesa` when it runs next).

@@ -55,6 +55,12 @@ extern int rdn_origin_x, rdn_origin_y;
 extern int rdn_trace;
 
 /*
+ * RDN_GLD_TRACE_ONLY in the environment limits the trace to the calls it
+ * names ("glDrawElements,glBindTexture"); without it every call is wanted.
+ */
+int rdn_trace_wanted(const char *name);
+
+/*
  * The context draws on the card's screen, inside the shape of the window
  * server's surface `surface` (the whole screen if the kernel does not know
  * the surface). For the window server's compositing context. False if the

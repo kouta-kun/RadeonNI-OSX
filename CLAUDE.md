@@ -97,6 +97,12 @@ been planned in detail.
   `/tmp/rdngld.copy` in the guest selects the older CPU copy. Open: it
   looks a bit slow. The Tiger build of Mesa needs `-fno-strict-aliasing`
   (display lists break without it).
+- `bool` has four bytes on Tiger PowerPC. Mesa code that assumes one
+  breaks silently there and not in the big-endian Linux test build
+  (`mesa/patches/0002`, Quake 3's black floors, journal 2026-10-06).
+  `RDN_SYNC=1|2|3` (wait for every command buffer, one per draw) and
+  `RDN_GLD_TRACE_ONLY=glName,...` (trace only those calls) in a
+  program's environment are for telling races from such bugs.
 - A4's second half works by readback (2026-10-05), not yet seen by the
   user, and the default since the bundle built on 2026-10-05 20:54
   (`touch /tmp/rdngld.nosurface` or `RDN_GLD_NOSURFACE=1` turns it off;
