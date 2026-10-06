@@ -9,7 +9,8 @@
 # The device: on Mac OS X the kext's user client, elsewhere (the Linux
 # host) the hardware library in this process.
 if host_machine.system() == 'darwin'
-  rdn_device = files('rdn_device_darwin.c')
+  # rdn_mem.c: the device divides up its chunks of GART memory itself.
+  rdn_device = files('rdn_device_darwin.c', 'hw/rdn_mem.c')
   rdn_device_link_args = ['-framework', 'IOKit', '-framework', 'CoreFoundation']
 else
   rdn_device = files(
