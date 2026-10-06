@@ -2470,3 +2470,37 @@ free, the demo would run at about 148 fps. With `+set s_initsound 0`:
 The folder also has `Quake3 10.2.app` and `Quake3 10.2 G4.app`, older
 builds; id's own PowerPC builds could compile the VM. Which binary the
 user's 148 fps on the GeForce 6600 LE came from is not known to me.
+
+## 2026-10-06 — The GeForce 6600 LE in the same G5: 127.6 fps, and the same profile next to ours
+
+The user put the 6600 LE back (Apple's `GeForce` 4.1.8 and `NVDAResman`
+loaded; ours stays out without its card) and asked whether the numbers
+match. Same script, same binary, same config, 1920x1080 at 60 Hz, the
+desktop at 16 bpp: **127.6 fps** (GL 1.5 NVIDIA-1.4.18), 139.3 without
+sound. Not the 148 the user remembered; with us the same runs gave 111.3
+to 112.2 and 127.0.
+
+How much of our glue: the bundle's stubs 1.0 % of the main thread, the
+winsys 4.0 % with what it calls (the flush 2.6 %: the copy of the command
+buffer and the kernel calls; adding buffers 0.8 %), the copy to the
+screen at swap 1.2 %.
+
+Both profiles split the same way (`sample`, main thread, by what the
+time was spent under), in milliseconds of a frame:
+
+| | Radeon, our driver (8.98 ms) | GeForce, Apple's (7.84 ms) |
+|---|---|---|
+| Quake's game code, interpreted | 3.75 | 3.96 |
+| OpenGL driver | 2.80 | 1.48 |
+| Quake's renderer | 1.13 | 1.06 |
+| Quake's sound | 1.10 | 1.11 |
+| Other | 0.20 | 0.23 |
+
+The game's own parts agree to a tenth of a millisecond or two, so the
+split holds, and the whole difference between the cards is the driver's
+CPU time: 2.8 ms against 1.5. Of Apple's 1.5 ms, 0.6 is in
+`mach_msg_trap`.
+
+**Built, not installed** (the user: install nothing by yourself):
+Mesa for Tiger at -O2, `RDN_MESA_OPT=2 scripts/build-mesa.sh darwin`,
+into `build-darwin-O2`; 20.6 MB against 18.8 MB. Never run.
