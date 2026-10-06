@@ -2418,3 +2418,13 @@ does for work that is limited by the GPU has not been measured.
 
 **Not known:** what the monitor shows (the user's to say). Not done: the
 memory clock in the automatic switch; `rdn_mc` without a boot argument.
+
+## 2026-10-06 — "No signal" at 800 MHz was the DVI plug
+
+The user reported the monitor going between "no signal" and off after the
+memory clock switch. From ssh: CRTC running (frame counter advancing 60 a
+second), no display register changed, video memory test passing. A mode
+set from ssh did not help; reseating the DVI plug did ("it had slightly
+disconnected"). So not the clock. Worth remembering for this morning's
+stripes over the whole screen, which no register or readback explained
+either; that is a guess, nobody touched the plug then.
