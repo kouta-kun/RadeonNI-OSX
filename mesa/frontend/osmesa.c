@@ -83,6 +83,7 @@
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
+#include "util/u_process.h"
 
 
 #include "frontend/api.h"
@@ -676,6 +677,39 @@ osmesa_sync(OSMesaContext osmesa)
       _mesa_glthread_finish(osmesa->st->ctx);
 }
 
+/*
+ * Which programs run with glthread. RDN_GLTHREAD in the environment
+ * decides if it is set (0: no, anything else: yes). Otherwise the file
+ * RDN_GLTHREAD_LIST does: a program is in if a line of it is the
+ * program's name as the system has it (Quake3, Doom 3 Demo), or "*".
+ * No file, no glthread: it has only been tried with a few programs.
+ */
+#define RDN_GLTHREAD_LIST "/Library/Application Support/RadeonNI/glthread"
+
+static bool
+osmesa_want_glthread(void)
+{
+   const char *env = getenv("RDN_GLTHREAD");
+   const char *name = util_get_process_name();
+   char line[256];
+   bool want = false;
+   FILE *f;
+
+   if (env)
+      return strcmp(env, "0") != 0;
+   f = fopen(RDN_GLTHREAD_LIST, "r");
+   if (!f)
+      return false;
+   while (!want && fgets(line, sizeof(line), f)) {
+      size_t n = strcspn(line, "\r\n");
+
+      line[n] = 0;
+      want = !strcmp(line, "*") || (name && !strcmp(line, name));
+   }
+   fclose(f);
+   return want;
+}
+
 GLAPI OSMesaContext GLAPIENTRY
 OSMesaCreateContext(GLenum format, OSMesaContext sharelist)
 {
@@ -841,10 +875,9 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 
    /*
     * Two processors: let the second one do Mesa's work for each call
-    * (state validation, the draws) while the program goes on. An
-    * experiment, off unless asked for.
+    * (state validation, the draws) while the program goes on.
     */
-   if (getenv("RDN_GLTHREAD")) {
+   if (osmesa_want_glthread()) {
       _mesa_glthread_init(osmesa->st->ctx);
       if (getenv("RDN_GLTHREAD_LOG"))
          fprintf(stderr, "rdn: glthread %s\n",

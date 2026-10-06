@@ -140,6 +140,19 @@ been planned in detail.
   on the G5 profiles a program. Apple's VNC server is on on the G5
   (user's request, password `tiger`); it can hang in a log loop
   (`kickstart -restart -agent`).
+- glthread (2026-10-06, journal): Mesa's second-thread mode, with a small
+  r600 patch (`mesa/patches/0003`, the user's exception to "do not touch
+  Mesa"). On for a program when `RDN_GLTHREAD=1` is in its environment
+  or its process name is a line of `/Library/Application
+  Support/RadeonNI/glthread` (on the G5: Quake3, Doom 3 Demo). Quake 3
+  144 fps against 115, Doom 3's slow scenes 21 against 16; the user saw
+  both games look right. Not tried with the window server or windowed
+  programs. `tools/guest/d3save.sh <save>` times 300 frames of a Doom 3
+  save game on any card (the user's saves: `bench`, `bench2`).
+- Video memory (2026-10-06): programs get the 768 MB beyond the 256 MB
+  aperture too, for what the CPU never maps, and the winsys keeps
+  released memory in a cache instead of calling the kext for every
+  buffer.
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the

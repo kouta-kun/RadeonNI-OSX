@@ -60,3 +60,11 @@ sudo nvram boot-args="..." and a restart:
   rdn_mclk=0         raise the engine clock but not the memory clock
   rdn_mc=0           do not load the memory controller's microcode
                      (the memory clock then stays as it is)
+
+Games limited by the processor can have Mesa's work done on the second
+processor (Mesa's "glthread"). It is tried with few programs, so it is
+off except for those named, one a line, in the text file
+  /Library/Application Support/RadeonNI/glthread
+by the name the system has for the program (as in Activity Monitor: for
+example Quake3, or Doom 3 Demo); a line with * means every program.
+RDN_GLTHREAD=1 or =0 in a program's environment overrides the file.

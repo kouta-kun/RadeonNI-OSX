@@ -2727,3 +2727,16 @@ bottleneck now and the hand-over between the two is not free.
 **Not done:** glthread is off unless the variable is set, and has run
 only in these two games, by readback and by the numbers. The window
 server and windowed programs have not been tried with it.
+
+## 2026-10-06 — glthread for programs started from the Finder
+
+The user saw Quake 3 and Doom 3 look right with glthread and asked for a
+way to have it without a terminal. The front end now also reads
+`/Library/Application Support/RadeonNI/glthread`: a program whose
+process name is a line of it (or any program, with a line `*`) gets
+glthread; `RDN_GLTHREAD=0` or `=1` in the environment overrides the
+file; no file, no glthread. On the G5 the file names `Quake3` and
+`Doom 3 Demo`. Checked there: Quake 3 144.0 fps from the list with
+nothing in the environment, 115.5 with `RDN_GLTHREAD=0`; Doom 3 `bench`
+21.5 fps from the list. The installer does not create the file; the
+package's README says how.
