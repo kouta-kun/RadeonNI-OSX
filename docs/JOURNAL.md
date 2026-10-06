@@ -2428,3 +2428,45 @@ set from ssh did not help; reseating the DVI plug did ("it had slightly
 disconnected"). So not the clock. Worth remembering for this morning's
 stripes over the whole screen, which no register or readback explained
 either; that is a guess, nobody touched the plug then.
+
+## 2026-10-06 — Full performance state by default; where Quake 3's CPU time goes now
+
+**The user:** the desktop at 650 / 800 MHz "feels good"; make it the
+default. Done: with `FW_MC` in the personality the kext loads the memory
+controller's microcode at every start (`rdn_mc=0` skips it), and the
+automatic switch includes the memory clock when the sequencer runs
+(`rdn_mclk=0` leaves it, `rdn_bootclocks=1` keeps the whole boot state).
+`boot-args` on the G5 is empty again. After a restart, nobody asking:
+649.96 / 800.00 MHz, marks 0x1f, video memory test passes, demo 111.3
+fps. Under QEMU nothing changes: `kext.sh` does not inject `FW_MC`.
+
+**Profile** (`sample Quake3 5` in the middle of the demo, main thread,
+3820 samples, time in each function itself):
+
+| Where | Share |
+|---|---|
+| Quake's game code, interpreted ("Compiled VMs not supported on this platform") | 39.6 % |
+| Mesa and our glue | 17.4 % |
+| Quake's renderer (`RB_*`, `R_*`) | 13.2 % |
+| Quake's sound mixing | 8.6 % |
+| `memcpy` (vertices into video memory, the command buffer) | 5.0 % |
+| Kernel calls (alloc, free, submit, fence) | 2.8 % |
+| Everything else (C library, collision, network) | 13.5 % |
+
+By call: `glDrawElements` and below 18.4 % (of it `u_vbuf_draw_vbo`
+9.4 %, `r600_draw_vbo` 5.6 %, `st_prepare_draw` 4.3 %,
+`_mesa_update_state` 2.7 %), the swap 3.5 %. Inside Mesa nothing stands
+out: the largest single functions are `vbo_get_minmax_index_mapped`
+1.2 %, `restGPRx` 0.9 % (register restore routines of a size-optimised
+build), `__emutls_get_address` 0.8 % (thread-local storage is emulated on
+Tiger).
+
+So the driver's whole share is about a quarter of the frame; were it
+free, the demo would run at about 148 fps. With `+set s_initsound 0`:
+127.0 fps.
+
+**The game binary.** `Quake3.app` looks for native `ui`, `cgame` and
+`qagame` bundles (`vm_* 0`), finds none and interprets the `.qvm` files.
+The folder also has `Quake3 10.2.app` and `Quake3 10.2 G4.app`, older
+builds; id's own PowerPC builds could compile the VM. Which binary the
+user's 148 fps on the GeForce 6600 LE came from is not known to me.
