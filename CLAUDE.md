@@ -266,13 +266,21 @@ Keep these current as part of the work, and commit small and often.
   the card's error masking re-applied. `TIGER_BOOTARGS=debug=0x100` makes
   a guest kernel panic print its backtrace on the emulated screen.
 - `tools/guest/qe.c`: is Quartz Extreme in use on each display.
-- `scripts/make-g5-package.sh [--with-vbios] [--with-firmware]`: package
-  the guest-built kext with `g5/install.sh`, `g5/uninstall.sh` and
-  `g5/README.txt` into `build/RadeonNI-g5.tar.gz`, to be unpacked and
-  installed on the real Mac. There, `sudo ./install.sh --accel
-  [--hwcursor]` installs the kext with the Quartz Extreme personality
-  `kext.sh` uses under QEMU (needs `--with-firmware`); without options,
-  phase 1's.
+- `scripts/make-g5-package.sh [--with-vbios]`: package the guest-built
+  kext and 2D plug-in, the host-built OpenGL bundle, the microcode with
+  its licence (`scripts/fetch-firmware.sh` gets it from the host's
+  linux-firmware or kernel.org when `firmware/` lacks it) and
+  `g5/install.sh`, `g5/uninstall.sh`, `g5/README.txt` into
+  `build/RadeonNI-g5.tar.gz`, to be unpacked and installed on the real
+  Mac. There, `sudo ./install.sh --accel [--hwcursor]` installs the kext
+  with the Quartz Extreme personality `kext.sh` uses under QEMU, plus the
+  bundle and the plug-in; without options, phase 1's. The installer's
+  bundle and plug-in step has not run anywhere yet.
+- `rdn_romtest=1` as a boot argument on the G5 (`sudo nvram
+  boot-args="rdn_romtest=1"`): the kext reads the expansion ROM and logs
+  whether it equals the injected VBIOS, before and after bringing the
+  card up; it uses nothing of it. Not run yet. Step one of dropping the
+  VBIOS file.
 
 ## Architecture
 
@@ -361,6 +369,9 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
   model keeps everything in VRAM: no GART, no bus mastering, fences polled.
 - Microcode (`TURKS_pfp`, `TURKS_me`, `BTC_rlc`, `TURKS_mc`) is handled like
   the VBIOS: git-ignored `firmware/`, injected at load time, never committed.
+  It may be distributed in the G5 package, unmodified and with
+  `LICENSE.radeon` (user's decision, 2026-10-06); still not in the
+  repository.
 - Apple's GL plug-in ABI is learned by observation (symbol lists, a logging
   shim around Apple's software renderer, VMsvga2's MIT sources) and by
   reading disassembly to understand the interface. All code is written

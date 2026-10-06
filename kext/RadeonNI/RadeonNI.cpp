@@ -157,6 +157,68 @@ bool RadeonNI::loadBios()
 	return true;
 }
 
+/*
+ * Step one of taking the VBIOS from the card: with the boot argument
+ * rdn_romtest=1, read the expansion ROM through its BAR and say in the log
+ * whether it is the image the personality carries. Nothing uses what was
+ * read. Off by default, because a ROM that does not answer may be a machine
+ * check on some bridges. Turning on address decoding is a configuration
+ * bit; nothing is written to the ROM.
+ */
+void RadeonNI::compareRom(const char *when)
+{
+	const UInt8 *have = (const UInt8 *)fBios;
+	volatile const UInt8 *rom;
+	IOMemoryMap *map;
+	UInt32 bar, size, limit, i, differ = 0, first = 0;
+	UInt8 sum = 0;
+	int on = 0;
+
+	if (!PE_parse_boot_arg("rdn_romtest", &on) || !on)
+		return;
+	bar = fDevice->configRead32(kIOPCIConfigExpansionROMBase);
+	IOLog("RadeonNI: ROM test %s: BAR %08lx\n", when, (unsigned long)bar);
+	if (!(bar & 0xfffff800)) {
+		IOLog("RadeonNI: ROM test: no address assigned\n");
+		return;
+	}
+	map = fDevice->mapDeviceMemoryWithRegister(kIOPCIConfigExpansionROMBase);
+	if (!map) {
+		IOLog("RadeonNI: ROM test: the ROM cannot be mapped\n");
+		return;
+	}
+	fDevice->configWrite32(kIOPCIConfigExpansionROMBase, bar | 1);
+	IODelay(1000);
+	rom = (volatile const UInt8 *)map->getVirtualAddress();
+	limit = map->getLength();
+	IOLog("RadeonNI: ROM test: %lu bytes mapped, starts %02x %02x %02x\n",
+	      (unsigned long)limit, rom[0], rom[1], rom[2]);
+	if (rom[0] == 0x55 && rom[1] == 0xaa) {
+		size = (UInt32)rom[2] * 512;
+		if (size > limit)
+			size = limit;
+		for (i = 0; i < size; i++)
+			sum += rom[i];
+		if (size > fBiosSize)
+			size = fBiosSize;
+		for (i = 0; i < size; i++)
+			if (rom[i] != have[i] && !differ++)
+				first = i;
+		IOLog("RadeonNI: ROM test: image of %lu bytes, checksum %02x (0 is right); "
+		      "%lu of %lu bytes differ from the personality's",
+		      (unsigned long)rom[2] * 512, sum, (unsigned long)differ,
+		      (unsigned long)size);
+		if (differ)
+			IOLog(", the first at %lx (%02x, not %02x)",
+			      (unsigned long)first, rom[first], have[first]);
+		IOLog("\n");
+	} else {
+		IOLog("RadeonNI: ROM test: no option ROM signature\n");
+	}
+	fDevice->configWrite32(kIOPCIConfigExpansionROMBase, bar);
+	map->release();
+}
+
 const struct rdn_mode *RadeonNI::modeForID(IODisplayModeID id)
 {
 	if (id < 1 || (UInt32)id > fModeCount)
@@ -332,7 +394,13 @@ bool RadeonNI::start(IOService *provider)
 	fOS.free = os_free;
 	fOS.log = os_log;
 
-	if (!loadBios() || rdn_card_init(&fCard, &fOS, fBios)) {
+	if (!loadBios()) {
+		IOLog("RadeonNI: no usable VBIOS\n");
+		cleanUp();
+		return false;
+	}
+	compareRom("before the card is brought up");
+	if (rdn_card_init(&fCard, &fOS, fBios)) {
 		IOLog("RadeonNI: no usable VBIOS\n");
 		cleanUp();
 		return false;
@@ -344,6 +412,7 @@ bool RadeonNI::start(IOService *provider)
 		cleanUp();
 		return false;
 	}
+	compareRom("after");
 
 	if (!super::start(provider)) {
 		IOLog("RadeonNI: IOFramebuffer::start failed\n");

@@ -2140,3 +2140,26 @@ and no longer requires them to be there already; `uninstall.sh` removes
 them. Package built with `--with-vbios --with-firmware`; the installer's
 new part has not run anywhere yet (the G5 is disconnected, and the guest
 rehearsal was not done).
+
+## 2026-10-06 — ROM comparison in the kext (not run); microcode ships in the package
+
+**ROM, step one.** With the boot argument `rdn_romtest=1` the kext reads
+the expansion ROM BAR (0x30), maps it, turns on address decoding, logs the
+first bytes, the image's length and checksum and how many bytes differ
+from the injected VBIOS, then restores the BAR. It does this before
+`rdn_card_init()` and again after the card is up, and uses nothing of
+what it read. Off by default: a ROM that does not answer could be a
+machine check at boot. Builds in the guest; cannot run there (OpenBIOS
+assigns no ROM address). To run on the G5: install the package,
+`sudo nvram boot-args="rdn_romtest=1"`, restart,
+`sudo dmesg | grep "ROM test"`. If the Mac does not boot with it: reset
+the NVRAM (Command-Option-P-R) or boot Safe.
+
+**Microcode.** User's decision: it goes into the package, not into the
+repository. `scripts/fetch-firmware.sh` fills `firmware/` with
+`TURKS_pfp.bin`, `TURKS_me.bin` and `LICENSE.radeon` from the host's
+linux-firmware or, failing that, from kernel.org's linux-firmware
+repository, each checked against a SHA-256 in the script (the host's and
+kernel.org's files are identical; both sources tried). 
+`make-g5-package.sh` runs it and always packs the three files;
+`--with-firmware` is accepted and ignored.

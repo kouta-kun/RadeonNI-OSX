@@ -12,7 +12,9 @@ Contents
   install.sh      installs them into /System/Library/Extensions
   uninstall.sh    removes it
   vbios.rom       the card's VBIOS image, if the package was built with it
-  TURKS_*.bin     the card's microcode, if the package was built with it
+  TURKS_*.bin     the card's microcode, (C) Advanced Micro Devices, Inc.,
+                  distributed unmodified under LICENSE.radeon
+  LICENSE.radeon  the microcode's licence; keep it with the two files
 
 Install
   1. Keep the Mac's existing graphics card as the main display.
