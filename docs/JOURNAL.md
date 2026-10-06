@@ -2643,3 +2643,35 @@ Builds for Tiger, the host and big-endian Linux; the tests pass.
 **Not run anywhere:** none of this can be tested without the card.
 My estimate to the user before starting: 10 to 15 % more frames in Doom 3,
 3 to 4 % in Quake 3.
+
+## 2026-10-06 — The four winsys and TLS changes on the G5
+
+Installed at the user's request (bundle only; the kext is unchanged and
+the G5 was not restarted, so the window server still runs the previous
+bundle until it next starts). The previous one is
+`~/RadeonNIGLDriver.prev5`.
+
+**Quake 3**, demo `four`: 115.3 and 115.6 fps (114.3 before), 130.5
+without sound (129.7). A still of q3dm1 is right. One per cent, not the
+three to four I had estimated.
+
+**Doom 3**, the same opening scene profiled again:
+
+| Main thread | Before | After |
+|---|---|---|
+| OpenGL driver | 47.1 % | 38.6 % |
+| of it kernel calls (`mach_msg_trap`) | 9.5 % | 0.7 % |
+| of it `glBufferData` | 6.1 % | 2.3 % |
+| of it swap and flush | 5.7 % | 3.2 % |
+| of it `__emutls_get_address` | 1.4 % | 1.0 % |
+| Doom's renderer | 23.5 % | 22.6 % |
+| Other, idle included | 21.9 % | 32.0 % |
+
+The scene ran at Doom's 60 frames a second before and after (606 command
+buffers in 5 s both times, two a frame), so the saving shows as idle
+time, not as frames; my "10 to 15 % more frames" cannot be read off this
+scene. The heavier scenes the user finds slow have not been measured.
+No "out of video memory"; the screen grabbed during the scene is right.
+Apple's Chess: board and pieces right. `rdnuc alloc` passes.
+
+**Not seen by the user** (away): all of the above is by readback.
