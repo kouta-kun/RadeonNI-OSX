@@ -2913,3 +2913,58 @@ run as before with it on.
 programs (a third kind of allocation through the kext, mapped into the
 program and bound in the table), then moving textures there when video
 memory is full, with r600 taking the new address.
+
+## 2026-10-06 — Programs' buffers in system memory behind the GART; ultra with 4 samples runs
+
+User's go-ahead for the next step after the GART came up.
+
+**Kext.** `RDN_UC_GART_BIND(address, size)`: a piece of the calling
+program's own memory is wired (`IOMemoryDescriptor::withAddress` on its
+task, `prepare`), its pages' bus addresses go into the table at a place
+from an allocator over the GART's range, and the offset comes back.
+`RDN_UC_GART_UNBIND`, `RDN_UC_GART_INFO`; everything a client bound is
+unbound when it goes. The memory is the program's, not the kernel's: a
+32-bit kernel has little address space to spend.
+
+**Device layer** (`rdn_device_darwin.c`): chunks of 16 MB from
+`vm_allocate`, bound with one call each and divided with `rdn_mem`
+(`gart_alloc`, `gart_free`, `gart_cpu`). `RDN_NO_GART=1` in a program's
+environment turns it off.
+
+**Winsys:** a third place for a buffer besides the aperture and the
+memory beyond it. What r600 asks for in the GTT domain alone (vertex and
+constant uploads, staging copies) goes there: ordinary cached memory for
+the CPU, fetched by the GPU over the bus. And when video memory is full,
+a new buffer of any kind goes there instead of the allocation failing.
+That is not eviction (nothing is ever moved out of video memory), which
+would need r600 to follow a buffer to a new address: sampler views and
+surfaces hold addresses they computed. Not attempted.
+
+**My mistake on the way:** the Tiger bundle did not link `hw/rdn_mem.c`,
+which only the Linux device had used. The library linked anyway
+(undefined symbols are looked up at load on Darwin), the window server
+could not load it and crashed in a loop after the restart, and the
+monitor showed the kext's colour bars until I had fixed and reinstalled
+the bundle and restarted once more. `nm -u` on the bundle for our own
+symbols is the check I had skipped.
+
+**On the G5** (`rdn_gart=1`): desktop with Quartz Extreme through the new
+bundle, right by readback. Quake 3: 146.8 fps with, 144.3 with
+`RDN_NO_GART=1`; a still is right; 2 to 6 MB of it in system memory.
+Doom 3 `bench`: 20.7 both ways, 9 to 12 MB in system memory.
+
+**Ultra with 4 samples**, the run that ran out of memory before:
+
+| | bench | bench2 |
+|---|---|---|
+| Radeon | 20.9 | 21.7 |
+| GeForce 6600 LE | 5.0 | 3.6 |
+
+No "out of video memory". At the most: 706 MB beyond the aperture, 185
+to 190 MB in it, 7 to 18 MB in system memory, and no buffer had to
+overflow: with the upload and staging buffers out of the aperture it
+just fits. So the overflow path has not run yet.
+
+**Open.** The overflow path under real pressure. Real eviction. Command
+buffers and client storage for the window server in GART memory. The
+GART is on only with the boot argument.

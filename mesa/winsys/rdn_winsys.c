@@ -363,9 +363,11 @@ static void rdn_mem_stats_print(const char *when)
                     (unsigned long long)ws->mem_stats.class_count[h][c],
                     (unsigned long long)(ws->mem_stats.class_bytes[h][c] >> 20));
    }
-   fprintf(stderr, "rdn memory: %llu buffers created in all, %llu of them from the cache\n",
+   fprintf(stderr, "rdn memory: %llu buffers created in all, %llu of them from the cache, "
+           "%llu put in system memory because video memory was full\n",
            (unsigned long long)ws->mem_stats.creates,
-           (unsigned long long)ws->mem_stats.cache_hits);
+           (unsigned long long)ws->mem_stats.cache_hits,
+           (unsigned long long)ws->mem_stats.overflowed);
 }
 
 static void rdn_mem_stats_exit(void)
@@ -433,6 +435,19 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
       r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
       if (!r)
          bo->region = RDN_VISIBLE;
+   }
+   if (r && want != RDN_GART && ws->dev->gart_alloc) {
+      /*
+       * Video memory is full. Nothing here can move a buffer out of it to
+       * make room, but a new one can live in the program's own memory
+       * behind the GART: slower for the GPU to read, and the program goes
+       * on instead of stopping.
+       */
+      r = ws->dev->gart_alloc(ws->dev, size, alignment, &bo->offset);
+      if (!r) {
+         bo->region = RDN_GART;
+         ws->mem_stats.overflowed++;
+      }
    }
    if (!r) {
       ws->allocated_bytes += size;

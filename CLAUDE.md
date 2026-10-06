@@ -153,6 +153,18 @@ been planned in detail.
   aperture too, for what the CPU never maps, and the winsys keeps
   released memory in a cache instead of calling the kext for every
   buffer.
+- GART (2026-10-06, journal), only with the boot argument `rdn_gart=1`
+  (set on the G5): `hw/rdn_gart.c`, a self-test at start, and programs'
+  own memory bound into it (`RDN_UC_GART_BIND`). The winsys puts upload
+  and staging buffers there and, when video memory is full, new buffers
+  of any kind. Nothing is ever moved out of video memory (no eviction).
+  After changing the device layer check the Tiger bundle with `nm -u`
+  for our own symbols: a missing one only shows when the window server
+  fails to load the bundle.
+- Multisampling (2026-10-06): a program's request for samples reaches
+  Mesa's buffers and is resolved on the way to the screen; pixel format
+  record word 9 carries sample buffers and samples. Doom 3 at ultra with
+  4 samples: 20.9 and 21.7 fps, the GeForce 6600 LE 5.0 and 3.6.
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
