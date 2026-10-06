@@ -298,6 +298,13 @@ OSMesaDrawStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
 
 
 /*
+ * osx-gpu: contexts and buffers made after this call are multisampled
+ * with this many samples per pixel, as far as the device can (1: not).
+ */
+GLAPI void GLAPIENTRY
+OSMesaSetSamples( GLint samples );
+
+/*
  * osx-gpu: make such a memory picture the image of the texture bound to
  * `target` in the context, without copying: the texture shows whatever is
  * in that memory when it is used. Opaque.

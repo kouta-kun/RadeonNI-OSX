@@ -1047,6 +1047,20 @@ static int swap_finish(void)
 	return known;
 }
 
+/*
+ * A program asked for a multisampled pixel format. Contexts made after
+ * this get that many samples; RDN_GLD_NO_MSAA in the environment keeps
+ * them at one.
+ */
+void rdn_mesa_samples(int samples)
+{
+	if (getenv("RDN_GLD_NO_MSAA"))
+		samples = 1;
+	if (samples > 1)
+		rdn_log("pixel format with %d samples asked for", samples);
+	OSMesaSetSamples(samples);
+}
+
 void rdn_mesa_present(void *gld_ctx)
 {
 	struct context *c = find(gld_ctx);

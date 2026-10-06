@@ -556,6 +556,9 @@ static int app_surfaces(void)
 }
 static const long *display_words;
 
+/* Samples of the last pixel format a program asked for; 0: none. */
+static int asked_samples;
+
 static int in_window_server(void)
 {
 	static int known = -1;
@@ -622,6 +625,15 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 					fmt[1] = RDN_RENDERER_ID;
 				if (RDN_CLAIMS_ACCELERATED)
 					fmt[2] |= RECORD_ACCELERATED;
+				/*
+				 * Word 9 is sample buffers (high half) and
+				 * samples (low half), as the software renderer
+				 * fills it when asked: 0x00010004 for four.
+				 * CGL takes a format without it as not
+				 * satisfying a request for samples.
+				 */
+				if (asked_samples > 1 && !in_window_server())
+					fmt[9] = 0x10000 | (unsigned long)asked_samples;
 			}
 		}
 		/* Experiment: RDN_GLD_PF="word:xor" flips bits of the format. */
@@ -797,6 +809,8 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		const long *in = (const long *)b;
 		int n = 0;
 
+		asked_samples = 0;
+
 		while (*in && n < 62) {
 			/*
 			 * kCGLPFAAccelerated and kCGLPFANoRecovery take no
@@ -817,7 +831,17 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			 * copy from Mesa does not handle. No multisampling
 			 * until Mesa does it on the card.
 			 */
-			if (*in == 55 || *in == 56) {
+			if ((*in == 55 || *in == 56) && !getenv("RDN_GLD_KEEP_SAMPLES")) {
+				/*
+				 * With Mesa inside it does: the request is
+				 * kept from the software renderer as before,
+				 * Mesa's buffers get the samples
+				 * (rdn_mesa_samples) and the record that goes
+				 * back says so (word 9, below). The picture is
+				 * resolved when it is copied to the screen.
+				 */
+				if (*in == 56 && in[1] > 1)
+					asked_samples = (int)in[1];
 				in += 2;
 				continue;
 			}
@@ -827,6 +851,12 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		}
 		filtered[n] = 0;
 		b = (long)filtered;
+#ifdef RDN_MESA
+		if (!in_window_server())
+			rdn_mesa_samples(asked_samples ? asked_samples : 1);
+#else
+		asked_samples = 0;
+#endif
 	}
 	if (idx == IDX_gldDestroyPixelFormat && a && (void *)a == own_format) {
 		/* Ours, not the software renderer's, to free. */
@@ -877,6 +907,8 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 				fmt[6] = 0x1000;
 				fmt[7] = 0x80;
 				fmt[8] = 4;
+				if (asked_samples > 1)
+					fmt[9] = 0x10000 | (unsigned long)asked_samples;
 			}
 			*(unsigned long **)a = fmt;
 			own_format = fmt;

@@ -2799,3 +2799,52 @@ GeForce's 5.0 and 3.6 fps with antialiasing have no Radeon number to
 stand against: ours does less work there. Multisampling is a known gap
 now. Anisotropic filtering and uncompressed textures do go through Mesa.
 No out-of-memory line at ultra; 50 C afterwards.
+
+## 2026-10-06 — Multisampling
+
+Asked for by the user after the antialiased runs turned out not to be.
+
+**Front end.** `OSMesaSetSamples(n)`: visuals of contexts and buffers
+made afterwards have n samples as far as the screen supports the format
+with them (at most 8); `validate` makes the colour and depth textures
+`PIPE_TEXTURE_2D` with that many samples; every copy out of them
+(`osmesa_copy`: to the screen, to a surface's buffer) is a
+`pipe->blit`, which resolves. What is imported (the scanout, a surface's
+buffer) stays single-sampled.
+
+**Bundle.** The request for samples is still kept from Apple's software
+renderer, but remembered, handed to Mesa (`rdn_mesa_samples`, not in
+the window server; `RDN_GLD_NO_MSAA` turns it off) and written into the
+record that goes back. Without that CGL does not accept the format: Doom
+asked for 4, then 2, then none. **Pixel format record word 9 is sample
+buffers in the high half and samples in the low** (0x00010004 for four),
+read off the software renderer's own answer to such a request
+(`tools/guest/pfsamples.c`, `RDN_GLD_KEEP_SAMPLES=1` lets the request
+through to it, `RDN_GLD_LOG` dumps the records). With it `pfsamples`
+gets "sample buffers 1, samples 4" from our renderer and Doom asks once.
+
+**On the G5** (Radeon, glthread on): Doom 3 `bench` with
+`r_multiSamples 4` runs and a grabbed frame is right. That the samples
+are there is shown by the GPU's time, not by a picture: fence waits with
+`RDN_SYNC=1` and spinning, over the same run, 3417 ms without and
+4722 ms with. Two enlarged crops of a ceiling light did not show a
+difference I could point at (its edge is a texture's).
+
+| Radeon | bench | bench2 |
+|---|---|---|
+| No antialiasing | 21.5 | 22.2 |
+| 4 samples | 20.8 | 21.6 |
+| 8 samples | 20.7 | 21.7 |
+
+**Ultra and 4 samples together run out of video memory** ("out of video
+memory ... 915 MB in use", the game quits; my script then waited for
+marks that never came and left the game's config at ultra with
+antialiasing, restored by hand from the copy the script makes). Read as
+capacity, not a leak, but not taken apart: uncompressed textures plus
+multisampled buffers against 990 MB shared with the window server, and
+nothing here can move a texture out of video memory to make room, which
+is what Apple's and Linux's drivers do. r600 resolves to our linear
+scanout through a temporary texture each frame.
+
+The GeForce 6600 LE has no figure for 4 samples with the default
+textures yet (only with ultra: 5.0 and 3.6).

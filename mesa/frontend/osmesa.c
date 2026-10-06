@@ -290,6 +290,61 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
  * Copy one rectangle of a direct drawable (its own coordinates, y from the
  * top) to its place on the target surface, as far as both hold it.
  */
+/*
+ * OSMesaSetSamples: how many samples per pixel the contexts and buffers
+ * made from now on have (1: no multisampling). A multisampled buffer is
+ * only ever a source here: what the device shows, and what a surface's
+ * owner reads, is the resolved picture.
+ */
+static unsigned osmesa_samples = 1;
+
+/* Samples the visual of a new context or buffer gets: what the GPU can do. */
+static unsigned
+osmesa_usable_samples(enum pipe_format color_format, enum pipe_format ds_format)
+{
+   struct pipe_screen *screen = get_st_manager()->screen;
+   unsigned n = osmesa_samples;
+
+   for (; n > 1; n /= 2) {
+      if (screen->is_format_supported(screen, color_format, PIPE_TEXTURE_2D,
+                                      n, n, PIPE_BIND_RENDER_TARGET) &&
+          (ds_format == PIPE_FORMAT_NONE ||
+           screen->is_format_supported(screen, ds_format, PIPE_TEXTURE_2D,
+                                       n, n, PIPE_BIND_DEPTH_STENCIL)))
+         break;
+   }
+   return MAX2(n, 1);
+}
+
+/*
+ * Copy a rectangle between two of our surfaces. With multisampling on
+ * either side it is a blit, which resolves the samples on the way.
+ */
+static void
+osmesa_copy(struct pipe_context *pipe, struct pipe_resource *dst,
+            int dx, int dy, struct pipe_resource *src,
+            const struct pipe_box *box)
+{
+   struct pipe_blit_info info;
+
+   if (src->nr_samples <= 1 && dst->nr_samples <= 1) {
+      pipe->resource_copy_region(pipe, dst, 0, dx, dy, 0, src, 0, box);
+      return;
+   }
+   memset(&info, 0, sizeof(info));
+   info.src.resource = src;
+   info.src.format = src->format;
+   info.src.box = *box;
+   info.dst.resource = dst;
+   info.dst.format = dst->format;
+   info.dst.box = *box;
+   info.dst.box.x = dx;
+   info.dst.box.y = dy;
+   info.mask = PIPE_MASK_RGBA;
+   info.filter = PIPE_TEX_FILTER_NEAREST;
+   pipe->blit(pipe, &info);
+}
+
 static void
 osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
                  struct pipe_resource *res, int x, int y, int w, int h)
@@ -307,9 +362,8 @@ osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
    if (x1 <= x0 || y1 <= y0)
       return;
    u_box_2d(x0, y0, x1 - x0, y1 - y0, &box);
-   pipe->resource_copy_region(pipe, osbuffer->direct_res, 0,
-                              osbuffer->target_x + x0, osbuffer->target_y + y0,
-                              0, res, 0, &box);
+   osmesa_copy(pipe, osbuffer->direct_res, osbuffer->target_x + x0,
+               osbuffer->target_y + y0, res, &box);
 }
 
 
@@ -425,7 +479,7 @@ osmesa_init_st_visual(struct st_visual *vis,
    vis->color_format = color_format;
    vis->depth_stencil_format = ds_format;
    vis->accum_format = accum_format;
-   vis->samples = 1;
+   vis->samples = osmesa_usable_samples(color_format, ds_format);
 }
 
 
@@ -474,8 +528,7 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
          return false;
       if (osbuffer->store_res) {
          u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
-         pipe->resource_copy_region(pipe, osbuffer->store_res, 0, 0, 0, 0,
-                                    res, 0, &box);
+         osmesa_copy(pipe, osbuffer->store_res, 0, 0, res, &box);
       }
       if (osmesa->num_rects > 0) {
          for (int i = 0; i < osmesa->num_rects; i++) {
@@ -568,12 +621,22 @@ osmesa_st_framebuffer_validate(struct st_context *st,
 
       templat.format = format;
       templat.bind = bind;
+      /* Multisampled: the colour and depth buffers Mesa draws on. */
+      if (osbuffer->visual.samples > 1 && statts[i] != ST_ATTACHMENT_ACCUM) {
+         templat.target = PIPE_TEXTURE_2D;
+         templat.nr_samples = templat.nr_storage_samples = osbuffer->visual.samples;
+      } else {
+         templat.target = PIPE_TEXTURE_RECT;
+         templat.nr_samples = templat.nr_storage_samples = 0;
+      }
       pipe_resource_reference(&out[i], NULL);
       if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT &&
           !osbuffer->direct_res) {
          struct winsys_handle whandle;
          struct pipe_resource target = templat;
 
+         target.target = PIPE_TEXTURE_RECT;
+         target.nr_samples = target.nr_storage_samples = 0;
          target.width0 = osbuffer->target_width;
          target.height0 = osbuffer->target_height;
 
@@ -595,9 +658,15 @@ osmesa_st_framebuffer_validate(struct st_context *st,
          whandle.handle = osbuffer->own_handle;
          whandle.stride = osbuffer->own_stride;
          whandle.offset = osbuffer->own_offset;
-         osbuffer->store_res =
-            screen->resource_from_handle(screen, &templat, &whandle,
-                                         PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+         {
+            struct pipe_resource store = templat;
+
+            store.target = PIPE_TEXTURE_RECT;
+            store.nr_samples = store.nr_storage_samples = 0;
+            osbuffer->store_res =
+               screen->resource_from_handle(screen, &store, &whandle,
+                                            PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+         }
       }
       out[i] = osbuffer->textures[statts[i]] =
          screen->resource_create(screen, &templat);
@@ -1144,7 +1213,7 @@ OSMesaDrawStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
    if (!src)
       return;
    u_box_2d(sx, sy, sw, sh, &box);
-   pipe->resource_copy_region(pipe, dst, 0, dx, dy, 0, src, 0, &box);
+   osmesa_copy(pipe, dst, dx, dy, src, &box);
    pipe_resource_reference(&src, NULL);
 }
 
@@ -1235,6 +1304,12 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
    return GL_TRUE;
 }
 
+
+GLAPI void GLAPIENTRY
+OSMesaSetSamples(GLint samples)
+{
+   osmesa_samples = samples > 1 ? MIN2(samples, 8) : 1;
+}
 
 GLAPI OSMesaContext GLAPIENTRY
 OSMesaGetCurrentContext(void)
