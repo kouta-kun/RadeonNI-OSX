@@ -2876,3 +2876,40 @@ replayed against the trace, pinned pages with bus addresses from the
 kext, a third kind of allocation), then eviction to GART memory on top,
 which needs r600 to take a buffer's new address (a second small patch to
 Mesa).
+
+## 2026-10-06 — GART: the GPU reads system memory on the G5
+
+Asked for by the user together with eviction; the r600 patch for the
+second step is allowed. Step one is done.
+
+**`hw/rdn_gart.c`**, after Linux's `evergreen_pcie_gart_enable()`,
+`_disable()`, `_tlb_flush()` and the page entries of `rs600.c`: a table
+of 64-bit little-endian entries in video memory, one a 4 KB page, for
+1 GB of GPU address space at 0x40000000 (where Linux has its own). Linux
+moves video memory to address 0 first, with the displays stopped; we
+leave it at 0xF00000000 and only set the system aperture registers
+(0x2034, 0x2038, 0x203c, all zero until now) to that range, so that it
+is not looked up in the table. `tests/gart_replay`: the 17 other
+register accesses are found in order in phase a1 with Linux's values
+(0x1400 = 0x1c203, the seven TLB controls 0x16801b, range 0x40000 to
+0x7ffff, context 0x11, the flush), the five that hold our addresses are
+exempt, and all 262144 table entries are checked; x86 and PowerPC agree.
+
+**Kext**, only with the boot argument `rdn_gart=1`: bus mastering on,
+two pinned pages from `IOBufferMemoryDescriptor` with their bus
+addresses from `getPhysicalSegment()` (through the G5's I/O mapper), the
+2 MB table from the aperture's allocator, `rdn_gart_enable()`, and a
+test: `rdn_ib_selftest()` writes a three-word command buffer into one of
+the pages, binds it at GART page 0 and has the command processor run it
+from there. If it fails the GART is switched off again.
+
+**On the G5** (restart with `rdn_gart=1`): "GART of 1024 MB enabled",
+"dummy page at bus 0x19c000, test page at bus 0x17c000: the GPU ran a
+command buffer from system memory". Registers read back as written.
+Desktop with Quartz Extreme, `rdnuc alloc`, Quake 3 and Doom 3 `bench`
+run as before with it on.
+
+**Not done:** nothing uses it yet. Next: memory in system RAM for
+programs (a third kind of allocation through the kext, mapped into the
+program and bound in the table), then moving textures there when video
+memory is full, with r600 taking the new address.
