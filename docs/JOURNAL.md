@@ -2306,3 +2306,43 @@ is not shown.
 Back to the boot clocks (`rdnuc power boot 3`). The engine clock stays
 there until the watermarks are programmed; the memory clock is the other
 half.
+
+## 2026-10-06 — Watermarks ported; at 650 MHz the user sees no flicker
+
+**The "freeze" the user reported** in between was Apple's VNC server
+alone: `AppleVNCServer` at 60 % of a CPU in a loop around `syslog`,
+`syslogd` at 100 %, the window server idle and well, ssh fine.
+`/var/log/windowserver.log` at the moment VNC was turned on:
+"MPHWCopyRegion: surface copy fails (-536870201) ... disabling" and
+"CGXAccessDisplayDeviceSurface: Copy screen to surface failed" (the same
+lines are there from 2026-10-05 13:09). `kickstart -restart -agent` got
+it back. Our accelerator does not do the copy the window server wants
+for reading the screen; not looked at further.
+
+**Ported.** `hw/rdn_watermark.c`: Linux's `evergreen_bandwidth_update()`
+for CRTC 0 with one display: half a line buffer pair, one DMIF buffer,
+the two latency watermarks and the two priority marks, in Linux's 20.12
+fixed point. Called by `rdn_modeset()` after the scanout address, where
+Linux calls it, and by `rdn_pm_set()` after a clock change with the
+clocks read back. `struct rdn_card` now carries the clocks and the mode
+they are computed from.
+
+**Checked against the trace.** `modeset_replay` passes on x86 and
+PowerPC with the watermark writes in it: for 1920x1080 the latency
+words 0x39de444e and 0x39de4f9c and the marks 0x1f and 0x3a, for
+1366x768 0x51df5792, 0x51df5c46, 0x36 and 0x3c, as Linux wrote them
+(Linux computed set A from 650/800 MHz and set B from 100/150 MHz, its
+power management's two states; the test names those clocks). Our own
+clocks give 0x4f9c and 0x3a for both sets, at 100 MHz and at 650 MHz
+alike: the 150 MHz memory clock is the smallest term either way.
+
+**On the G5** (kext installed, restarted): 0xbf4 = 0x39de4f9c, 0x6b18 =
+0x6b1c = 0x3a, 0xca0 = 0x11. `rdnuc power performance 3`: 649.96 MHz.
+**The user, dragging a window: "It looks fine now!"** Then the demo:
+96.0 fps, 45 C, desktop back afterwards by the registers (not asked of
+the user).
+
+**Open.** Whether to switch to the performance state at start. The
+memory clock. What made the whole screen stripes this morning stay after
+the clock was back at 100 MHz (zero marks were the state then too, so
+"the same failure, stuck" is still only a reading).

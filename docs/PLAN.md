@@ -135,8 +135,16 @@ Driver:
   infoframe (since 2026-10-05) but without audio. The boot argument
   `rdn_dvi=1` makes the kext use DVI signalling instead. The user saw white looking slightly yellow; untested whether
   that is the monitor or this. `rdn_tool -d modeset` forces DVI signalling.
-- **Line buffer and watermark setup** (Linux's `radeon_bandwidth_update`) is
-  not ported.
+- ~~Line buffer and watermark setup~~ Ported 2026-10-06
+  (`hw/rdn_watermark.c`, CRTC 0, one display); the user saw rows of
+  stripes without it once the engine clock was raised, and none with it.
+- **Power states**: the card stays at the VBIOS boot clocks (engine
+  100 MHz, memory 150 MHz, 0.9 V) unless asked: `rdnuc power performance
+  3` raises voltage and engine clock to the PowerPlay table's 650 MHz
+  until the next restart. Not done at boot. The memory clock does not
+  change (`SetMemoryClock` returns success and nothing happens); Linux
+  uses the MC and SMC microcode for that. No fan or thermal handling of
+  our own (45 C after demo runs at 650 MHz).
 - **Cursor** is IOGraphics' software cursor; the hardware cursor is not
   implemented.
 - **8 and 16 bpp** were switched without error but not each inspected by

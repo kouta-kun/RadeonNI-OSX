@@ -148,12 +148,11 @@ bit slow and the cursor flickers slightly.
 
 - Texture uploads copy; `GL_UNPACK_CLIENT_STORAGE_APPLE` is ignored
   (correct, slower).
-- Applications' OpenGL windows are not surfaces of their own. `glwin`
-  (GLUT) is still drawn by Mesa into its window's buffer as in A4, but
-  Chess, with this set-up loaded, gets a drawable record of another kind
-  (connection, window, surface) that the bundle does not understand, and
-  is drawn by Apple's software renderer instead: correct, not
-  accelerated.
+- ~~Applications' OpenGL windows are not surfaces of their own.~~ They
+  are since 2026-10-05: the window server textures from the surface's
+  buffer (journal, "Why the window server drew surfaces white"). Left:
+  no alpha, shadows over a surface are wrong, a surface that changes
+  size is untried.
 - The software cursor, drawn by `IOFramebuffer` with the CPU into the
   screen the GPU copies to, flickered slightly. The hardware cursor
   (`RDN_HWCURSOR=1`) replaces it and is confirmed by the user.
