@@ -117,6 +117,8 @@ darwin)
         $root/mesa/darwin8/tiger_emutls.c && \
         rm -f $compat/libtigercompat.a && \
         powerpc-apple-darwin8-ar rcs $compat/libtigercompat.a $compat/tiger_compat.o"
+    # -mtune=970: scheduled for the G5 the driver is meant for, with no
+    # instruction a G4 lacks (the QEMU guest is one).
     # -fno-strict-aliasing: at -Os this compiler's strict-aliasing
     # optimisation breaks compile_vertex_list() in Mesa's display-list
     # compiler (lists lose primitives; journal, 2026-10-05). Whether that
@@ -132,9 +134,9 @@ ranlib = 'powerpc-apple-darwin8-ranlib'
 pkg-config = 'false'
 
 [built-in options]
-c_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-fno-strict-aliasing', '-isystem', '$compat/src/include']
-cpp_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-fno-strict-aliasing', '-isystem', '$compat/src/include', '-include', '$compat/src/tiger_compat.h']
-objc_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-fno-strict-aliasing', '-isystem', '$compat/src/include']
+c_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-mtune=970', '-fno-strict-aliasing', '-isystem', '$compat/src/include']
+cpp_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-mtune=970', '-fno-strict-aliasing', '-isystem', '$compat/src/include', '-include', '$compat/src/tiger_compat.h']
+objc_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-mtune=970', '-fno-strict-aliasing', '-isystem', '$compat/src/include']
 objc_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/tiger_emutls.o', '$compat/tiger_emutls.o', '$compat/libtigercompat.a']
 c_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/libtigercompat.a']
 cpp_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-static-libstdc++', '-Wl,-dead_strip', '$compat/tiger_emutls.o', '$compat/libtigercompat.a']
