@@ -6,9 +6,9 @@
  * libgcc's routine finds the thread's copy through pthread_getspecific().
  * Mesa looks up the current context and dispatch table that way on every
  * OpenGL call. This replaces libgcc's routine with the same interface and
- * a short cut for the thread that used it first, which in nearly every
- * program is the only one that draws: its table is reached through two
- * globals, without the pthread call. Other threads take the usual way.
+ * a short cut for the first few threads that use it, which in nearly every
+ * program are the only ones that draw: their tables are reached through
+ * globals, without the pthread calls. Other threads take the usual way.
  *
  * The control object's layout is libgcc's (emutls.c, struct
  * __emutls_object); the code is written for this project.
@@ -43,17 +43,25 @@ static pthread_once_t emutls_once = PTHREAD_ONCE_INIT;
 static pthread_key_t emutls_key;
 static uintptr_t emutls_slots;
 
-/* The short cut: the first thread's array, valid while that thread lives. */
-static pthread_t fast_thread;
-static struct emutls_array *volatile fast_array;
+/*
+ * The short cut: the arrays of the first few threads to come here, each
+ * valid while its thread lives. A program that draws has one such thread,
+ * or two with Mesa's glthread.
+ */
+#define FAST_THREADS 4
+static struct {
+	pthread_t thread;
+	struct emutls_array *volatile array;
+} fast[FAST_THREADS];
 
 static void emutls_thread_exit(void *arg)
 {
 	struct emutls_array *a = arg;
 	uintptr_t i;
 
-	if (a == fast_array)
-		fast_array = NULL;
+	for (i = 0; i < FAST_THREADS; i++)
+		if (fast[i].array == a)
+			fast[i].array = NULL;
 	for (i = 0; i < a->count; i++)
 		if (a->slot[i])
 			/* The allocation starts one pointer before the copy. */
@@ -106,13 +114,16 @@ static void *emutls_slow(struct emutls_object *obj)
 		if (!a)
 			abort();
 		pthread_setspecific(emutls_key, a);
-		/* The first thread to come here gets the short cut. */
+		/* The first threads to come here get the short cut. */
 		pthread_mutex_lock(&emutls_lock);
-		if (!fast_array && !fast_thread) {
-			fast_thread = pthread_self();
-			fast_array = a;
-		}
+		for (offset = 0; offset < FAST_THREADS; offset++)
+			if (!fast[offset].array) {
+				fast[offset].thread = pthread_self();
+				fast[offset].array = a;
+				break;
+			}
 		pthread_mutex_unlock(&emutls_lock);
+		offset = obj->loc.offset;
 	}
 	if (offset > a->count) {
 		/*
@@ -136,12 +147,20 @@ static void *emutls_slow(struct emutls_object *obj)
 void *__emutls_get_address(void *object)
 {
 	struct emutls_object *obj = object;
-	struct emutls_array *a = fast_array;
 	uintptr_t offset = obj->loc.offset;
+	pthread_t self = pthread_self();
+	unsigned i;
 
-	if (a && offset && pthread_equal(pthread_self(), fast_thread) &&
-	    offset <= a->count && a->slot[offset - 1])
-		return a->slot[offset - 1];
+	if (offset)
+		for (i = 0; i < FAST_THREADS; i++) {
+			struct emutls_array *a = fast[i].array;
+
+			if (a && pthread_equal(fast[i].thread, self)) {
+				if (offset <= a->count && a->slot[offset - 1])
+					return a->slot[offset - 1];
+				break;
+			}
+		}
 	return emutls_slow(obj);
 }
 

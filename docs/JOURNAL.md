@@ -2675,3 +2675,55 @@ No "out of video memory"; the screen grabbed during the scene is right.
 Apple's Chess: board and pieces right. `rdnuc alloc` passes.
 
 **Not seen by the user** (away): all of the above is by readback.
+
+## 2026-10-06 — Doom 3's slow scenes measured; glthread: the second processor does Mesa's work
+
+**The user's slow scenes.** Sampled while they played: OpenGL driver
+55.1 % of the main thread, Doom's renderer 23.8 %, game logic 18.4 %.
+`glDrawElements` 36.9 %, and under it Mesa's per-draw work
+(`st_prepare_draw`, `r600_draw_vbo`, `_mesa_update_state`); copies about
+5 %, kernel calls 1.2 %. Doom draws every surface once for every light
+that touches it.
+
+**A benchmark that works on any card:** the user's save games `bench`
+and `bench2` (both in `demo_mc_underground`), loaded from the command
+line, 60 frames to settle and 300 timed between two `echo` marks
+(`tools/guest/d3save.sh`).
+
+| | bench | bench2 | Quake 3 `four` |
+|---|---|---|---|
+| Before today's last changes | 16.0 | 17.3 | 115.3 |
+| Built with `-mtune=970` (kept) | 16.1 to 16.3 | 17.6 | 115.3 |
+| `RDN_GLTHREAD=1` | 18.8 | 20.2 | 143.1 |
+| and the TLS short cut for more than one thread | 21.3 | 22.1 | 143.8 |
+
+Fence waits stay at 1 to 2 ms a run: the GPU is idle most of the time.
+
+**glthread** (user's go-ahead for touching Mesa this once). Mesa's own
+answer to programs limited by the CPU: the program's thread only records
+its OpenGL calls, a second thread runs them. The G5 has two processors
+and the games use one.
+- `mesa/patches/0003-r600-glthread.patch`: r600 declares
+  `map_unsynchronized_thread_safe` (Mesa refuses glthread without) and a
+  map with `PIPE_MAP_THREAD_SAFE` takes its transfer from the pool of
+  the other thread. r600 does not run with glthread on Linux either.
+- Our front end: `RDN_GLTHREAD=1` in a program's environment calls
+  `_mesa_glthread_init()`; every entry point that touches the context
+  from the program's thread waits for the second thread first; the copy
+  to the screen finds its context through `st->frontend_context`, not
+  through the calling thread; and `set_background_context`, which
+  glthread calls in its thread before anything else and which we did not
+  have (the first try hung in a call to address 0).
+- `tiger_emutls.c`: the short cut now serves four threads, not one; the
+  worker had been going through `pthread_once` and `pthread_getspecific`
+  for every lookup.
+
+Quake 3 with it: 143.8 fps, 163.3 without sound (the GeForce 6600 LE:
+122 to 128, and 132 to 139); a still of q3dm1 is right. Doom 3 with it:
+a profile shows the program's thread waiting 45 % of the time for room
+in glthread's queue and the worker waiting 30 %: the worker is the
+bottleneck now and the hand-over between the two is not free.
+
+**Not done:** glthread is off unless the variable is set, and has run
+only in these two games, by readback and by the numbers. The window
+server and windowed programs have not been tried with it.

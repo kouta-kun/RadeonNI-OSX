@@ -1,0 +1,34 @@
+osx-gpu: r600 can be driven by glthread
+
+Declares PIPE_CAP map_unsynchronized_thread_safe, which
+_mesa_glthread_init() requires, and gives a map made with
+PIPE_MAP_THREAD_SAFE (glthread maps its upload buffers from the
+application thread) a transfer from the pool kept for the thread that is
+not the driver thread. Used only when the frontend enables glthread
+(RDN_GLTHREAD=1 in this project).
+
+--- a/src/gallium/drivers/r600/r600_pipe.c
++++ b/src/gallium/drivers/r600/r600_pipe.c
+@@ -457,6 +457,11 @@
+ 	caps->legacy_math_rules = true;
+ 	caps->can_bind_const_buffer_as_vertex = true;
+ 	caps->allow_mapped_buffers_during_execution = true;
++	/* osx-gpu: lets a frontend turn glthread on. Buffers are created by
++	 * the screen and the winsys, which lock, and a map with
++	 * PIPE_MAP_THREAD_SAFE takes its transfer from the pool of the other
++	 * thread (r600_buffer_get_transfer). */
++	caps->map_unsynchronized_thread_safe = true;
+ 	caps->robust_buffer_access_behavior = true;
+ 
+ 	caps->vertex_input_alignment = PIPE_VERTEX_INPUT_ALIGNMENT_4BYTE;
+--- a/src/gallium/drivers/r600/r600_buffer_common.c
++++ b/src/gallium/drivers/r600/r600_buffer_common.c
+@@ -269,7 +269,7 @@
+ 	struct r600_common_context *rctx = (struct r600_common_context*)ctx;
+ 	struct r600_transfer *transfer;
+ 
+-	if (usage & TC_TRANSFER_MAP_THREADED_UNSYNC)
++	if (usage & (TC_TRANSFER_MAP_THREADED_UNSYNC | PIPE_MAP_THREAD_SAFE))
+ 		transfer = slab_zalloc(&rctx->pool_transfers_unsync);
+ 	else
+ 		transfer = slab_zalloc(&rctx->pool_transfers);

@@ -69,6 +69,7 @@
 #include <c11/threads.h>
 
 #include "state_tracker/st_context.h"
+#include "main/glthread.h"
 
 #include "glapi/glapi/glapi.h"  /* for OSMesaGetProcAddress below */
 
@@ -158,6 +159,20 @@ struct osmesa_context
 
 };
 
+/*
+ * glthread calls this in its own thread before anything else. A loader
+ * with per-thread state would tell it about the thread here; this
+ * frontend finds its context through Mesa's (st->frontend_context), so
+ * there is nothing to do, but the call must have somewhere to go.
+ */
+static void
+osmesa_set_background_context(struct st_context *st,
+                              struct util_queue_monitoring *queue_info)
+{
+   (void)st;
+   (void)queue_info;
+}
+
 /**
  * Called from the ST manager.
  */
@@ -191,6 +206,7 @@ create_st_manager(void)
       global_fscreen->screen = osmesa_create_screen();
       global_fscreen->get_param = osmesa_st_get_param;
       global_fscreen->get_egl_image = NULL;
+      global_fscreen->set_background_context = osmesa_set_background_context;
    }
 }
 
@@ -431,7 +447,8 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
                                   struct pipe_frontend_drawable *drawable,
                                   enum st_attachment_type statt)
 {
-   OSMesaContext osmesa = OSMesaGetCurrentContext();
+   /* Not this thread's current context: with glthread this is another thread. */
+   OSMesaContext osmesa = st ? (OSMesaContext)st->frontend_context : OSMesaGetCurrentContext();
    struct osmesa_buffer *osbuffer = drawable_to_osbuffer(drawable);
    struct pipe_resource *res = osbuffer->textures[statt];
    unsigned bpp;
@@ -646,6 +663,19 @@ osmesa_destroy_buffer(struct osmesa_buffer *osbuffer)
  *                     display lists.  NULL indicates no sharing.
  * Return:  an OSMesaContext or 0 if error
  */
+/*
+ * With glthread (RDN_GLTHREAD=1) the OpenGL calls a program makes are only
+ * recorded by its own thread, and a second one runs them. Everything here
+ * that touches the context from the program's thread waits for that
+ * second thread to catch up first. Without glthread this does nothing.
+ */
+static void
+osmesa_sync(OSMesaContext osmesa)
+{
+   if (osmesa && osmesa->st)
+      _mesa_glthread_finish(osmesa->st->ctx);
+}
+
 GLAPI OSMesaContext GLAPIENTRY
 OSMesaCreateContext(GLenum format, OSMesaContext sharelist)
 {
@@ -809,6 +839,18 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 
    osmesa->st->frontend_context = osmesa;
 
+   /*
+    * Two processors: let the second one do Mesa's work for each call
+    * (state validation, the draws) while the program goes on. An
+    * experiment, off unless asked for.
+    */
+   if (getenv("RDN_GLTHREAD")) {
+      _mesa_glthread_init(osmesa->st->ctx);
+      if (getenv("RDN_GLTHREAD_LOG"))
+         fprintf(stderr, "rdn: glthread %s\n",
+                 osmesa->st->ctx->GLThread.enabled ? "enabled" : "refused");
+   }
+
    osmesa->format = format;
    osmesa->user_row_length = 0;
    osmesa->y_up = GL_TRUE;
@@ -826,6 +868,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 GLAPI void GLAPIENTRY
 OSMesaDestroyContext(OSMesaContext osmesa)
 {
+   osmesa_sync(osmesa);
    if (osmesa) {
       st_destroy_context(osmesa->st);
       free(osmesa->zs);
@@ -861,6 +904,7 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
                   GLsizei width, GLsizei height)
 {
+   osmesa_sync(osmesa);
    enum pipe_format color_format;
 
    if (!osmesa && !buffer) {
@@ -923,6 +967,7 @@ OSMesaShowStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
                 GLuint offset, GLsizei width, GLsizei height, GLint x, GLint y,
                 GLint count, const GLint *rects)
 {
+   osmesa_sync(osmesa);
    struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
    struct pipe_context *pipe;
    struct pipe_screen *screen;
@@ -974,6 +1019,7 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaTexStore(OSMesaContext osmesa, GLenum target, GLuint handle,
                GLsizei stride, GLuint offset, GLsizei width, GLsizei height)
 {
+   osmesa_sync(osmesa);
    struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
    struct pipe_screen *screen;
    struct pipe_resource templat, *res;
@@ -1019,6 +1065,7 @@ OSMesaDrawStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
                 GLuint offset, GLsizei width, GLsizei height, GLint sx,
                 GLint sy, GLsizei sw, GLsizei sh, GLint dx, GLint dy)
 {
+   osmesa_sync(osmesa);
    struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
    struct pipe_context *pipe;
    struct pipe_screen *screen;
@@ -1073,6 +1120,7 @@ GLAPI void GLAPIENTRY
 OSMesaSurfaceStorage(OSMesaContext osmesa, GLuint handle, GLsizei stride,
                      GLuint offset)
 {
+   osmesa_sync(osmesa);
    if (!osmesa)
       return;
    osmesa->own_handle = handle;
@@ -1085,6 +1133,7 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaMakeCurrentDirect(OSMesaContext osmesa, GLuint handle, GLsizei width,
                         GLsizei height, GLsizei stride, GLuint offset)
 {
+   osmesa_sync(osmesa);
    return OSMesaMakeCurrentSurface(osmesa, handle, width, height, stride,
                                    offset, 0, 0, width, height);
 }
@@ -1096,6 +1145,7 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
                          GLsizei stride, GLuint offset, GLint x, GLint y,
                          GLsizei width, GLsizei height)
 {
+   osmesa_sync(osmesa);
    enum pipe_format color_format;
    struct osmesa_buffer *osbuffer;
 
@@ -1165,6 +1215,7 @@ OSMesaGetCurrentContext(void)
 GLAPI void GLAPIENTRY
 OSMesaReadbackRects(OSMesaContext osmesa, GLint count, const GLint *rects)
 {
+   osmesa_sync(osmesa);
    if (!osmesa)
       return;
    free(osmesa->rects);
@@ -1252,6 +1303,7 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaGetDepthBuffer(OSMesaContext c, GLint *width, GLint *height,
                      GLint *bytesPerValue, void **buffer)
 {
+   osmesa_sync(c);
    struct osmesa_buffer *osbuffer = c->current_buffer;
    struct pipe_resource *res = osbuffer->textures[ST_ATTACHMENT_DEPTH_STENCIL];
 
@@ -1294,6 +1346,7 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaGetColorBuffer(OSMesaContext osmesa, GLint *width,
                       GLint *height, GLint *format, void **buffer)
 {
+   osmesa_sync(osmesa);
    struct osmesa_buffer *osbuffer = osmesa->current_buffer;
 
    if (osbuffer) {
