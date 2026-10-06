@@ -2513,3 +2513,30 @@ frame: game code 4.20, sound 1.34, OpenGL driver 1.30, renderer 1.04,
 other 0.28. The profile samples five seconds of an eleven second demo,
 not the same five each time, so the parts move by a few tenths between
 runs; the driver's share is 1.3 to 1.5 ms in both.
+
+## 2026-10-06 — The GPU's time per frame measured; Mesa at -O2 is worth 2 %
+
+Radeon back in the G5 (650 / 800 MHz by itself after the restart).
+
+**How long the GPU works on a frame** (the user asked what makes me sure
+the driver and not the GPU is the limit). Demo `four`, fence waits from
+`RDN_STATS=1`, with `RDN_FENCE_SPIN=20000` so that the 1 ms sleep of the
+kext's poll does not round the waits up:
+
+| Run | fps | Waiting for the GPU |
+|---|---|---|
+| Normal | 112.0 | 72 ms in all |
+| `RDN_GLD_SWAP_FINISH=1` (wait at each swap), spinning | 99.4 | 1455 ms: 1.15 ms a frame |
+| `RDN_SYNC=1` (wait for every command buffer), spinning | 90.9 | 2598 ms: 2.06 ms a frame |
+| The same two, sleeping | 95.2, 86.5 | 2018 and 3339 ms |
+
+So the GPU needs between one and two milliseconds for a frame the CPU
+takes nine to produce. Quake 3 here is limited by the CPU.
+
+**Mesa at -O2** (`build-darwin-O2`), installed on the G5 at the user's
+request, the size-optimised one kept as `~/RadeonNIGLDriver.Os`: 114.3
+and 114.2 fps against 112.0, 129.7 without sound against 127.0. A still
+of q3dm1 is right, and Apple's Chess (display lists, the thing this
+compiler's optimiser broke before at -Os with strict aliasing) shows its
+board and all pieces (readback). The package still builds the
+size-optimised bundle.
