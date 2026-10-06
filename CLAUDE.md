@@ -127,9 +127,12 @@ been planned in detail.
   buffer destruction waited for the GPU), and the card had been running
   at its VBIOS boot clocks (engine 100 MHz, memory 150 MHz).
   `~/gl/rdnuc power performance 3` on the G5 raises voltage and engine
-  clock to 650 MHz until the next restart; the kext never does it by
-  itself. Mask 4 (memory clock) does nothing yet and must not be used
-  with `boot` (the table for going down is untried). Raising the clock
+  clock to 650 MHz; the kext does that by itself at start
+  (`rdn_bootclocks=1` keeps the boot state). Mask 4 (memory clock, 800 MHz) works only when the
+  memory controller's microcode was loaded at boot (`sudo nvram
+  boot-args="rdn_mc=1"`, `hw/rdn_mc.c`; set on the G5 since 2026-10-06);
+  without it the table does nothing. Going down with `boot` and mask 4 is
+  untried. Raising the clock
   without display watermarks made rows of the screen show stripes;
   `hw/rdn_watermark.c` programs them and the user confirmed the fix.
 - `RDN_STATS=1` in a program's environment prints its fence waits at

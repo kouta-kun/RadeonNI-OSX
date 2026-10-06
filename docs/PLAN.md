@@ -138,13 +138,13 @@ Driver:
 - ~~Line buffer and watermark setup~~ Ported 2026-10-06
   (`hw/rdn_watermark.c`, CRTC 0, one display); the user saw rows of
   stripes without it once the engine clock was raised, and none with it.
-- **Power states**: the card stays at the VBIOS boot clocks (engine
-  100 MHz, memory 150 MHz, 0.9 V) unless asked: `rdnuc power performance
-  3` raises voltage and engine clock to the PowerPlay table's 650 MHz
-  until the next restart. Not done at boot. The memory clock does not
-  change (`SetMemoryClock` returns success and nothing happens); Linux
-  uses the MC and SMC microcode for that. No fan or thermal handling of
-  our own (45 C after demo runs at 650 MHz).
+- **Power states**: with `--accel` the kext raises voltage and engine
+  clock to the PowerPlay table's 650 MHz at start (`rdn_bootclocks=1`
+  keeps the VBIOS boot clocks, 100 / 150 MHz). The memory clock goes to
+  800 MHz only by hand (`rdnuc power performance 4`) and only when the
+  memory controller's microcode was loaded at boot (`rdn_mc=1`); both
+  work on the G5 (2026-10-06). No fan or thermal handling of our own
+  (48 C after demo runs).
 - **Cursor** is IOGraphics' software cursor; the hardware cursor is not
   implemented.
 - **8 and 16 bpp** were switched without error but not each inspected by

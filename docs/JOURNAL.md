@@ -2378,3 +2378,43 @@ on PowerPC is uncached without the guard bit. It is the default now
 
 **Not checked:** a still picture with write combining (only that the
 demo runs and the number); the QEMU guest.
+
+## 2026-10-06 — Memory controller microcode on the G5: the memory clock goes to 800 MHz
+
+**Ported.** `hw/rdn_mc.c`: Linux's `ni_mc_load_microcode()` for Turks
+(reset the sequencer, 29 I/O register pairs, the 6024 words of
+`TURKS_mc.bin`, start, wait for training). `tests/mc_replay` is strict:
+from the read of MC_SEQ_MISC0 on, each of our 6090 accesses is the next
+entry of the reference trace (entries 2407 to 8496 of phase a1), on x86
+and PowerPC. The kext runs it after POST and before the EDID and the
+first mode set, only with the boot argument `rdn_mc=1` and `FW_MC` in the
+personality, which `install.sh --accel` adds when `TURKS_mc.bin` is in
+the package (it is now; `fetch-firmware.sh` knows its checksum).
+
+**Installer.** My comment in `install.sh`'s perl program had an
+apostrophe, which ended the shell's quote: the first install on the G5
+failed with a perl syntax error and changed nothing. The rehearsal on the
+host had extracted the program with a regular expression and missed it.
+
+**Before, on the G5:** MC_SEQ_SUP_CNTL 0, MC_SEQ_MISC0 0x500026a9,
+MC_IO_PAD_CNTL_D0 0x1000078c: what Linux read before its load.
+
+**With `rdn_mc=1`** (user's go-ahead; restart): "memory controller
+microcode: 0", MC_SEQ_SUP_CNTL 0xb1800001 (running), 1024 MB, desktop and
+Quartz Extreme as before, `rdnuc alloc` passes, engine clock raised by
+itself as before.
+
+**Then `rdnuc power performance 4`:** memory 800.00 MHz read back. This
+is the table that returned success and did nothing this morning: it needs
+the sequencer's microcode. Changed with it: MPLL mode 0x61c 0x3d10 ->
+0x1910, the arbiter's timing 0x2774/0x2778, and our watermarks,
+recomputed to latency 17486 ns and mark 0x1f, Linux's own values for its
+high state. `rdnuc alloc` passes, Quartz Extreme in use.
+
+**Quake 3 demo:** 112.2 fps (108.4 before), fence waits 72 ms of 11 s,
+47 C. A still of q3dm1 and the desktop read back right. As expected the
+demo gains little: it was not waiting for the GPU. What the memory clock
+does for work that is limited by the GPU has not been measured.
+
+**Not known:** what the monitor shows (the user's to say). Not done: the
+memory clock in the automatic switch; `rdn_mc` without a boot argument.
