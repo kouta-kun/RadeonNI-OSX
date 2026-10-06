@@ -19,6 +19,18 @@ struct rdn_card {
 	struct rdn_atom atom;
 	/* CRTC 0 is scanning out; kept up to date by POST and modeset. */
 	bool crtc_on;
+	/*
+	 * Engine and memory clock in units of 10 kHz, as rdn_pm_set() left
+	 * them; zero until someone asks: what the card boots with.
+	 */
+	uint32_t sclk, mclk;
+	/*
+	 * What the display watermarks are computed from: the mode on CRTC 0
+	 * (clock in kHz; zero before the first mode set) and, if not zero,
+	 * other clocks for the second watermark set (rdn_watermark.c).
+	 */
+	uint32_t wm_clock, wm_hdisplay, wm_htotal;
+	uint32_t wm_low_sclk, wm_low_mclk;
 };
 
 /*
@@ -64,5 +76,12 @@ bool rdn_card_posted(struct rdn_card *card);
  * card is not posted. Returns 0 or a negative errno value.
  */
 int rdn_card_post(struct rdn_card *card);
+
+/*
+ * Program the line buffer and the display watermarks of CRTC 0 for the
+ * mode and clocks recorded in the card. rdn_modeset() and rdn_pm_set()
+ * call it.
+ */
+void rdn_bandwidth_update(struct rdn_card *card);
 
 #endif /* RDN_CARD_H */

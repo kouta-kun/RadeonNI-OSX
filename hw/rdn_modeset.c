@@ -943,6 +943,11 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 	if (r)
 		goto unlock;
 	set_base(card, mode, fb);
+	/* radeon_bandwidth_update() */
+	card->wm_clock = mode->clock;
+	card->wm_hdisplay = mode->hdisplay;
+	card->wm_htotal = mode->htotal;
+	rdn_bandwidth_update(card);
 	overscan_setup(card);
 	scaler_setup(card);
 

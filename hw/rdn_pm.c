@@ -317,7 +317,7 @@ int rdn_pm_set(struct rdn_card *card, const struct rdn_pm_state *from,
 {
 	/* upvolt before raising clocks, downvolt after lowering clocks */
 	bool voltage_after = to->sclk < from->sclk;
-	uint32_t v;
+	uint32_t v, sclk, mclk;
 	int r = 0;
 
 	if (rdn_rreg(card, GRBM_STATUS) & GUI_ACTIVE)
@@ -339,6 +339,14 @@ int rdn_pm_set(struct rdn_card *card, const struct rdn_pm_state *from,
 		r = set_voltages(card, from, to);
 
 	crtc_read_requests(card, true);
+
+	/* The display's watermarks depend on both clocks: read them back. */
+	if (!rdn_pm_get_clocks(card, &sclk, &mclk) && sclk && mclk) {
+		/* The VBIOS reads 649.96 MHz for 650: round to the MHz. */
+		card->sclk = (sclk + 50) / 100 * 100;
+		card->mclk = (mclk + 50) / 100 * 100;
+		rdn_bandwidth_update(card);
+	}
 	return r;
 }
 

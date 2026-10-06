@@ -270,6 +270,14 @@ int main(int argc, char **argv)
 	}
 
 	card.crtc_on = strcmp(argv[4], "-") != 0;
+	/*
+	 * The clocks Linux computed the watermarks in the trace from: its
+	 * power management's high state for set A and low state for set B.
+	 */
+	card.sclk = 65000;
+	card.mclk = 80000;
+	card.wm_low_sclk = 10000;
+	card.wm_low_mclk = 15000;
 	r = rdn_modeset(&card, &mode, &fb, rdn_edid_is_hdmi(edid, (int)edid_len));
 	rdn_card_fini(&card);
 
