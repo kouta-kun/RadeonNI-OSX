@@ -69,6 +69,16 @@ enum {
 	 * BAR); out: its value. Reads only, for diagnosis.
 	 */
 	RDN_UC_REG_READ,
+	/*
+	 * scalars in: size, alignment (power of two); out: offset. Like
+	 * RDN_UC_ALLOC, but from the video memory beyond the aperture, which
+	 * the CPU cannot reach: for what only the GPU reads and writes. The
+	 * offset counts from the same origin and is at least aperture_size.
+	 * Freed with RDN_UC_FREE.
+	 */
+	RDN_UC_ALLOC_HIDDEN,
+	/* scalars out: offset and size of the region RDN_UC_ALLOC_HIDDEN uses */
+	RDN_UC_HIDDEN_INFO,
 	RDN_UC_METHOD_COUNT
 };
 

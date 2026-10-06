@@ -57,6 +57,8 @@ struct rdn_bo {
    struct rdn_fence *last_write;
    /* Memory that is not from the allocator (the screen). */
    bool foreign;
+   /* Beyond the aperture: the CPU cannot map it. */
+   bool hidden;
 };
 
 struct rdn_cs_buffer {
@@ -169,7 +171,18 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
    size = align64(MAX2(size, 1), 256);
 
    simple_mtx_lock(&ws->lock);
-   r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
+   /*
+    * What r600 will never map (tiled textures and render targets, which
+    * it fills through a staging copy) goes to the video memory beyond the
+    * aperture, if the device has any, and leaves the rest for buffers.
+    */
+   r = -1;
+   if ((flags & RADEON_FLAG_NO_CPU_ACCESS) && ws->dev->alloc_hidden) {
+      r = ws->dev->alloc_hidden(ws->dev, size, alignment, &bo->offset);
+      bo->hidden = !r;
+   }
+   if (r)
+      r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
    if (r) {
       /* Destroyed buffers waiting for the GPU may make room. */
       rdn_reap_dead_bos(ws, true);
@@ -289,6 +302,8 @@ static void *rdn_buffer_map(struct radeon_winsys *rws, struct pb_buffer_lean *bu
    struct rdn_bo *bo = rdn_bo(buf);
    struct rdn_cs *cs = rcs ? (struct rdn_cs *)rcs->priv : NULL;
 
+   if (bo->hidden)
+      return NULL;
    if (!(usage & PIPE_MAP_UNSYNCHRONIZED)) {
       /* Reading needs pending writes done; writing needs every use done. */
       unsigned conflicts = (usage & PIPE_MAP_WRITE) ? RADEON_USAGE_READWRITE
@@ -759,6 +774,7 @@ static void rdn_init_info(struct radeon_drm_winsys *ws)
    const struct rdn_device_info *dev = &ws->dev->info;
    struct radeon_info *info = &ws->info;
    uint32_t vram_kb = (uint32_t)(dev->vram_size / 1024);
+   uint32_t hidden_kb = (uint32_t)(dev->hidden_size / 1024);
 
    /* The last radeon DRM: every feature r600 keys on a version is there. */
    info->drm_major = 2;
@@ -785,7 +801,7 @@ static void rdn_init_info(struct radeon_drm_winsys *ws)
     * Buffers it asks for in the GTT domain come from video memory too.
     */
    info->gart_size_kb = vram_kb;
-   info->vram_size_kb = vram_kb;
+   info->vram_size_kb = vram_kb + hidden_kb;
    info->vram_vis_size_kb = vram_kb;
    info->max_heap_size_kb = vram_kb;
    info->gart_page_size = 4096;

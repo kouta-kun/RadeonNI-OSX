@@ -36,6 +36,20 @@ static int dev_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
 	return 0;
 }
 
+static int dev_alloc_hidden(struct rdn_device *dev, uint64_t size, uint64_t align,
+			    uint64_t *offset)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	int off = 0;
+
+	if (size > 0xffffffffull || align > 0x10000000ull ||
+	    IOConnectMethodScalarIScalarO(d->conn, RDN_UC_ALLOC_HIDDEN, 2, 1,
+					  (int)size, (int)align, &off))
+		return -1;
+	*offset = (uint32_t)off;
+	return 0;
+}
+
 static void dev_free(struct rdn_device *dev, uint64_t offset)
 {
 	struct darwin_device *d = (struct darwin_device *)dev;
@@ -294,6 +308,18 @@ struct rdn_device *rdn_device_open(void)
 	d->base.info.vram_gpu_base = ((uint64_t)info.vram_gpu_base_hi << 32) |
 				     info.vram_gpu_base_lo;
 	d->base.info.vram_size = info.heap_size;
+	/* An older kext has no such method: then there is no hidden memory. */
+	{
+		int hidden_offset = 0, hidden_size = 0;
+
+		if (!getenv("RDN_NO_HIDDEN_VRAM") &&
+		    !IOConnectMethodScalarIScalarO(d->conn, RDN_UC_HIDDEN_INFO, 0, 2,
+						   &hidden_offset, &hidden_size) &&
+		    hidden_size) {
+			d->base.info.hidden_size = (uint32_t)hidden_size;
+			d->base.alloc_hidden = dev_alloc_hidden;
+		}
+	}
 	d->base.info.tile_config = info.tile_config;
 	d->base.info.backend_map = info.backend_map;
 	d->base.info.max_backends = info.max_backends;

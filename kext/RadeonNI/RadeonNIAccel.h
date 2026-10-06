@@ -73,7 +73,9 @@ public:
 
 	/* For the user client. All of these take the lock themselves. */
 	void getInfo(struct rdn_user_info *info);
-	IOReturn allocVram(UInt32 size, UInt32 align, UInt32 *offset);
+	IOReturn allocVram(UInt32 size, UInt32 align, UInt32 *offset,
+			   bool hidden = false);
+	void hiddenInfo(UInt32 *offset, UInt32 *size);
 	void freeVram(UInt32 offset);
 	IOReturn submit(UInt32 offset, UInt32 words, UInt32 *fence);
 	bool fenceWait(UInt32 fence, UInt32 timeoutMs);
@@ -102,6 +104,9 @@ private:
 	IOLock *fLock;
 	struct rdn_accel fAccel;
 	struct rdn_mem fMem;
+	/* Video memory beyond the aperture; fHiddenSize 0 if there is none. */
+	struct rdn_mem fHidden;
+	UInt32 fHiddenOffset, fHiddenSize;
 	void *fPfp, *fMe;
 	bool fEngineUp;
 	/* The power state the card was last put in (hw/rdn_pm.h). */
@@ -128,7 +133,8 @@ private:
 
 class RadeonNIUserClient : public IOUserClient
 {
-	enum { kMaxAllocations = 4096 };
+	/* Mesa asks for every buffer by itself: a game has tens of thousands. */
+	enum { kMaxAllocations = 65536 };
 
 	OSDeclareDefaultStructors(RadeonNIUserClient)
 
@@ -157,6 +163,8 @@ public:
 	IOReturn methodSurfaceList(struct rdn_user_surfaces *list, IOByteCount *size);
 	IOReturn methodSurfaceLocked(UInt32 *wid);
 	IOReturn methodRegRead(UInt32 offset, UInt32 *value);
+	IOReturn methodAllocHidden(UInt32 size, UInt32 align, UInt32 *offset);
+	IOReturn methodHiddenInfo(UInt32 *offset, UInt32 *size);
 	IOReturn methodPower(UInt32 state, UInt32 what, UInt32 *sclk,
 			     UInt32 *mclk, UInt32 *temperature);
 

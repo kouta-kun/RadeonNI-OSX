@@ -200,8 +200,19 @@ bool RadeonNIAccel::startEngine(void)
 	if (rdn_mem_init(&fMem, fFramebuffer->os(), HEAP_OFFSET,
 			 apertureSize - HEAP_OFFSET))
 		return false;
-	IOLog("RadeonNI: 3D engine up; %lu MB of video memory for clients\n",
-	      (unsigned long)((apertureSize - HEAP_OFFSET) >> 20));
+	/*
+	 * The card has more video memory than its aperture shows the CPU.
+	 * The rest is for what only the GPU touches.
+	 */
+	if (fAccel.vram_size > apertureSize &&
+	    !rdn_mem_init(&fHidden, fFramebuffer->os(), apertureSize,
+			  fAccel.vram_size - apertureSize)) {
+		fHiddenOffset = apertureSize;
+		fHiddenSize = (UInt32)(fAccel.vram_size - apertureSize);
+	}
+	IOLog("RadeonNI: 3D engine up; %lu MB of video memory for clients, %lu MB more beyond the aperture\n",
+	      (unsigned long)((apertureSize - HEAP_OFFSET) >> 20),
+	      (unsigned long)(fHiddenSize >> 20));
 
 	/*
 	 * ASIC_Init leaves the card at slow boot clocks. Go to the PowerPlay
@@ -253,6 +264,10 @@ void RadeonNIAccel::retire(IOService *provider)
 		IOLockLock(fLock);
 		rdn_accel_fini(&fAccel);
 		rdn_mem_fini(&fMem);
+		if (fHiddenSize) {
+			rdn_mem_fini(&fHidden);
+			fHiddenSize = 0;
+		}
 		fEngineUp = false;
 		IOLockUnlock(fLock);
 	}
@@ -355,7 +370,14 @@ void RadeonNIAccel::getInfo(struct rdn_user_info *info)
 	IOLockUnlock(fLock);
 }
 
-IOReturn RadeonNIAccel::allocVram(UInt32 size, UInt32 align, UInt32 *offset)
+void RadeonNIAccel::hiddenInfo(UInt32 *offset, UInt32 *size)
+{
+	*offset = fHiddenOffset;
+	*size = fHiddenSize;
+}
+
+IOReturn RadeonNIAccel::allocVram(UInt32 size, UInt32 align, UInt32 *offset,
+				  bool hidden)
 {
 	uint64_t off = 0;
 	int r;
@@ -364,8 +386,10 @@ IOReturn RadeonNIAccel::allocVram(UInt32 size, UInt32 align, UInt32 *offset)
 		return kIOReturnBadArgument;
 	if (align < 4096)
 		align = 4096;
+	if (hidden && !fHiddenSize)
+		return kIOReturnNoMemory;
 	IOLockLock(fLock);
-	r = rdn_mem_alloc(&fMem, size, align, &off);
+	r = rdn_mem_alloc(hidden ? &fHidden : &fMem, size, align, &off);
 	IOLockUnlock(fLock);
 	if (r)
 		return kIOReturnNoMemory;
@@ -376,7 +400,10 @@ IOReturn RadeonNIAccel::allocVram(UInt32 size, UInt32 align, UInt32 *offset)
 void RadeonNIAccel::freeVram(UInt32 offset)
 {
 	IOLockLock(fLock);
-	rdn_mem_free(&fMem, offset);
+	if (fHiddenSize && offset >= fHiddenOffset)
+		rdn_mem_free(&fHidden, offset);
+	else
+		rdn_mem_free(&fMem, offset);
 	IOLockUnlock(fLock);
 }
 
@@ -728,6 +755,10 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 2, 3 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodRegRead,
 		  kIOUCScalarIScalarO, 1, 1 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodAllocHidden,
+		  kIOUCScalarIScalarO, 2, 1 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodHiddenInfo,
+		  kIOUCScalarIScalarO, 0, 2 },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -774,6 +805,25 @@ IOReturn RadeonNIUserClient::methodAlloc(UInt32 size, UInt32 align,
 	if (r == kIOReturnSuccess)
 		fOffsets[fCount++] = *offset;
 	return r;
+}
+
+IOReturn RadeonNIUserClient::methodAllocHidden(UInt32 size, UInt32 align,
+					       UInt32 *offset)
+{
+	IOReturn r;
+
+	if (fCount >= kMaxAllocations)
+		return kIOReturnNoResources;
+	r = fAccel->allocVram(size, align, offset, true);
+	if (r == kIOReturnSuccess)
+		fOffsets[fCount++] = *offset;
+	return r;
+}
+
+IOReturn RadeonNIUserClient::methodHiddenInfo(UInt32 *offset, UInt32 *size)
+{
+	fAccel->hiddenInfo(offset, size);
+	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNIUserClient::methodFree(UInt32 offset)

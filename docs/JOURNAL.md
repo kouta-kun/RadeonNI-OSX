@@ -2549,3 +2549,34 @@ bundle from; `RDN_MESA_OPT=s` builds for size into `build-darwin-Os`.
 The rebuilt bundle is byte for byte the one tried on the G5. Package
 rebuilt; not installed anywhere by me (the G5 already runs this bundle).
 The user also decided not to change Mesa itself for now.
+
+## 2026-10-06 — Doom 3 demo: starts, then "out of video memory" loading a level
+
+The user installed the Doom 3 demo on the G5 (`~/Desktop/Doom 3 Demo`).
+It needs `+set r_mode -1 +set r_customWidth 1920 +set r_customHeight 1080`
+like Quake 3 (our display offers one mode). Its `demo00.pk4` has no
+`.demo` recording, so `timedemo demo1` has nothing to play; `recordDemo`
+is the way. With our driver it reaches its menu and console.
+
+**Loading a level** (`~/Desktop/doom3.err`): over a hundred "rdn: out of
+video memory (131072 to 704512 bytes asked, 143 MB in use)", then r600's
+"failed to create temporary texture to hold untiled copy", a bus error.
+
+**Two limits, either of which gives that message:**
+- The user client tracked at most 4096 allocations per client, and the
+  winsys asks the kext for every buffer by itself. 143 MB over 4096 is
+  35 KB a buffer, which is about what a level's textures are, so this is
+  probably the one that was hit. Now 65536.
+- Clients only ever got the 222 MB of the 256 MB aperture; the card has
+  1024 MB. The other 768 MB cannot be mapped by the CPU, but r600 never
+  maps tiled textures and render targets (it fills them through a
+  staging copy and marks them RADEON_FLAG_NO_CPU_ACCESS). New: a second
+  allocator in the kext for the memory beyond the aperture
+  (`RDN_UC_ALLOC_HIDDEN`, `RDN_UC_HIDDEN_INFO`), `alloc_hidden` in the
+  device interface, and the winsys puts buffers with that flag there,
+  falling back to the aperture. `RDN_NO_HIDDEN_VRAM=1` in a program's
+  environment turns it off.
+
+Built (kext, Tiger bundle, host library, package); the tests pass.
+**Not installed, not run:** the user asked me not to install by myself.
+Which of the two limits Doom hit is a guess until it runs.

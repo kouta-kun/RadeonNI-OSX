@@ -27,6 +27,8 @@ struct rdn_device_info {
    uint64_t vram_gpu_base;
    /* Bytes the allocator below manages. */
    uint64_t vram_size;
+   /* Bytes alloc_hidden() manages; 0 if there is no such memory. */
+   uint64_t hidden_size;
    /* From the 3D engine setup (evergreen_gpu_init). */
    uint32_t tile_config;
    uint32_t backend_map;
@@ -71,6 +73,13 @@ struct rdn_device {
    int (*alloc)(struct rdn_device *dev, uint64_t size, uint64_t align,
                 uint64_t *offset);
    void (*free)(struct rdn_device *dev, uint64_t offset);
+   /*
+    * Video memory the CPU cannot reach (beyond the aperture), for what only
+    * the GPU reads and writes; freed with free(). NULL, or failing, when
+    * the device has none.
+    */
+   int (*alloc_hidden)(struct rdn_device *dev, uint64_t size, uint64_t align,
+                       uint64_t *offset);
 
    /*
     * Run `words` command words stored at `offset`, in the CPU's byte order
