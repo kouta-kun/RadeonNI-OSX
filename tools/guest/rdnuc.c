@@ -6,6 +6,11 @@
  *   rdnuc grab file.ppm    save the screen as the card holds it
  *   rdnuc peek off [n]     print n words of video memory at aperture offset off
  *   rdnuc alloc            allocate, write, read back and free video memory
+ *   rdnuc power [performance|boot [what]]
+ *                          print the card's clocks and temperature, after
+ *                          switching power state if one is named; what is
+ *                          a mask: 1 voltage, 2 engine clock, 4 memory
+ *                          clock (default 7)
  *
  * Build in the guest, next to a copy of hw/rdn_user.h:
  *   gcc -Wall -o rdnuc rdnuc.c -framework IOKit -framework CoreFoundation
@@ -121,6 +126,26 @@ int main(int argc, char **argv)
 			}
 		fclose(f);
 		printf("saved %ux%u\n", (unsigned)info.fb_width, (unsigned)info.fb_height);
+	} else if (!strcmp(cmd, "power")) {
+		int state = RDN_UC_POWER_QUERY, what = 7;
+		int sclk = 0, mclk = 0, temp = 0;
+		kern_return_t kr;
+
+		if (argc > 2 && !strcmp(argv[2], "performance"))
+			state = RDN_UC_POWER_PERFORMANCE;
+		else if (argc > 2 && !strcmp(argv[2], "boot"))
+			state = RDN_UC_POWER_BOOT;
+		else if (argc > 2)
+			return 1;
+		if (argc > 3)
+			what = atoi(argv[3]);
+		kr = IOConnectMethodScalarIScalarO(conn, RDN_UC_POWER, 2, 3,
+						   state, what, &sclk, &mclk, &temp);
+		temp -= RDN_UC_TEMPERATURE_BIAS;
+		printf("%s: engine %d.%02d MHz, memory %d.%02d MHz, %d.%d C\n",
+		       kr ? "FAILED" : "ok", sclk / 100, sclk % 100,
+		       mclk / 100, mclk % 100, temp / 1000, (temp % 1000) / 100);
+		return kr ? 1 : 0;
 	} else if (!strcmp(cmd, "peek") && argc > 2) {
 		/* Words of video memory at an aperture offset, as the CPU reads them. */
 		unsigned long off = strtoul(argv[2], NULL, 0);

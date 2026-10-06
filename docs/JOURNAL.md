@@ -2163,3 +2163,79 @@ repository, each checked against a SHA-256 in the script (the host's and
 kernel.org's files are identical; both sources tried). 
 `make-g5-package.sh` runs it and always packs the three files;
 `--with-firmware` is accepted and ignored.
+
+## 2026-10-06 — Why Quake 3 was slow on the G5: three driver causes, and the card runs at its boot clocks
+
+Asked by the user: Quake 3 `timedemo` on demo `four` gives 47.5 fps at
+1920x1080 where a GeForce 6600 LE gives 148. All of it on the real G5 over
+ssh; `sample Quake3` for profiles, `RDN_STATS=1` (new, in
+`mesa/target/rdn_device_darwin.c`) for the number and length of fence
+waits. Run with `+set r_mode -1 +set r_customwidth 1920 +set
+r_customheight 1080`: the saved config has `r_mode 3` (640x480), which the
+display does not offer ("Could not initialize OpenGL").
+
+| Step | fps |
+|---|---|
+| Baseline | 47.8 |
+| GART size reported non-zero | 55.8 |
+| Engine clock 100 -> 650 MHz, core voltage 0.9 -> 1.0 V | 65.0 |
+| Swap flushes instead of waiting | 83.7 |
+| Destroyed buffers freed later instead of waited for | 96.4 |
+
+1. **A command buffer per draw.** The winsys reported `gart_size_kb = 0`.
+   `radeon_cs_memory_below_limit()` compares what a command buffer
+   references with 70 % of that, so r600 flushed before every draw: four
+   kernel calls each (fence poll, free, alloc, submit), 35 % of the main
+   thread. Now the VRAM size is reported.
+2. **The card runs at its boot clocks.** FirmwareInfo's defaults, which
+   ASIC_Init sets, are engine 100 MHz, memory 150 MHz, 0.9 V. The
+   PowerPlay table's performance state is 650 / 800 MHz at 1.0 V. Nothing
+   in `hw/` ever left the boot state (Linux leaves it through DPM, which
+   needs the SMC microcode; its older profile method caps at the
+   defaults). After fix 1 one wait per frame remained, 7.3 ms on average,
+   and spinning instead of sleeping (`RDN_FENCE_SPIN`) did not shorten it:
+   the GPU really took that long.
+   New: `hw/rdn_pm.c` (PowerPlay parsing; voltage, engine clock and memory
+   clock through the VBIOS's SetVoltage, SetEngineClock and
+   SetMemoryClock; the temperature sensor), `tests/pm_states` (x86 and
+   PowerPC agree), the user client method `RDN_UC_POWER`, and
+   `rdnuc power [performance|boot [mask]]`. Nothing switches by itself:
+   the kext boots as before.
+   On the G5: `rdnuc power` reads 99.99 / 150.00 MHz, 34 C.
+   `rdnuc power performance 3` (voltage and engine clock): 649.96 MHz
+   read back, 44.5 C after several demo runs.
+   `rdnuc power performance 4` (memory clock): the table returns success
+   and the clock stays at 150 MHz. Not understood. Linux loads the MC
+   microcode on GDDR5 cards and switches the memory clock through the
+   SMC; we do neither.
+3. **Swap waited for the GPU.** `rdn_mesa_present` called `glFinish`, so
+   CPU and GPU never worked at the same time. For a program that has the
+   whole screen it is `glFlush` now (`RDN_GLD_SWAP_FINISH=1` for the old
+   way), and the winsys keeps at most four command buffers pending.
+   Stills of q3dm1 are the same both ways (readback).
+4. **Destroying a buffer waited for the GPU** (`rdn_buffer_destroy`, 9 %
+   of the frame, from the constant buffer of the copy to the screen). The
+   memory now goes on a list and is freed when its fence has passed.
+
+What is left in the profile at 96 fps: Quake's own interpreted game code
+(about a third; "Compiled VMs not supported on this platform", the same
+with any card), Mesa's draw path, the `memcpy` of vertices into video
+memory (5 %). Write-combining, GART and client storage were not needed
+for any of this and were not tried.
+
+**Then the user reported black and white lines on the monitor.** The
+screen read back from video memory at that moment is a correct desktop
+(`rdnuc grab`), so it is the scanout or the signal, not the picture. When
+it started is not known; the engine clock had been at 650 MHz for seven
+minutes and the memory clock attempt had run. Suspects: the display
+watermarks, which Linux computes from the clocks
+(`evergreen_program_watermarks`) and we never touch, or something the
+memory clock table changed before it gave up. I put voltage and engine
+clock back (`rdnuc power boot 3`, 99.99 MHz read back); whether the
+picture came back is the user's to say. The fps of steps 3 and 4 were
+measured at 650 MHz.
+
+**Open.** The lines. The memory clock. Making the performance state the
+default at start (not before the lines are understood). The QEMU guest's
+bundle is older than all of this. `power` can be called by any local
+user.

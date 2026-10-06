@@ -55,8 +55,22 @@ enum {
 	 * surface between locking and unlocking it.
 	 */
 	RDN_UC_SURFACE_LOCKED,
+	/*
+	 * scalars in: state (RDN_UC_POWER_*), what to change (RDN_PM_* of
+	 * hw/rdn_pm.h; ignored for a query); out: engine clock and memory
+	 * clock now, both in units of 10 kHz as the VBIOS reads them back,
+	 * and the GPU's temperature in thousandths of a degree Celsius plus
+	 * RDN_UC_TEMPERATURE_BIAS. Changing the state waits for the GPU to
+	 * be idle and fails if it does not become so.
+	 */
+	RDN_UC_POWER,
 	RDN_UC_METHOD_COUNT
 };
+
+#define RDN_UC_POWER_QUERY		0
+#define RDN_UC_POWER_PERFORMANCE	1	/* the PowerPlay table's fastest */
+#define RDN_UC_POWER_BOOT		2	/* what ASIC_Init leaves */
+#define RDN_UC_TEMPERATURE_BIAS		1000000
 
 struct rdn_user_info {
 	uint32_t version;		/* RDN_USER_VERSION */

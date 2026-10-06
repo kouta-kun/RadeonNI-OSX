@@ -17,7 +17,7 @@ CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti -fapple-kext -fcheck-new
 # Files taken from Linux do not pass -Wall cleanly with this compiler.
 HWCFLAGS = $(CFLAGS) -std=gnu99 -Wno-unused -Wno-sign-compare
 
-HW_SRCS  = rdn_cursor.c rdn_mem.c rdn_gpu.c rdn_cp.c rdn_selftest.c rdn_post.c rdn_atom.c rdn_i2c.c rdn_mode.c rdn_modeset.c \
+HW_SRCS  = rdn_pm.c rdn_cursor.c rdn_mem.c rdn_gpu.c rdn_cp.c rdn_selftest.c rdn_post.c rdn_atom.c rdn_i2c.c rdn_mode.c rdn_modeset.c \
 	rdn_pattern.c atom/atom.c
 HW_OBJS  = $(addprefix $(BUILD)/hw/,$(HW_SRCS:.c=.o))
 OBJS     = $(BUILD)/RadeonNI.o $(BUILD)/RadeonNIAccel.o $(BUILD)/RadeonNISurface.o $(BUILD)/kmod_info.o $(HW_OBJS)

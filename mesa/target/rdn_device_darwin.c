@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
 
@@ -69,17 +70,89 @@ static bool dev_fence_done(struct rdn_device *dev, uint32_t fence)
 	return fence_wait_ms((struct darwin_device *)dev, fence, 0);
 }
 
+/*
+ * RDN_FENCE_SPIN=microseconds: look that long without sleeping before the
+ * kext's wait, which sleeps between looks. RDN_STATS=1: say at exit how
+ * many waits there were and how long they took.
+ */
+static long env_number(const char *name)
+{
+	const char *s = getenv(name);
+
+	return s ? atol(s) : 0;
+}
+
+static uint64_t now_us(void)
+{
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+static struct {
+	unsigned waits, spun, slept;
+	uint64_t us, max_us;
+	unsigned hist[8];	/* under 0.25, 0.5, 1, 2, 4, 8, 16 ms, more */
+} wait_stats;
+
+static void wait_stats_print(void)
+{
+	fprintf(stderr, "rdn stats: %u fence waits (%u ended while spinning, %u slept), "
+		"%llu ms in all, longest %llu us; under 0.25/0.5/1/2/4/8/16 ms and over: "
+		"%u %u %u %u %u %u %u %u\n",
+		wait_stats.waits, wait_stats.spun, wait_stats.slept,
+		(unsigned long long)(wait_stats.us / 1000),
+		(unsigned long long)wait_stats.max_us,
+		wait_stats.hist[0], wait_stats.hist[1], wait_stats.hist[2],
+		wait_stats.hist[3], wait_stats.hist[4], wait_stats.hist[5],
+		wait_stats.hist[6], wait_stats.hist[7]);
+}
+
 static int dev_fence_wait(struct rdn_device *dev, uint32_t fence,
 			  uint64_t timeout_ns)
 {
+	static long spin_us = -1, stats;
+	struct darwin_device *d = (struct darwin_device *)dev;
 	uint64_t ms = timeout_ns / 1000000;
+	uint64_t start, us, limit;
+	bool reached = false;
+	unsigned i;
 
+	if (spin_us < 0) {
+		spin_us = env_number("RDN_FENCE_SPIN");
+		stats = env_number("RDN_STATS");
+		if (stats)
+			atexit(wait_stats_print);
+	}
 	/* "Forever" still ends: a hung GPU must not hang the process. */
 	if (ms > 10000)
 		ms = 10000;
 	if (!ms)
 		ms = 1;
-	return fence_wait_ms((struct darwin_device *)dev, fence, (uint32_t)ms) ? 0 : -1;
+	start = (spin_us || stats) ? now_us() : 0;
+	if (spin_us) {
+		do
+			reached = fence_wait_ms(d, fence, 0);
+		while (!reached && now_us() - start < (uint64_t)spin_us);
+		if (reached)
+			wait_stats.spun++;
+	}
+	if (!reached) {
+		reached = fence_wait_ms(d, fence, (uint32_t)ms);
+		wait_stats.slept++;
+	}
+	if (stats) {
+		us = now_us() - start;
+		wait_stats.waits++;
+		wait_stats.us += us;
+		if (us > wait_stats.max_us)
+			wait_stats.max_us = us;
+		for (i = 0, limit = 250; i < 7 && us >= limit; i++, limit *= 2)
+			;
+		wait_stats.hist[i]++;
+	}
+	return reached ? 0 : -1;
 }
 
 static void dev_sync_for_cpu(struct rdn_device *dev)

@@ -38,6 +38,8 @@ struct radeon_drm_winsys {
    simple_mtx_t lock;
    /* Command buffers in video memory whose fence has not been reached. */
    struct list_head pending_ibs;
+   /* Freed buffers the GPU may still be using (rdn_buffer_destroy). */
+   struct list_head dead_bos;
    uint64_t allocated_bytes;
    uint64_t num_flushes;
 };

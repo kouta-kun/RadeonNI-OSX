@@ -148,6 +148,7 @@ static int screen_direct(void)
 	return known;
 }
 static void (*mesa_finish)(void);
+static void (*mesa_flush)(void);
 
 static struct context *find(void *gld_ctx)
 {
@@ -461,6 +462,7 @@ static int mesa_ready(void)
 		return 0;
 	if (!resolved) {
 		mesa_finish = (void (*)(void))OSMesaGetProcAddress("glFinish");
+		mesa_flush = (void (*)(void))OSMesaGetProcAddress("glFlush");
 		n = rdn_dispatch_resolve(lookup, missing);
 		rdn_log("Mesa provides %u of the %u GL entry points", n,
 			rdn_dispatch_entries);
@@ -1036,6 +1038,15 @@ int rdn_swap(void *rend)
 	return 0;
 }
 
+static int swap_finish(void)
+{
+	static int known = -1;
+
+	if (known < 0)
+		known = getenv("RDN_GLD_SWAP_FINISH") != NULL;
+	return known;
+}
+
 void rdn_mesa_present(void *gld_ctx)
 {
 	struct context *c = find(gld_ctx);
@@ -1047,6 +1058,18 @@ void rdn_mesa_present(void *gld_ctx)
 	if (c->rend != rdn_current_rend || !c->bound || drawable_changed(c) ||
 	    c->type == DRAWABLE_SURFACE)
 		rdn_make_current(c->rend);
-	if (c->rend == rdn_current_rend && c->bound)
+	if (c->rend != rdn_current_rend || !c->bound)
+		return;
+	/*
+	 * A program that has the whole screen need not wait for its picture:
+	 * the copy to the screen is queued behind the drawing, and the
+	 * winsys keeps the program from running far ahead of the GPU. A
+	 * surface's picture is read by the window server, so that one is
+	 * waited for. RDN_GLD_SWAP_FINISH=1 waits in both cases.
+	 */
+	if (c->type == DRAWABLE_SCREEN && !rdn_window_server && mesa_flush &&
+	    !swap_finish())
+		mesa_flush();
+	else
 		mesa_finish();
 }

@@ -25,6 +25,7 @@
 extern "C" {
 #include "rdn_accel.h"
 #include "rdn_mem.h"
+#include "rdn_pm.h"
 #include "rdn_user.h"
 }
 
@@ -77,6 +78,8 @@ public:
 	IOReturn submit(UInt32 offset, UInt32 words, UInt32 *fence);
 	bool fenceWait(UInt32 fence, UInt32 timeoutMs);
 	void syncForCPU(void);
+	IOReturn power(UInt32 state, UInt32 what, UInt32 *sclk, UInt32 *mclk,
+		       UInt32 *temperature);
 	IOMemoryDescriptor *apertureMemory(void);
 	UInt32 apertureBytes(void);
 	/* The shapes of the window server's surfaces, by surface ID. */
@@ -100,6 +103,9 @@ private:
 	struct rdn_mem fMem;
 	void *fPfp, *fMe;
 	bool fEngineUp;
+	/* The power state the card was last put in (hw/rdn_pm.h). */
+	struct rdn_pm_state fPower;
+	bool fPowerKnown;
 	/* Hand out surface clients (RadeonNISurface.h)? */
 	bool fSurfaces;
 	enum { kMaxSurfaces = 32 };
@@ -149,6 +155,8 @@ public:
 				     UInt32 width, UInt32 height);
 	IOReturn methodSurfaceList(struct rdn_user_surfaces *list, IOByteCount *size);
 	IOReturn methodSurfaceLocked(UInt32 *wid);
+	IOReturn methodPower(UInt32 state, UInt32 what, UInt32 *sclk,
+			     UInt32 *mclk, UInt32 *temperature);
 
 private:
 	RadeonNIAccel *fAccel;

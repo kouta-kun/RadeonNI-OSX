@@ -73,6 +73,12 @@ struct rdn_cs {
    struct rdn_fence *next_fence;
 };
 
+struct rdn_dead_bo {
+   struct list_head list;
+   uint64_t offset, size;
+   struct rdn_fence *fence;
+};
+
 struct rdn_pending_ib {
    struct list_head list;
    uint64_t offset;
@@ -145,6 +151,8 @@ static void rdn_ws_fence_reference(struct radeon_winsys *rws,
  * Buffers
  */
 
+static void rdn_reap_dead_bos(struct radeon_drm_winsys *ws, bool wait);
+
 static struct pb_buffer_lean *
 rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
                   enum radeon_bo_domain domain, enum radeon_bo_flag flags)
@@ -162,6 +170,11 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
 
    simple_mtx_lock(&ws->lock);
    r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
+   if (r) {
+      /* Destroyed buffers waiting for the GPU may make room. */
+      rdn_reap_dead_bos(ws, true);
+      r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
+   }
    if (!r)
       ws->allocated_bytes += size;
    simple_mtx_unlock(&ws->lock);
@@ -181,22 +194,56 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
    return &bo->base;
 }
 
+/*
+ * Give back the memory of destroyed buffers the GPU has finished with.
+ * They are in the order they were destroyed, which is nearly the order of
+ * their fences, so the first one still in use ends the look. Called with
+ * the lock held.
+ */
+static void rdn_reap_dead_bos(struct radeon_drm_winsys *ws, bool wait)
+{
+   list_for_each_entry_safe(struct rdn_dead_bo, dead, &ws->dead_bos, list) {
+      if (!rdn_fence_wait(ws, dead->fence, wait ? OS_TIMEOUT_INFINITE : 0))
+         break;
+      ws->dev->free(ws->dev, dead->offset);
+      ws->allocated_bytes -= dead->size;
+      rdn_fence_set(&dead->fence, NULL);
+      list_del(&dead->list);
+      FREE(dead);
+   }
+}
+
 static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean *buf)
 {
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
    struct rdn_bo *bo = rdn_bo(buf);
-
-   /* The GPU may still be using the memory. */
-   rdn_fence_wait(ws, bo->last_use, OS_TIMEOUT_INFINITE);
-   rdn_fence_set(&bo->last_use, NULL);
-   rdn_fence_set(&bo->last_write, NULL);
+   struct rdn_dead_bo *dead = NULL;
 
    if (!bo->foreign) {
+      /*
+       * The GPU may still be using the memory. Waiting for it here would
+       * stop the program at every buffer it drops while drawing, so the
+       * memory is given back later, when its fence has passed.
+       */
+      if (!rdn_fence_wait(ws, bo->last_use, 0))
+         dead = CALLOC_STRUCT(rdn_dead_bo);
+      if (!dead)
+         rdn_fence_wait(ws, bo->last_use, OS_TIMEOUT_INFINITE);
+
       simple_mtx_lock(&ws->lock);
-      ws->dev->free(ws->dev, bo->offset);
-      ws->allocated_bytes -= bo->base.size;
+      if (dead) {
+         dead->offset = bo->offset;
+         dead->size = bo->base.size;
+         rdn_fence_set(&dead->fence, bo->last_use);
+         list_addtail(&dead->list, &ws->dead_bos);
+      } else {
+         ws->dev->free(ws->dev, bo->offset);
+         ws->allocated_bytes -= bo->base.size;
+      }
       simple_mtx_unlock(&ws->lock);
    }
+   rdn_fence_set(&bo->last_use, NULL);
+   rdn_fence_set(&bo->last_write, NULL);
    FREE(bo);
 }
 
@@ -524,6 +571,32 @@ static void rdn_reap_ibs(struct radeon_drm_winsys *ws, bool wait)
    }
 }
 
+/*
+ * A program that never waits for the GPU (it only flushes when it swaps)
+ * must not get further ahead of it than this many command buffers.
+ */
+#define RDN_MAX_PENDING_IBS 4
+
+static void rdn_throttle(struct radeon_drm_winsys *ws)
+{
+   for (;;) {
+      struct rdn_pending_ib *oldest = NULL;
+      unsigned pending = 0;
+
+      list_for_each_entry(struct rdn_pending_ib, ib, &ws->pending_ibs, list) {
+         if (!oldest)
+            oldest = ib;
+         pending++;
+      }
+      if (pending < RDN_MAX_PENDING_IBS)
+         return;
+      /* A wait that timed out must not keep us here. */
+      if (!rdn_fence_wait(ws, oldest->fence, OS_TIMEOUT_INFINITE))
+         return;
+      rdn_reap_ibs(ws, false);
+   }
+}
+
 static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
                         struct pipe_fence_handle **pfence)
 {
@@ -551,10 +624,13 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
 
    simple_mtx_lock(&ws->lock);
    rdn_reap_ibs(ws, false);
+   rdn_reap_dead_bos(ws, false);
+   rdn_throttle(ws);
    r = ws->dev->alloc(ws->dev, rcs->current.cdw * 4, 4096, &offset);
    if (r) {
       /* Wait for the earlier ones to finish and try once more. */
       rdn_reap_ibs(ws, true);
+      rdn_reap_dead_bos(ws, true);
       r = ws->dev->alloc(ws->dev, rcs->current.cdw * 4, 4096, &offset);
    }
    if (!r) {
@@ -669,6 +745,7 @@ static void rdn_winsys_destroy(struct radeon_winsys *rws)
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
 
    rdn_reap_ibs(ws, true);
+   rdn_reap_dead_bos(ws, true);
    if (ws->surf_man)
       radeon_surface_manager_free(ws->surf_man);
    ws->dev->destroy(ws->dev);
@@ -701,7 +778,13 @@ static void rdn_init_info(struct radeon_drm_winsys *ws)
    info->ip[AMD_IP_SDMA].num_queues = 0;
 
    info->has_userptr = false;
-   info->gart_size_kb = 0;
+   /*
+    * There is no GART, but r600 measures what one command buffer may
+    * reference and what texture transfers may allocate against this size.
+    * With zero it flushes on every draw (radeon_cs_memory_below_limit).
+    * Buffers it asks for in the GTT domain come from video memory too.
+    */
+   info->gart_size_kb = vram_kb;
    info->vram_size_kb = vram_kb;
    info->vram_vis_size_kb = vram_kb;
    info->max_heap_size_kb = vram_kb;
@@ -752,6 +835,7 @@ struct radeon_winsys *rdn_winsys_create(struct rdn_device *dev,
    pipe_reference_init(&ws->reference, 1);
    simple_mtx_init(&ws->lock, mtx_plain);
    list_inithead(&ws->pending_ibs);
+   list_inithead(&ws->dead_bos);
    rdn_vram_gpu_base = dev->info.vram_gpu_base;
    rdn_init_info(ws);
 

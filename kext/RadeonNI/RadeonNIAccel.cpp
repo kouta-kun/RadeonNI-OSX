@@ -395,6 +395,64 @@ bool RadeonNIAccel::fenceWait(UInt32 fence, UInt32 timeoutMs)
 	}
 }
 
+/*
+ * Put the card in another power state, or only say what it runs at. The
+ * lock keeps new command buffers out; what is already running gets half a
+ * second to finish.
+ */
+IOReturn RadeonNIAccel::power(UInt32 state, UInt32 what, UInt32 *sclk,
+			      UInt32 *mclk, UInt32 *temperature)
+{
+	struct rdn_card *card = fAccel.card;
+	struct rdn_pm_state target;
+	uint32_t s = 0, m = 0;
+	int r = 0, tries;
+
+	if (!fEngineUp || !card)
+		return kIOReturnNotReady;
+	IOLockLock(fLock);
+	if (!fPowerKnown) {
+		r = rdn_pm_boot_state(card, &fPower);
+		fPowerKnown = !r;
+	}
+	if (!r && state != RDN_UC_POWER_QUERY) {
+		if (state == RDN_UC_POWER_PERFORMANCE)
+			r = rdn_pm_performance_state(card, &target);
+		else if (state == RDN_UC_POWER_BOOT)
+			r = rdn_pm_boot_state(card, &target);
+		else
+			r = -1;
+		for (tries = 0; !r && tries < 500; tries++) {
+			r = rdn_pm_set(card, &fPower, &target, what);
+			if (r != -16)	/* -EBUSY: the GPU is drawing */
+				break;
+			r = 0;
+			IOSleep(1);
+		}
+		if (tries == 500)
+			r = -16;
+		IOLog("RadeonNI: power state %lu (what 0x%lx): engine %lu0 kHz, memory %lu0 kHz, vddc %u mV, result %d\n",
+		      state, what, (UInt32)target.sclk, (UInt32)target.mclk,
+		      target.vddc, r);
+		if (!r) {
+			if (what & RDN_PM_VOLTAGE) {
+				fPower.vddc = target.vddc;
+				fPower.vddci = target.vddci;
+			}
+			if (what & RDN_PM_SCLK)
+				fPower.sclk = target.sclk;
+			if (what & RDN_PM_MCLK)
+				fPower.mclk = target.mclk;
+		}
+	}
+	rdn_pm_get_clocks(card, &s, &m);
+	*sclk = s;
+	*mclk = m;
+	*temperature = (UInt32)(rdn_pm_temperature(card) + RDN_UC_TEMPERATURE_BIAS);
+	IOLockUnlock(fLock);
+	return r ? kIOReturnIOError : kIOReturnSuccess;
+}
+
 void RadeonNIAccel::syncForCPU(void)
 {
 	IOLockLock(fLock);
@@ -630,6 +688,8 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIStructO, 0, sizeof(struct rdn_user_surfaces) },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodSurfaceLocked,
 		  kIOUCScalarIScalarO, 0, 1 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodPower,
+		  kIOUCScalarIScalarO, 2, 3 },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -703,6 +763,13 @@ IOReturn RadeonNIUserClient::methodFenceWait(UInt32 fence, UInt32 timeoutMs,
 {
 	*reached = fAccel->fenceWait(fence, timeoutMs) ? 1 : 0;
 	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodPower(UInt32 state, UInt32 what,
+					 UInt32 *sclk, UInt32 *mclk,
+					 UInt32 *temperature)
+{
+	return fAccel->power(state, what, sclk, mclk, temperature);
 }
 
 IOReturn RadeonNIUserClient::methodSyncForCPU(void)
