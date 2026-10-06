@@ -2129,3 +2129,14 @@ would need libstdc++ rebuilt the same way.
 - Sauerbraten's sky and weapon should be looked at again with this fix.
 - The QEMU guest's installed bundle is older than both of today's
   changes (`scripts/gld.sh install-mesa` when it runs next).
+
+## 2026-10-06 — The G5 package carries the OpenGL bundle and the 2D plug-in
+
+`scripts/make-g5-package.sh` now also packs `RadeonNIGA.plugin` (built in
+the guest, like the kext) and `RadeonNIGLDriver.bundle` (the host's Tiger
+cross-build of Mesa with `gld/Info.plist`). `install.sh --accel` installs
+both into `/System/Library/Extensions` (copy beside, rename into place)
+and no longer requires them to be there already; `uninstall.sh` removes
+them. Package built with `--with-vbios --with-firmware`; the installer's
+new part has not run anywhere yet (the G5 is disconnected, and the guest
+rehearsal was not done).

@@ -11,9 +11,10 @@
 #
 # Without options the driver is a plain framebuffer. --accel also starts
 # the card's 3D engine at boot, for OpenGL and Quartz Extreme; that needs
-# the microcode files TURKS_pfp.bin and TURKS_me.bin next to this script,
-# and RadeonNIGLDriver.bundle and RadeonNIGA.plugin already installed in
-# /System/Library/Extensions. --hwcursor (with --accel) uses the card's
+# the microcode files TURKS_pfp.bin and TURKS_me.bin next to this script.
+# It also installs RadeonNIGLDriver.bundle (OpenGL) and RadeonNIGA.plugin
+# from this package into /System/Library/Extensions; they do nothing
+# without the accelerator. --hwcursor (with --accel) uses the card's
 # hardware cursor. Run the script again without options to go back.
 #
 # Nothing is written to the card. To undo: sudo ./uninstall.sh
@@ -25,6 +26,7 @@ set -e
 
 SLE=/System/Library/Extensions
 KEXT=RadeonNI.kext
+USERLAND="RadeonNIGLDriver.bundle RadeonNIGA.plugin"
 here=$(cd "$(dirname "$0")" && pwd)
 
 fail() { echo "install.sh: $*" >&2; exit 1; }
@@ -67,8 +69,9 @@ if [ "$accel" = 1 ]; then
     for f in TURKS_pfp.bin TURKS_me.bin; do
         [ -s "$here/$f" ] || fail "--accel needs the microcode file $f next to this script"
     done
-    for b in RadeonNIGLDriver.bundle RadeonNIGA.plugin; do
-        [ -d "$SLE/$b" ] || fail "--accel needs $SLE/$b, which is not installed"
+    for b in $USERLAND; do
+        [ -d "$here/$b" ] || [ -d "$SLE/$b" ] ||
+            fail "--accel needs $b, which is neither in this package nor installed"
     done
 fi
 
@@ -131,6 +134,22 @@ cp -R "$tmp/$KEXT" "$SLE/"
 chown -R root:wheel "$SLE/$KEXT"
 chmod -R go-w "$SLE/$KEXT"
 rm -rf "$tmp"
+
+# The OpenGL bundle and the 2D plug-in: copied beside the old one and
+# renamed into place, so that a running window server keeps its copy.
+if [ "$accel" = 1 ]; then
+    for b in $USERLAND; do
+        [ -d "$here/$b" ] || continue
+        rm -rf "$SLE/$b.new" "$SLE/$b.old"
+        cp -R "$here/$b" "$SLE/$b.new"
+        chown -R root:wheel "$SLE/$b.new"
+        chmod -R go-w "$SLE/$b.new"
+        [ ! -d "$SLE/$b" ] || mv "$SLE/$b" "$SLE/$b.old"
+        mv "$SLE/$b.new" "$SLE/$b"
+        rm -rf "$SLE/$b.old"
+        echo "Installed $SLE/$b."
+    done
+fi
 
 # Make the system rebuild its extension caches at the next boot.
 rm -f /System/Library/Extensions.mkext /System/Library/Extensions.kextcache

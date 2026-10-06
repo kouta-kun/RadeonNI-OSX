@@ -1,5 +1,6 @@
 #!/bin/sh
-# Remove RadeonNI.kext from a Mac. Takes effect at the next restart.
+# Remove RadeonNI.kext, and the OpenGL bundle and 2D plug-in installed with
+# --accel, from a Mac. Takes effect at the next restart.
 #
 #   sudo ./uninstall.sh
 #
@@ -11,6 +12,13 @@ set -e
 SLE=/System/Library/Extensions
 
 [ "$(id -u)" = 0 ] || { echo "run as root: sudo ./uninstall.sh" >&2; exit 1; }
+
+for b in RadeonNIGLDriver.bundle RadeonNIGA.plugin; do
+    if [ -d "$SLE/$b" ]; then
+        rm -rf "$SLE/$b"
+        echo "Removed $SLE/$b."
+    fi
+done
 
 if [ -d "$SLE/RadeonNI.kext" ]; then
     rm -rf "$SLE/RadeonNI.kext"
