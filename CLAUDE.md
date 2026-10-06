@@ -276,7 +276,8 @@ Keep these current as part of the work, and commit small and often.
 - `scripts/darwin.sh image` once, then `scripts/darwin.sh <command>`: run
   the cross toolchain for Tiger (GCC 14.2 for `powerpc-apple-darwin8`, the
   10.4u SDK) in a container that sees only the repository.
-  `scripts/build-mesa.sh darwin [targets]` builds Mesa with it;
+  `scripts/build-mesa.sh darwin [targets]` builds Mesa with it, at -O2
+  (`RDN_MESA_OPT=s`: for size, into `build-darwin-Os`);
   `.../build-darwin/src/gallium/targets/rdn/rdn_gltest` is the test program
   to copy into the guest (`-s` draws on the screen).
 - `scripts/guest-cycle.sh down`, then `sudo scripts/tiger.sh passthru

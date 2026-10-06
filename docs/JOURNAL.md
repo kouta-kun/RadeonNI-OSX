@@ -2540,3 +2540,12 @@ of q3dm1 is right, and Apple's Chess (display lists, the thing this
 compiler's optimiser broke before at -Os with strict aliasing) shows its
 board and all pieces (readback). The package still builds the
 size-optimised bundle.
+
+## 2026-10-06 — -O2 is the default Tiger build of Mesa
+
+User's decision. `scripts/build-mesa.sh darwin` builds at -O2 into
+`build-darwin`, which the package and `gld.sh install-mesa` take the
+bundle from; `RDN_MESA_OPT=s` builds for size into `build-darwin-Os`.
+The rebuilt bundle is byte for byte the one tried on the G5. Package
+rebuilt; not installed anywhere by me (the G5 already runs this bundle).
+The user also decided not to change Mesa itself for now.

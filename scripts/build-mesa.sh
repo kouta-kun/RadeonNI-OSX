@@ -102,8 +102,8 @@ INI
 darwin)
     # Mac OS X 10.4 on PowerPC, with the toolchain container
     # (scripts/darwin.sh image). Extra arguments are ninja targets.
-    # Built for size and with long calls: a PowerPC branch reaches 16 MB,
-    # and Mesa's code is larger than that.
+    # Built with long calls: a PowerPC branch reaches 16 MB, and Mesa's
+    # code is larger than that.
     compat=$tp/darwin8-compat
     mkdir -p "$compat"
     rsync -a --delete "$root/mesa/darwin8/" "$compat/src/"
@@ -140,12 +140,13 @@ cpu = 'ppc7400'
 endian = 'big'
 INI
     shift || true
-    # RDN_MESA_OPT=2 builds for speed (-O2) into build-darwin-O2 instead
-    # of for size into build-darwin, to compare the two.
-    case "${RDN_MESA_OPT:-s}" in
-    s) bdir=build-darwin; opt=(-Dbuildtype=minsize) ;;
-    2) bdir=build-darwin-O2; opt=(-Dbuildtype=release -Doptimization=2) ;;
-    *) echo "RDN_MESA_OPT is s or 2" >&2; exit 2 ;;
+    # Built for speed (-O2) into build-darwin. RDN_MESA_OPT=s builds for
+    # size into build-darwin-Os instead, to compare the two: 2 % slower
+    # in Quake 3, 2 MB smaller (journal, 2026-10-06).
+    case "${RDN_MESA_OPT:-2}" in
+    2) bdir=build-darwin; opt=(-Dbuildtype=release -Doptimization=2) ;;
+    s) bdir=build-darwin-Os; opt=(-Dbuildtype=minsize) ;;
+    *) echo "RDN_MESA_OPT is 2 or s" >&2; exit 2 ;;
     esac
     [ -f $bdir/build.ninja ] || "$root/scripts/darwin.sh" meson setup $bdir \
         "${common[@]}" --cross-file "$tp/mesa-darwin-cross.ini" \
