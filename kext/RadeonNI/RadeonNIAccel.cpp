@@ -205,16 +205,24 @@ bool RadeonNIAccel::startEngine(void)
 
 	/*
 	 * ASIC_Init leaves the card at slow boot clocks. Go to the PowerPlay
-	 * table's performance state: voltage and engine clock (the memory
-	 * clock does not switch this way). rdn_bootclocks=1 as a boot
-	 * argument keeps the boot state.
+	 * table's performance state: voltage and engine clock, and the
+	 * memory clock if the memory controller's sequencer runs its
+	 * microcode (without it the VBIOS's table does nothing).
+	 * rdn_bootclocks=1 as a boot argument keeps the boot state,
+	 * rdn_mclk=0 only the memory clock.
 	 */
 	fEngineUp = true;
 	if (!PE_parse_boot_arg("rdn_bootclocks", &keepBootClocks) || !keepBootClocks) {
 		UInt32 sclk = 0, mclk = 0, temperature = 0;
+		UInt32 what = RDN_PM_VOLTAGE | RDN_PM_SCLK;
+		int memoryClock = 1;
 
-		power(RDN_UC_POWER_PERFORMANCE, RDN_PM_VOLTAGE | RDN_PM_SCLK,
-		      &sclk, &mclk, &temperature);
+		if (!PE_parse_boot_arg("rdn_mclk", &memoryClock))
+			memoryClock = 1;
+		/* MC_SEQ_SUP_CNTL, RUN_MASK */
+		if (memoryClock && (rdn_rreg(fAccel.card, 0x28c8) & 1))
+			what |= RDN_PM_MCLK;
+		power(RDN_UC_POWER_PERFORMANCE, what, &sclk, &mclk, &temperature);
 		IOLog("RadeonNI: engine clock %lu0 kHz, memory clock %lu0 kHz\n",
 		      sclk, mclk);
 	}

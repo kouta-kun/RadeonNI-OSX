@@ -1,7 +1,7 @@
 #!/bin/bash
 # Put the command processor's microcode and its licence into firmware/
 # (git-ignored): TURKS_pfp.bin, TURKS_me.bin, TURKS_mc.bin (the memory
-# controller's, used only with the boot argument rdn_mc=1) and LICENSE.radeon.
+# controller's) and LICENSE.radeon.
 #
 #   scripts/fetch-firmware.sh
 #

@@ -259,15 +259,18 @@ bool RadeonNI::bringUp()
 	      (unsigned long)readReg(0x5428));
 
 	/*
-	 * rdn_mc=1 as a boot argument: load the memory controller's
-	 * microcode, as Linux does on this card, before anything is kept in
-	 * video memory. An experiment; without the argument nothing happens.
+	 * Load the memory controller's microcode, as Linux does on this
+	 * card, before anything is kept in video memory: the memory clock
+	 * can only be raised with it. It is in the personality when the
+	 * installer found the file. rdn_mc=0 as a boot argument skips it.
 	 */
-	if (PE_parse_boot_arg("rdn_mc", &i) && i) {
+	if (!PE_parse_boot_arg("rdn_mc", &i))
+		i = 1;
+	if (i) {
 		OSData *mc = OSDynamicCast(OSData, getProperty("FW_MC"));
 
 		if (!mc) {
-			IOLog("RadeonNI: rdn_mc: no FW_MC in the personality\n");
+			IOLog("RadeonNI: no memory controller microcode in the personality\n");
 		} else {
 			r = rdn_mc_load_microcode(&fCard, mc->getBytesNoCopy(),
 						  mc->getLength());

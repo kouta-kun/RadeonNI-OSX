@@ -51,7 +51,12 @@ If the Mac does not boot with the driver installed
   /System/Library/Extensions/RadeonNI.kext by hand (install.sh prints the
   commands), or take the card out.
 
-With --accel the driver raises the card's core voltage and engine clock
-from the slow state it boots in to the performance state its own VBIOS
-lists. To keep the boot clocks:  sudo nvram boot-args="rdn_bootclocks=1"
-and restart.
+With --accel the driver loads the memory controller's microcode
+(TURKS_mc.bin) at start and raises the card's core voltage, engine clock
+and memory clock from the slow state it boots in to the performance state
+its own VBIOS lists. Boot arguments to change that, set with
+sudo nvram boot-args="..." and a restart:
+  rdn_bootclocks=1   keep the boot clocks and voltage
+  rdn_mclk=0         raise the engine clock but not the memory clock
+  rdn_mc=0           do not load the memory controller's microcode
+                     (the memory clock then stays as it is)
