@@ -17,7 +17,7 @@ Using an HD 7570 bridged through VFIO into a QEMU virtual machine, Claude Opus 5
 
 After this was possible from within emulated OS X, the next step was to develop a barebones IOFramebuffer that allowed for unaccelerated display output, and that worked perfectly.
 
-## Stage 2 (Mesa port and acceleration, currently WIP)
+## Stage 2 (Mesa port and acceleration)
 
 Once display output was working, the next step was to ask Claude to port Mesa over to it. Why Mesa? It's MIT, uses well-isolated modules, and most importantly has the r600 driver with proven support for this card, which I'd already used under ArchPOWER on a big endian system.
 
@@ -27,16 +27,22 @@ Claude took the r600 driver from Mesa, vendored it into the project, and develop
 | ----------- | ------- |
 | Quake 3     | Working in full screen, non-responsive input in windowed mode |
 | Sauerbraten | Working in full screen, glitchy lower half in windowed mode |
-| Tux Racer   | Broken (window only updates when moved, has no full-screen mode)
+| Tux Racer   | Broken (window only updates when moved, has no full-screen mode) |
+| Doom 3      | Working in full screen, performance about equivalent to 6600LE due to CPU bottleneck |
 
 It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-1 output of specificially the HD 7570.
 
+## Stage 2.5 (Optimization)
+
+Testing games like Quake 3 and Doom 3, performance seemed to be equivalent or sometimes worse than the original NVidia 6600LE which is ~10x worse in terms of raw power. After a bit of investigation, the firmware blob was initializing the card at very low core and memory clocks (100MHz/100MHz). Increasing this to expected levels (600MHz/850MHz) provided a small but noticeable improvement, however the big improvement of about 100% came when GART size was reported correctly (GART=0 made Mesa stop flushing after every draw command), and by flushing asynchronously on swapping buffers instead of waiting.
+
+At this point performance was slightly below 6600LE on Doom 3, and about equivalent on Quake 3. Profiling by Claude revealed that most of the time was CPU bound within the driver. A couple of optimizations were developed (replacing Tiger's subpar emulation of Thread-local storage, force-enabling glthread to utilize both cores of the G5) which allowed us to reach and sometimes surpass the 6600LE. Currently, it seems like the bottleneck for high-end games like Doom 3 is the CPU. This is supported by benchmarks run with graphic settings maxxed out, which have almost no effect on either GPU except for anti-aliasing, which drops the 6600LE to 5FPS while the Radeon (as expected) remains at 22FPS.
+
 ## Future steps
 
+- Optimize glthread parameters to reduce cross-thread waiting
 - G5 testing worked, so the next step is to try to read the VBIOS from the ROM and get a compatibility list working.
 - At some point, I should try with other cards of the same family/model to see if anything works or if this is too HD 7570 specific.
-- Some parts of Quartz Extreme (blitting, etc) are still CPU-rendered.
-- Performance is nowhere near what it should be on this GPU and I'm not sure where the problem is.
 
 # Usage
 
