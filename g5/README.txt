@@ -50,3 +50,8 @@ If the Mac does not boot with the driver installed
   sudo ./uninstall.sh, or boot with Command-S and remove
   /System/Library/Extensions/RadeonNI.kext by hand (install.sh prints the
   commands), or take the card out.
+
+With --accel the driver raises the card's core voltage and engine clock
+from the slow state it boots in to the performance state its own VBIOS
+lists. To keep the boot clocks:  sudo nvram boot-args="rdn_bootclocks=1"
+and restart.

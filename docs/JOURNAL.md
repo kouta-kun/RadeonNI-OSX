@@ -2346,3 +2346,35 @@ the user).
 memory clock. What made the whole screen stripes this morning stay after
 the clock was back at 100 MHz (zero marks were the state then too, so
 "the same failure, stuck" is still only a reading).
+
+## 2026-10-06 — Performance state at start; write combining for video memory: 108 fps
+
+**At start.** The user wants the switch automatic. `startEngine()` now
+goes to the performance state (voltage and engine clock) once the 3D
+engine is up; `rdn_bootclocks=1` as a boot argument keeps the boot state.
+G5 restarted: 649.96 MHz and marks 0x3a 27 s after boot without anyone
+asking.
+
+**Profile at 96 fps** (`sample`, 5 s of the demo): Quake's interpreted
+game code 42 %, its sound mixing 10 %, drawing through Mesa 26 % of which
+copying vertices into video memory 8 %, the swap 6 %. Fence waits: 0.4 s
+of 13. So Quake no longer waits for the GPU at all, and a faster memory
+clock would not show in this number.
+
+**Write combining.** The user client's memory can be mapped with cache
+bits chosen by the caller (`kIOMapUserOptionsMask` covers them), so no
+kext change: `RDN_APERTURE_CACHE=default|wc|inhibit` in
+`rdn_device_darwin.c`. Demo: default 95.7, inhibit 95.5, wc 108.6 fps.
+The default for device memory is uncached and guarded; write combining
+on PowerPC is uncached without the guard bit. It is the default now
+(`=inhibit` goes back). With the kext above: 108.4 fps, 43.5 C.
+
+| Step | fps |
+|---|---|
+| This morning | 47.8 |
+| Driver fixes, boot clocks | 80.8 |
+| Engine clock 650 MHz | 96.0 |
+| Write combining | 108.4 |
+
+**Not checked:** a still picture with write combining (only that the
+demo runs and the number); the QEMU guest.

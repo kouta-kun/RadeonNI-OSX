@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
@@ -88,6 +89,24 @@ static uint64_t now_us(void)
 
 	gettimeofday(&tv, NULL);
 	return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+/*
+ * How the CPU's view of video memory is mapped: write combining, which on
+ * PowerPC is uncached without the guard bit, so that the processor may
+ * gather stores. With the kernel's default for device memory (uncached
+ * and guarded) copying vertices and textures in was an eighth of a
+ * Quake 3 frame. RDN_APERTURE_CACHE=inhibit asks for that again.
+ */
+static IOOptionBits aperture_cache_mode(void)
+{
+	const char *s = getenv("RDN_APERTURE_CACHE");
+
+	if (s && !strcmp(s, "inhibit"))
+		return kIOMapInhibitCache;
+	if (s && !strcmp(s, "default"))
+		return kIOMapDefaultCache;
+	return kIOMapWriteCombineCache;
 }
 
 static struct {
@@ -265,7 +284,7 @@ struct rdn_device *rdn_device_open(void)
 		goto fail_close;
 	}
 	kr = IOConnectMapMemory(d->conn, RDN_UC_MEMORY_APERTURE, mach_task_self(),
-				&addr, &len, kIOMapAnywhere);
+				&addr, &len, kIOMapAnywhere | aperture_cache_mode());
 	if (kr) {
 		fprintf(stderr, "rdn: cannot map video memory (0x%x)\n", kr);
 		goto fail_close;

@@ -175,7 +175,7 @@ bool RadeonNIAccel::startEngine(void)
 {
 	struct rdn_accel_fw fw;
 	UInt32 pfpSize = 0, meSize = 0, apertureSize = fFramebuffer->apertureSize();
-	int r;
+	int r, keepBootClocks = 0;
 
 	fPfp = copyFirmware("FW_PFP", &pfpSize);
 	fMe = copyFirmware("FW_ME", &meSize);
@@ -202,6 +202,22 @@ bool RadeonNIAccel::startEngine(void)
 		return false;
 	IOLog("RadeonNI: 3D engine up; %lu MB of video memory for clients\n",
 	      (unsigned long)((apertureSize - HEAP_OFFSET) >> 20));
+
+	/*
+	 * ASIC_Init leaves the card at slow boot clocks. Go to the PowerPlay
+	 * table's performance state: voltage and engine clock (the memory
+	 * clock does not switch this way). rdn_bootclocks=1 as a boot
+	 * argument keeps the boot state.
+	 */
+	fEngineUp = true;
+	if (!PE_parse_boot_arg("rdn_bootclocks", &keepBootClocks) || !keepBootClocks) {
+		UInt32 sclk = 0, mclk = 0, temperature = 0;
+
+		power(RDN_UC_POWER_PERFORMANCE, RDN_PM_VOLTAGE | RDN_PM_SCLK,
+		      &sclk, &mclk, &temperature);
+		IOLog("RadeonNI: engine clock %lu0 kHz, memory clock %lu0 kHz\n",
+		      sclk, mclk);
+	}
 
 	if (fFramebuffer->getProperty("AccelSelfTest") == kOSBooleanTrue) {
 		struct rdn_selftest_target t;
