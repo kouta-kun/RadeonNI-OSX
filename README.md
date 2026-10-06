@@ -21,11 +21,22 @@ After this was possible from within emulated OS X, the next step was to develop 
 
 Once display output was working, the next step was to ask Claude to port Mesa over to it. Why Mesa? It's MIT, uses well-isolated modules, and most importantly has the r600 driver with proven support for this card, which I'd already used under ArchPOWER on a big endian system.
 
-Claude took the r600 driver from Mesa, vendored it into the project, and developed two ends to this integration, a hardware interface that allows r600 to communicate with the GPU through PCIe (for command submission, etc) and a (currently in development) IOAccelerator implementation that passes through every OpenGL to Mesa. This worked, but did not support Quartz Extreme and essentially functioned by using OSMesa to render and then asking the CPU to copy over to the framebuffer. What is now in progress is implementing Quartz Extreme/compositing and handling some Apple extensions so that the driver interacts correctly with the Windowing System (i.e. no flickering, trails, etc).
+Claude took the r600 driver from Mesa, vendored it into the project, and developed two ends to this integration, a hardware interface that allows r600 to communicate with the GPU through PCIe (for command submission, etc) and a (currently in development) IOAccelerator implementation that passes through every OpenGL to Mesa. This worked, but did not support Quartz Extreme and essentially functioned by using OSMesa to render and then asking the CPU to copy over to the framebuffer. After some development Quartz Extreme seems to work correctly (no trails, OpenGL windowed and fullscreen works). A couple of games have been tested:
+
+|   Game      |  State  |
+| ----------- | ------- |
+| Quake 3     | Working in full screen, non-responsive input in windowed mode |
+| Sauerbraten | Working in full screen, glitchy lower half in windowed mode |
+| Tux Racer   | Broken (window only updates when moved, has no full-screen mode)
+
+It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-1 output of specificially the HD 7570.
 
 ## Future steps
 
-Once the QEMU-harness experiment is working (OpenGL works perfectly, no graphical errors, applications and games work correctly) I will test this on my actual G5. I expect OpenFirmware to present some issues, although Claude's research implied that the G5's implementation might expose even more BARs by default than OpenBIOS did.
+- G5 testing worked, so the next step is to try to read the VBIOS from the ROM and get a compatibility list working.
+- At some point, I should try with other cards of the same family/model to see if anything works or if this is too HD 7570 specific.
+- Some parts of Quartz Extreme (blitting, etc) are still CPU-rendered.
+- Performance is nowhere near what it should be on this GPU and I'm not sure where the problem is.
 
 # Usage
 
