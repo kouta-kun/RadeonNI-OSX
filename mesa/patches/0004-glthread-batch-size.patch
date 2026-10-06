@@ -1,0 +1,17 @@
+osx-gpu: larger glthread batches
+
+glthread hands recorded calls to its thread in batches of this size. With
+8 KB a Doom 3 frame on a 2.3 GHz G5 is several hundred hand-overs; 64 KB
+measured best there (8, 32, 64 and 256 KB tried; journal, 2026-10-06).
+
+--- a/src/mesa/main/glthread.h
++++ b/src/mesa/main/glthread.h
+@@ -33,7 +33,7 @@
+  *   chance of experiencing CPU cache thrashing
+  * but it should be high enough so that u_queue overhead remains negligible.
+  */
+-#define MARSHAL_MAX_CMD_BUFFER_SIZE (8 * 1024)
++#define MARSHAL_MAX_CMD_BUFFER_SIZE (64 * 1024)
+ 
+ /* We need to leave 1 slot at the end to insert the END marker for unmarshal
+  * calls that look ahead to know where the batch ends.

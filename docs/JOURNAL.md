@@ -2968,3 +2968,41 @@ just fits. So the overflow path has not run yet.
 **Open.** The overflow path under real pressure. Real eviction. Command
 buffers and client storage for the window server in GART memory. The
 GART is on only with the boot argument.
+
+## 2026-10-06 — glthread's hand-over: spinning does nothing, larger batches help Doom 3
+
+The user: 20 fps is too low; anything short of Mesa's internals? The
+glthread profile had the program's thread waiting 45 % of the time for
+room in the queue while the worker waited 30 %, and glthread hands work
+over in batches of 8 KB, so a Doom 3 frame is several hundred hand-overs.
+Two things tried, both with the user's go-ahead.
+
+**1. A condition wait that spins before it sleeps** (in
+`mesa/darwin8`, through our `<pthread.h>` wrapper; no Mesa change):
+nothing. Doom 3 20.8 and 21.7 fps without, 20.4 and 21.3 with a budget
+of 200 us, 20.2 and 21.5 with 1000 us; Quake 3 the same. So the cost is
+not the trip through the kernel to wake a thread. Taken out again.
+
+**2. Larger batches** (`MARSHAL_MAX_CMD_BUFFER_SIZE`, one constant in
+glthread.h; `mesa/patches/0004`):
+
+| Batch | bench | bench2 |
+|---|---|---|
+| 8 KB (Mesa's) | 20.8 | 21.7 |
+| 32 KB | 23.4 | 25.6 |
+| 64 KB | 23.3 | 26.5 |
+| 256 KB | 21.6 | 24.8 |
+
+64 KB is in. Quake 3 does not care (146.8 fps, 167.5 without sound). A
+Doom 3 frame and a Quake 3 still read back right with it.
+
+Where the two cards stand on the same scenes, default settings:
+
+| | bench | bench2 | Quake 3 |
+|---|---|---|---|
+| Radeon | 23.3 | 26.5 | 146.8 |
+| GeForce 6600 LE | 26.2 | 18.7 | 127.8 |
+
+Why the larger batch helps when spinning does not is not explained;
+fewer hand-overs with the worker's caches staying warm on its own
+processor is a guess.
