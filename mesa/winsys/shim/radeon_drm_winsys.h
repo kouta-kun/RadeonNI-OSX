@@ -38,8 +38,17 @@ struct radeon_drm_winsys {
    simple_mtx_t lock;
    /* Command buffers in video memory whose fence has not been reached. */
    struct list_head pending_ibs;
-   /* Freed buffers the GPU may still be using (rdn_buffer_destroy). */
-   struct list_head dead_bos;
+   /*
+    * Video memory this process has let go of and keeps for its next
+    * request of the same size (rdn_winsys.c, "The cache"): in the order it
+    * was let go of, and the same entries by size.
+    */
+   struct list_head cache_all;
+   struct list_head cache_buckets[128];
+   uint64_t cached_bytes[2];   /* in the aperture, beyond it */
+   /* The newest fence known to have been reached. */
+   uint32_t last_done;
+   bool have_last_done;
    uint64_t allocated_bytes;
    uint64_t num_flushes;
 };

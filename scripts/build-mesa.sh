@@ -107,9 +107,15 @@ darwin)
     compat=$tp/darwin8-compat
     mkdir -p "$compat"
     rsync -a --delete "$root/mesa/darwin8/" "$compat/src/"
+    # tiger_emutls.o is named on the link line by itself, before libgcc,
+    # so that its __emutls_get_address is the one that gets linked.
     "$root/scripts/darwin.sh" sh -c "powerpc-apple-darwin8-gcc -O2 -Wall \
         -mmacosx-version-min=10.4 -c -o $compat/tiger_compat.o \
         $root/mesa/darwin8/tiger_compat.c && \
+        powerpc-apple-darwin8-gcc -O2 -Wall \
+        -mmacosx-version-min=10.4 -c -o $compat/tiger_emutls.o \
+        $root/mesa/darwin8/tiger_emutls.c && \
+        rm -f $compat/libtigercompat.a && \
         powerpc-apple-darwin8-ar rcs $compat/libtigercompat.a $compat/tiger_compat.o"
     # -fno-strict-aliasing: at -Os this compiler's strict-aliasing
     # optimisation breaks compile_vertex_list() in Mesa's display-list
@@ -129,9 +135,9 @@ pkg-config = 'false'
 c_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-fno-strict-aliasing', '-isystem', '$compat/src/include']
 cpp_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-fno-strict-aliasing', '-isystem', '$compat/src/include', '-include', '$compat/src/tiger_compat.h']
 objc_args = ['-mmacosx-version-min=10.4', '-mlongcall', '-fno-strict-aliasing', '-isystem', '$compat/src/include']
-objc_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/libtigercompat.a']
+objc_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/tiger_emutls.o', '$compat/tiger_emutls.o', '$compat/libtigercompat.a']
 c_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-Wl,-dead_strip', '$compat/libtigercompat.a']
-cpp_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-static-libstdc++', '-Wl,-dead_strip', '$compat/libtigercompat.a']
+cpp_link_args = ['-mmacosx-version-min=10.4', '-static-libgcc', '-static-libstdc++', '-Wl,-dead_strip', '$compat/tiger_emutls.o', '$compat/libtigercompat.a']
 
 [host_machine]
 system = 'darwin'

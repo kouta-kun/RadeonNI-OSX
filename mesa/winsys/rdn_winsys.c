@@ -66,24 +66,32 @@ struct rdn_cs_buffer {
    unsigned usage;
 };
 
+#define RDN_CS_HASH 512
+
 struct rdn_cs {
    struct radeon_drm_winsys *ws;
    struct rdn_cs_buffer *buffers;
    unsigned num_buffers, max_buffers;
+   /* Where in `buffers` a buffer probably is, by its address; -1: nowhere. */
+   int16_t hash[RDN_CS_HASH];
    void (*flush_cs)(void *ctx, unsigned flags, struct pipe_fence_handle **fence);
    void *flush_data;
    struct rdn_fence *next_fence;
 };
 
-struct rdn_dead_bo {
-   struct list_head list;
+struct rdn_cached {
+   struct list_head all, bucket;
    uint64_t offset, size;
+   bool hidden;
+   /* The last command buffer that used the memory. */
    struct rdn_fence *fence;
+   /* ws->num_flushes when it was let go of. */
+   uint64_t stamp;
 };
 
 struct rdn_pending_ib {
    struct list_head list;
-   uint64_t offset;
+   uint64_t offset, size;
    struct rdn_fence *fence;
 };
 
@@ -126,6 +134,11 @@ static bool rdn_fence_wait(struct radeon_drm_winsys *ws, struct rdn_fence *fence
       return true;
    if (!fence->submitted)
       return false;
+   /* Fences are reached in the order of their numbers: no need to ask. */
+   if (ws->have_last_done && (int32_t)(fence->number - ws->last_done) <= 0) {
+      fence->reached = true;
+      return true;
+   }
    if (timeout_ns == 0) {
       if (!ws->dev->fence_done(ws->dev, fence->number))
          return false;
@@ -133,6 +146,10 @@ static bool rdn_fence_wait(struct radeon_drm_winsys *ws, struct rdn_fence *fence
       return false;
    }
    fence->reached = true;
+   if (!ws->have_last_done || (int32_t)(fence->number - ws->last_done) > 0) {
+      ws->last_done = fence->number;
+      ws->have_last_done = true;
+   }
    return true;
 }
 
@@ -153,7 +170,102 @@ static void rdn_ws_fence_reference(struct radeon_winsys *rws,
  * Buffers
  */
 
-static void rdn_reap_dead_bos(struct radeon_drm_winsys *ws, bool wait);
+/*
+ * The cache.
+ *
+ * Every piece of video memory is the kext's to give, and asking it is a
+ * kernel call. A program that draws replaces its vertex buffers every
+ * frame, and r600's upload path keeps asking for fresh ones, so memory a
+ * buffer or a command buffer lets go of is kept here and handed to the
+ * next request of the same size, once the GPU has finished with it. What
+ * nobody asked for again within RDN_CACHE_FLUSHES command buffers goes
+ * back to the kext, as does everything above RDN_CACHE_BYTES. All of it
+ * is called with the lock held.
+ */
+#define RDN_CACHE_FLUSHES 128
+static const uint64_t RDN_CACHE_BYTES[2] = { 32ull << 20, 128ull << 20 };
+
+static struct list_head *rdn_cache_bucket(struct radeon_drm_winsys *ws,
+                                          uint64_t size, bool hidden)
+{
+   unsigned h = (unsigned)(size >> 8) ^ (unsigned)(size >> 15) ^ (hidden ? 0x55 : 0);
+
+   return &ws->cache_buckets[h % ARRAY_SIZE(ws->cache_buckets)];
+}
+
+static void rdn_cache_drop(struct radeon_drm_winsys *ws, struct rdn_cached *c)
+{
+   ws->cached_bytes[c->hidden] -= c->size;
+   rdn_fence_set(&c->fence, NULL);
+   list_del(&c->all);
+   list_del(&c->bucket);
+   FREE(c);
+}
+
+/* Keep memory for later, or give it back at once if that cannot be noted. */
+static void rdn_cache_put(struct radeon_drm_winsys *ws, uint64_t offset,
+                          uint64_t size, bool hidden, struct rdn_fence *fence)
+{
+   struct rdn_cached *c = CALLOC_STRUCT(rdn_cached);
+
+   if (!c) {
+      rdn_fence_wait(ws, fence, OS_TIMEOUT_INFINITE);
+      ws->dev->free(ws->dev, offset);
+      return;
+   }
+   c->offset = offset;
+   c->size = size;
+   c->hidden = hidden;
+   c->stamp = ws->num_flushes;
+   rdn_fence_set(&c->fence, fence);
+   list_addtail(&c->all, &ws->cache_all);
+   list_addtail(&c->bucket, rdn_cache_bucket(ws, size, hidden));
+   ws->cached_bytes[hidden] += size;
+}
+
+/* Memory of exactly this size that the GPU has finished with, if any. */
+static bool rdn_cache_get(struct radeon_drm_winsys *ws, uint64_t size,
+                          uint64_t alignment, bool hidden, uint64_t *offset)
+{
+   struct list_head *bucket = rdn_cache_bucket(ws, size, hidden);
+   unsigned looked = 0;
+
+   list_for_each_entry_safe(struct rdn_cached, c, bucket, bucket) {
+      if (++looked > 32)
+         break;
+      if (c->size != size || c->hidden != hidden || (c->offset & (alignment - 1)))
+         continue;
+      /* The oldest first: if the GPU still has that one, it has the rest. */
+      if (!rdn_fence_wait(ws, c->fence, 0))
+         break;
+      *offset = c->offset;
+      rdn_cache_drop(ws, c);
+      return true;
+   }
+   return false;
+}
+
+/*
+ * Give back to the kext what has been kept too long or is too much; with
+ * `all`, everything, waiting for the GPU where it has to.
+ */
+static void rdn_cache_trim(struct radeon_drm_winsys *ws, bool all)
+{
+   list_for_each_entry_safe(struct rdn_cached, c, &ws->cache_all, all) {
+      bool old = ws->num_flushes - c->stamp > RDN_CACHE_FLUSHES;
+      bool much = ws->cached_bytes[c->hidden] > RDN_CACHE_BYTES[c->hidden];
+
+      if (!all && !old && !much)
+         break;
+      if (!rdn_fence_wait(ws, c->fence, all ? OS_TIMEOUT_INFINITE : 0)) {
+         if (all)
+            continue;
+         break;
+      }
+      ws->dev->free(ws->dev, c->offset);
+      rdn_cache_drop(ws, c);
+   }
+}
 
 static struct pb_buffer_lean *
 rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
@@ -161,6 +273,7 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
 {
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
    struct rdn_bo *bo = CALLOC_STRUCT(rdn_bo);
+   bool want_hidden;
    int r;
 
    if (!bo)
@@ -176,16 +289,21 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
     * it fills through a staging copy) goes to the video memory beyond the
     * aperture, if the device has any, and leaves the rest for buffers.
     */
+   want_hidden = (flags & RADEON_FLAG_NO_CPU_ACCESS) && ws->dev->alloc_hidden;
    r = -1;
-   if ((flags & RADEON_FLAG_NO_CPU_ACCESS) && ws->dev->alloc_hidden) {
+   if (rdn_cache_get(ws, size, alignment, want_hidden, &bo->offset)) {
+      bo->hidden = want_hidden;
+      r = 0;
+   }
+   if (r && want_hidden) {
       r = ws->dev->alloc_hidden(ws->dev, size, alignment, &bo->offset);
       bo->hidden = !r;
    }
    if (r)
       r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
    if (r) {
-      /* Destroyed buffers waiting for the GPU may make room. */
-      rdn_reap_dead_bos(ws, true);
+      /* What is kept for later may make room. */
+      rdn_cache_trim(ws, true);
       r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
    }
    if (!r)
@@ -207,52 +325,20 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
    return &bo->base;
 }
 
-/*
- * Give back the memory of destroyed buffers the GPU has finished with.
- * They are in the order they were destroyed, which is nearly the order of
- * their fences, so the first one still in use ends the look. Called with
- * the lock held.
- */
-static void rdn_reap_dead_bos(struct radeon_drm_winsys *ws, bool wait)
-{
-   list_for_each_entry_safe(struct rdn_dead_bo, dead, &ws->dead_bos, list) {
-      if (!rdn_fence_wait(ws, dead->fence, wait ? OS_TIMEOUT_INFINITE : 0))
-         break;
-      ws->dev->free(ws->dev, dead->offset);
-      ws->allocated_bytes -= dead->size;
-      rdn_fence_set(&dead->fence, NULL);
-      list_del(&dead->list);
-      FREE(dead);
-   }
-}
-
 static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean *buf)
 {
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
    struct rdn_bo *bo = rdn_bo(buf);
-   struct rdn_dead_bo *dead = NULL;
 
    if (!bo->foreign) {
       /*
        * The GPU may still be using the memory. Waiting for it here would
        * stop the program at every buffer it drops while drawing, so the
-       * memory is given back later, when its fence has passed.
+       * memory is kept, with the fence after which it is free.
        */
-      if (!rdn_fence_wait(ws, bo->last_use, 0))
-         dead = CALLOC_STRUCT(rdn_dead_bo);
-      if (!dead)
-         rdn_fence_wait(ws, bo->last_use, OS_TIMEOUT_INFINITE);
-
       simple_mtx_lock(&ws->lock);
-      if (dead) {
-         dead->offset = bo->offset;
-         dead->size = bo->base.size;
-         rdn_fence_set(&dead->fence, bo->last_use);
-         list_addtail(&dead->list, &ws->dead_bos);
-      } else {
-         ws->dev->free(ws->dev, bo->offset);
-         ws->allocated_bytes -= bo->base.size;
-      }
+      rdn_cache_put(ws, bo->offset, bo->base.size, bo->hidden, bo->last_use);
+      ws->allocated_bytes -= bo->base.size;
       simple_mtx_unlock(&ws->lock);
    }
    rdn_fence_set(&bo->last_use, NULL);
@@ -260,13 +346,24 @@ static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean 
    FREE(bo);
 }
 
+static unsigned rdn_cs_hash(struct rdn_bo *bo)
+{
+   return ((uintptr_t)bo >> 5) % RDN_CS_HASH;
+}
+
 static int rdn_cs_lookup(struct rdn_cs *cs, struct rdn_bo *bo)
 {
-   unsigned i;
+   unsigned h = rdn_cs_hash(bo);
+   int i = cs->hash[h];
 
-   for (i = 0; i < cs->num_buffers; i++)
-      if (cs->buffers[i].bo == bo)
+   if (i >= 0 && (unsigned)i < cs->num_buffers && cs->buffers[i].bo == bo)
+      return i;
+   for (i = 0; i < (int)cs->num_buffers; i++)
+      if (cs->buffers[i].bo == bo) {
+         if (i <= INT16_MAX)
+            cs->hash[h] = (int16_t)i;
          return i;
+      }
    return -1;
 }
 
@@ -474,6 +571,7 @@ static bool rdn_cs_create(struct radeon_cmdbuf *rcs, struct radeon_winsys_ctx *c
    }
    rcs->current.max_dw = RDN_CS_MAX_DW;
    cs->ws = (struct radeon_drm_winsys *)ctx;
+   memset(cs->hash, 0xff, sizeof(cs->hash));
    cs->flush_cs = flush;
    cs->flush_data = flush_ctx;
    rcs->priv = cs;
@@ -487,6 +585,7 @@ static void rdn_cs_release_buffers(struct rdn_cs *cs)
    for (i = 0; i < cs->num_buffers; i++)
       radeon_bo_reference(&cs->ws->base, (struct pb_buffer_lean **)&cs->buffers[i].bo, NULL);
    cs->num_buffers = 0;
+   memset(cs->hash, 0xff, sizeof(cs->hash));
 }
 
 static void rdn_cs_destroy(struct radeon_cmdbuf *rcs)
@@ -518,6 +617,8 @@ static unsigned rdn_cs_add_buffer(struct radeon_cmdbuf *rcs, struct pb_buffer_le
       cs->buffers = realloc(cs->buffers, cs->max_buffers * sizeof(*cs->buffers));
    }
    i = cs->num_buffers++;
+   if (i <= INT16_MAX)
+      cs->hash[rdn_cs_hash(rdn_bo(buf))] = (int16_t)i;
    cs->buffers[i].bo = NULL;
    radeon_bo_reference(&cs->ws->base, (struct pb_buffer_lean **)&cs->buffers[i].bo, buf);
    cs->buffers[i].usage = usage;
@@ -579,7 +680,7 @@ static void rdn_reap_ibs(struct radeon_drm_winsys *ws, bool wait)
    list_for_each_entry_safe(struct rdn_pending_ib, ib, &ws->pending_ibs, list) {
       if (!rdn_fence_wait(ws, ib->fence, wait ? OS_TIMEOUT_INFINITE : 0))
          break;
-      ws->dev->free(ws->dev, ib->offset);
+      rdn_cache_put(ws, ib->offset, ib->size, false, ib->fence);
       rdn_fence_set(&ib->fence, NULL);
       list_del(&ib->list);
       FREE(ib);
@@ -619,7 +720,7 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
    struct radeon_drm_winsys *ws = cs->ws;
    struct rdn_pending_ib *ib;
    struct rdn_fence *fence;
-   uint64_t offset;
+   uint64_t offset, ib_size;
    unsigned i;
    int r;
 
@@ -637,16 +738,20 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
       return -ENOMEM;
    }
 
+   /* In steps of 64 KB, so that the cache has one of the size again. */
+   ib_size = align64(rcs->current.cdw * 4, 64 * 1024);
+
    simple_mtx_lock(&ws->lock);
    rdn_reap_ibs(ws, false);
-   rdn_reap_dead_bos(ws, false);
+   rdn_cache_trim(ws, false);
    rdn_throttle(ws);
-   r = ws->dev->alloc(ws->dev, rcs->current.cdw * 4, 4096, &offset);
+   r = rdn_cache_get(ws, ib_size, 4096, false, &offset) ? 0 :
+       ws->dev->alloc(ws->dev, ib_size, 4096, &offset);
    if (r) {
       /* Wait for the earlier ones to finish and try once more. */
       rdn_reap_ibs(ws, true);
-      rdn_reap_dead_bos(ws, true);
-      r = ws->dev->alloc(ws->dev, rcs->current.cdw * 4, 4096, &offset);
+      rdn_cache_trim(ws, true);
+      r = ws->dev->alloc(ws->dev, ib_size, 4096, &offset);
    }
    if (!r) {
       /* The words are in the CPU's byte order, which the device expects. */
@@ -665,6 +770,7 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
    } else {
       fence->submitted = true;
       ib->offset = offset;
+      ib->size = ib_size;
       rdn_fence_set(&ib->fence, fence);
       list_addtail(&ib->list, &ws->pending_ibs);
       ws->num_flushes++;
@@ -760,7 +866,7 @@ static void rdn_winsys_destroy(struct radeon_winsys *rws)
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
 
    rdn_reap_ibs(ws, true);
-   rdn_reap_dead_bos(ws, true);
+   rdn_cache_trim(ws, true);
    if (ws->surf_man)
       radeon_surface_manager_free(ws->surf_man);
    ws->dev->destroy(ws->dev);
@@ -851,7 +957,9 @@ struct radeon_winsys *rdn_winsys_create(struct rdn_device *dev,
    pipe_reference_init(&ws->reference, 1);
    simple_mtx_init(&ws->lock, mtx_plain);
    list_inithead(&ws->pending_ibs);
-   list_inithead(&ws->dead_bos);
+   list_inithead(&ws->cache_all);
+   for (unsigned b = 0; b < ARRAY_SIZE(ws->cache_buckets); b++)
+      list_inithead(&ws->cache_buckets[b]);
    rdn_vram_gpu_base = dev->info.vram_gpu_base;
    rdn_init_info(ws);
 

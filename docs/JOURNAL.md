@@ -2612,3 +2612,34 @@ scene (grab). Which of the two limits it had hit was not separated.
 **Open.** Whether ordinary play is slow too (the user's to say). A tour
 that visits every place once before the timed pass. Doom 3 has not been
 looked at for correctness beyond one grab.
+
+## 2026-10-06 — Doom 3 in normal play: half the frame is the driver, and a quarter of that is ours
+
+The user: Doom 3 is slow but no slideshow, slower with dynamic lights and
+skinned models. Profile of `demo_mars_city1`'s opening scene
+(`sample`, main thread): OpenGL driver 47.1 %, Doom's renderer 23.5 %,
+game logic 6.9 %, other 21.9 %. Under GL: `glDrawElements` 24.2 %,
+`glBufferData` 6.1 %, swap and flush 5.7 %. By kind: kernel calls 9.5 %
+(`dev_alloc` 3.5 %, `dev_free` 5.4 %, fence polls 0.5 %: every buffer
+`glBufferData` replaces and every buffer r600's upload path asks for is a
+call into the kext, and another to free it), `memcpy` 7.6 %,
+`__emutls_get_address` 1.4 %, `rdn_cs_add_buffer` 1.3 %.
+
+**Done on our side, Mesa untouched (user's choice of all four):**
+1. A cache in the winsys for video memory a buffer lets go of: kept with
+   its fence and handed to the next request of the same size once the GPU
+   has finished with it; back to the kext after 128 command buffers
+   unused, or above 32 MB (aperture) and 128 MB (beyond). It replaces the
+   list of destroyed buffers. A fence known to be reached answers for all
+   earlier ones without a kernel call.
+2. Command buffers come from the same cache, in steps of 64 KB.
+3. `rdn_cs_lookup` has a small hash in front of its linear search.
+4. `mesa/darwin8/tiger_emutls.c`: our own `__emutls_get_address`, linked
+   ahead of libgcc's, with a short cut for the first thread that uses it
+   (two globals instead of `pthread_getspecific`). `nm` shows ours in the
+   bundle.
+
+Builds for Tiger, the host and big-endian Linux; the tests pass.
+**Not run anywhere:** none of this can be tested without the card.
+My estimate to the user before starting: 10 to 15 % more frames in Doom 3,
+3 to 4 % in Quake 3.
