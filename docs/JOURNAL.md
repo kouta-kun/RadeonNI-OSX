@@ -2580,3 +2580,35 @@ video memory (131072 to 704512 bytes asked, 143 MB in use)", then r600's
 Built (kext, Tiger bundle, host library, package); the tests pass.
 **Not installed, not run:** the user asked me not to install by myself.
 Which of the two limits Doom hit is a guess until it runs.
+
+## 2026-10-06 — Doom 3 demo loads its levels now; no benchmark out of it yet
+
+Kext and bundle with the memory beyond the aperture and 65536
+allocations installed on the G5 (the user's go-ahead), restarted: 650 /
+800 MHz by itself, desktop and a Quake 3 still right by readback, Quake's
+demo 114.3 fps as before. **Doom 3 loads `demo_mars_city1` and
+`demo_mc_underground`**, no "out of video memory", and shows the opening
+scene (grab). Which of the two limits it had hit was not separated.
+
+**A benchmark from the demo build:**
+- `wait`, `recordDemo`, `stopRecording`, `setviewpos`, `god`, `echo` and
+  `exec` all work from the command line, so I recorded a demo without
+  anyone playing: a tour of the level made from the entity positions in
+  its `.map` file. I made it far too long (2400 frames; recording ran at
+  a few frames a second) and the user had me stop it.
+- Playback does not work in this build: `timeDemoQuit bench` says
+  "couldn't open demos/bench.demo" ("restricted demo mode" reads no
+  loose files), and with the recording in a pak of its own the game
+  quits two seconds after starting. So no recorded demo, of any length.
+- The tour run live instead (`tools/guest/d3tour.sh`, `d3tour.cfg`: five
+  places, four directions, ten frames each, timed between two `echo`
+  marks in `qconsole.log`): 2.0 and 2.5 fps. That is not the driver:
+  `sample` during it has 47 % of the main thread in the game's
+  declaration parser, 31 % reading and inflating files, 14 % in particle
+  set-up, 3 % in its renderer and 0.5 % under OpenGL calls; fence waits
+  2 ms in a whole run. Each jump of the camera makes the game load that
+  place's effects, and ten frames a view never gets past the loading.
+
+**Open.** Whether ordinary play is slow too (the user's to say). A tour
+that visits every place once before the timed pass. Doom 3 has not been
+looked at for correctness beyond one grab.
