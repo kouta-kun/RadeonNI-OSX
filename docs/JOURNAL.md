@@ -2504,3 +2504,12 @@ CPU time: 2.8 ms against 1.5. Of Apple's 1.5 ms, 0.6 is in
 **Built, not installed** (the user: install nothing by yourself):
 Mesa for Tiger at -O2, `RDN_MESA_OPT=2 scripts/build-mesa.sh darwin`,
 into `build-darwin-O2`; 20.6 MB against 18.8 MB. Never run.
+
+## 2026-10-06 — The 6600 LE again with the desktop at 32 bpp
+
+The user switched the desktop to 32 bpp. Demo: 121.7 and 122.8 fps
+(127.6 at 16 bpp), 132.4 without sound. Profile, same split, 8.18 ms a
+frame: game code 4.20, sound 1.34, OpenGL driver 1.30, renderer 1.04,
+other 0.28. The profile samples five seconds of an eleven second demo,
+not the same five each time, so the parts move by a few tenths between
+runs; the driver's share is 1.3 to 1.5 ms in both.
