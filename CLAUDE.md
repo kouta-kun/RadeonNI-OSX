@@ -121,6 +121,22 @@ been planned in detail.
   while its image is mounted) shows a level at 6 frames a second. Without the file, windows
   go through the software renderer's buffer as before, and Chess is
   wrong.
+- Speed (2026-10-06, journal): Quake 3's demo `four` at 1920x1080 on the
+  G5 went from 47.8 to 96 fps. Three driver causes fixed (the winsys
+  reported a GART size of zero, so r600 flushed per draw; the swap and
+  buffer destruction waited for the GPU), and the card had been running
+  at its VBIOS boot clocks (engine 100 MHz, memory 150 MHz).
+  `~/gl/rdnuc power performance 3` on the G5 raises voltage and engine
+  clock to 650 MHz until the next restart; the kext never does it by
+  itself. Mask 4 (memory clock) does nothing yet and must not be used
+  with `boot` (the table for going down is untried). Raising the clock
+  without display watermarks made rows of the screen show stripes;
+  `hw/rdn_watermark.c` programs them and the user confirmed the fix.
+- `RDN_STATS=1` in a program's environment prints its fence waits at
+  exit; `~/gl/rdnuc reg off [n]` reads card registers; `sample <name> 10`
+  on the G5 profiles a program. Apple's VNC server is on on the G5
+  (user's request, password `tiger`); it can hang in a log loop
+  (`kickstart -restart -agent`).
 - A6 and A7 have not started.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
@@ -308,6 +324,10 @@ Keep these current as part of the work, and commit small and often.
   Everything the GPU reads is in video memory, written little-endian through
   the aperture; see the header for the rules (host data path flush).
   `hw/linux/` holds register headers copied from Linux unchanged.
+- `hw/rdn_pm.c` reads the PowerPlay table and switches voltage and clocks
+  through the VBIOS's command tables; `hw/rdn_watermark.c` sets the line
+  buffer and display watermarks from the mode and the clocks kept in
+  `struct rdn_card`, at every mode set and clock change.
 - `hw/rdn_modeset.c` builds AtomBIOS parameter blocks byte by byte in
   little-endian layout (no structs, no bitfields) and follows the Linux
   call order recorded in `traces/ref-radeon-3.atomcalls.txt`.
