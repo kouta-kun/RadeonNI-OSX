@@ -201,6 +201,11 @@ bool RadeonNI::bringUp()
 		IOLog("RadeonNI: no EDID on the DVI connector (%d)\n", fEdidLen);
 		return false;
 	}
+	/* For ioreg: what the monitor said, when a mode is refused. */
+	setProperty("EDID", fEdid, fEdidLen);
+	IOLog("RadeonNI: EDID %d bytes, %s input, %s signalling\n", fEdidLen,
+	      (fEdid[20] & 0x80) ? "digital" : "analog",
+	      rdn_edid_is_hdmi(fEdid, fEdidLen) ? "HDMI" : "DVI");
 	fModeCount = 0;
 	for (i = 0; i < kMaxModes; i++)
 		if (rdn_edid_detailed_mode(fEdid, i, &fModes[fModeCount])) {
@@ -270,6 +275,11 @@ IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 	      (unsigned long)fFb.bpp, r);
 	if (r)
 		return kIOReturnIOError;
+	/* CRTC 0 as programmed: totals, blanking and sync, horizontal then vertical. */
+	IOLog("RadeonNI: crtc h %08lx %08lx %08lx v %08lx %08lx %08lx\n",
+	      (unsigned long)readReg(0x6e00), (unsigned long)readReg(0x6e04),
+	      (unsigned long)readReg(0x6e08), (unsigned long)readReg(0x6e0c),
+	      (unsigned long)readReg(0x6e14), (unsigned long)readReg(0x6e18));
 	fCurrentMode = id;
 	fCurrentDepth = depth;
 	fModeSet = true;

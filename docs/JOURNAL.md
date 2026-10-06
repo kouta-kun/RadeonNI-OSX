@@ -2004,3 +2004,29 @@ host's previous build, is `~/RadeonNIGLDriver.prev` there). Quake 3 then
 goes full screen with no file and no variable. The QEMU guest's disk
 still has the old bundle: `scripts/gld.sh install-mesa` when it runs
 next.
+
+## 2026-10-05 — G5: a new monitor refuses the mode; diagnostics added, not yet run
+
+**Seen by the user on the G5:** a new monitor shows "the resolution you
+entered isn't supported". They add that the earlier 1366x768 monitor
+reported 1368x768 on its own display.
+
+**Read over ssh** (the G5 is still 192.168.1.128; 192.168.1.158 is the
+host): the boot at 18:50 read this monitor's EDID and found one detailed
+timing, 1920x1080 at 148500 kHz (blanking 280/45, sync 88+44 and 4+5,
+the CEA 1080p60 timing), and set it: PLL fb 88.0 ref 2 post 8, mode set
+returned 0. So the mode is not hardcoded. What is fixed is the output:
+`rdn_modeset.c` always drives UNIPHY link A single link, and chooses
+HDMI or DVI signalling from the EDID's vendor block. The log does not
+say which it chose, and the raw EDID is not visible from user space
+(`AppleDisplay` shows vendor `unkn`, product 0x717, no `IODisplayEDID`:
+IODisplay is not getting our EDID either).
+
+**Changed, built in the guest, packaged, not installed:** the kext
+publishes the EDID as the `EDID` property of `RadeonNI`, logs "digital
+or analog input, HDMI or DVI signalling", and after each mode set logs
+CRTC 0's timing registers (0x6e00 to 0x6e18) as read back.
+`build/RadeonNI-g5.tar.gz` has it. Installing it on the G5 and
+restarting was not permitted to me in this session; the user does it.
+
+**Open:** why the monitor refuses the mode; why IODisplay has no EDID.
