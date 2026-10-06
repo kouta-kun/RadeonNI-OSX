@@ -50,6 +50,15 @@ struct radeon_drm_winsys {
    uint32_t last_done;
    bool have_last_done;
    uint64_t allocated_bytes;
+   /*
+    * RDN_STATS: what is allocated now, by where it is (aperture, beyond)
+    * and by size class (class c: under 4 KB << c), and the most there was.
+    */
+   struct {
+      uint64_t bytes[2], count[2], padding[2];
+      uint64_t class_bytes[2][24], class_count[2][24];
+      uint64_t peak_bytes[2], creates, cache_hits;
+   } mem_stats;
    uint64_t num_flushes;
 };
 

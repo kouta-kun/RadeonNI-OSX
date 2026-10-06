@@ -2848,3 +2848,31 @@ scanout through a temporary texture each frame.
 
 The GeForce 6600 LE has no figure for 4 samples with the default
 textures yet (only with ultra: 5.0 and 3.6).
+
+## 2026-10-06 — Where Doom 3's video memory goes
+
+`RDN_STATS=1` now also accounts for every buffer in the winsys and
+prints, at exit and the first time memory runs out, what was allocated
+at the moment the most was: by region and by size.
+
+| Doom 3 `bench`, most allocated | In the aperture | Beyond it |
+|---|---|---|
+| Default textures | 13 MB | 226 MB |
+| Ultra (uncompressed) | 121 MB in 1679 buffers | 712 MB in 3280 buffers |
+
+Ultra, beyond the aperture: 771 buffers of 256 to 512 KB (225 MB), 190
+of 1 to 2 MB (222 MB), 678 of 64 to 128 KB, 331 of 128 to 256 KB, and so
+on down: the game's textures, uncompressed, with their mipmaps. Lost to
+the kext's 4 KB granularity: 3 MB in each region. In the cache at that
+moment: 28 MB and nothing. So it is not our overhead and not a leak: the
+region beyond the aperture is 768 MB and ultra fills 712 of it; four
+samples at 1920x1080 want about 33 MB of colour, 33 MB of depth and the
+resolve's temporary on top, and the aperture's 222 MB is shared with the
+window server.
+
+The user asked for eviction and GART. Proposed order, waiting for their
+word: GART first (page table and enable registers ported into `hw/` and
+replayed against the trace, pinned pages with bus addresses from the
+kext, a third kind of allocation), then eviction to GART memory on top,
+which needs r600 to take a buffer's new address (a second small patch to
+Mesa).

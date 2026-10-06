@@ -267,6 +267,91 @@ static void rdn_cache_trim(struct radeon_drm_winsys *ws, bool all)
    }
 }
 
+/*
+ * RDN_STATS=1: account for every buffer; at exit and when memory runs out,
+ * say what was allocated at the moment the most was.
+ */
+static uint64_t rdn_stats_most;
+static struct rdn_stats_picture {
+   __typeof__(((struct radeon_drm_winsys *)0)->mem_stats) mem_stats;
+   uint64_t cached_bytes[2];
+} rdn_stats_at_most;
+
+static bool rdn_mem_stats_on(void)
+{
+   static int on = -1;
+
+   if (on < 0)
+      on = getenv("RDN_STATS") != NULL;
+   return on;
+}
+
+static unsigned rdn_size_class(uint64_t size)
+{
+   unsigned c = 0;
+
+   while (c < 23 && size >= (4096ull << c))
+      c++;
+   return c;
+}
+
+static void rdn_mem_stats_account(struct radeon_drm_winsys *ws, uint64_t size,
+                                  bool hidden, int sign)
+{
+   unsigned c = rdn_size_class(size);
+
+   if (!rdn_mem_stats_on())
+      return;
+   /* The kext gives memory out at multiples of 4 KB. */
+   ws->mem_stats.bytes[hidden] += sign * (int64_t)size;
+   ws->mem_stats.count[hidden] += sign;
+   ws->mem_stats.padding[hidden] += sign * (int64_t)(align64(size, 4096) - size);
+   ws->mem_stats.class_bytes[hidden][c] += sign * (int64_t)size;
+   ws->mem_stats.class_count[hidden][c] += sign;
+   if (ws->mem_stats.bytes[hidden] > ws->mem_stats.peak_bytes[hidden])
+      ws->mem_stats.peak_bytes[hidden] = ws->mem_stats.bytes[hidden];
+   /* Keep the picture of the moment the most was allocated. */
+   if (ws->mem_stats.bytes[0] + ws->mem_stats.bytes[1] > rdn_stats_most) {
+      rdn_stats_most = ws->mem_stats.bytes[0] + ws->mem_stats.bytes[1];
+      rdn_stats_at_most.mem_stats = ws->mem_stats;
+      rdn_stats_at_most.cached_bytes[0] = ws->cached_bytes[0];
+      rdn_stats_at_most.cached_bytes[1] = ws->cached_bytes[1];
+   }
+}
+
+static void rdn_mem_stats_print(const char *when)
+{
+   struct rdn_stats_picture *ws = &rdn_stats_at_most;
+   unsigned h, c;
+
+   if (!rdn_stats_most)
+      return;
+   for (h = 0; h < 2; h++) {
+      fprintf(stderr, "rdn memory (%s), %s: %llu MB in %llu buffers, most %llu MB, "
+              "%llu MB lost to 4 KB rounding, %llu MB kept in the cache\n",
+              when, h ? "beyond the aperture" : "in the aperture",
+              (unsigned long long)(ws->mem_stats.bytes[h] >> 20),
+              (unsigned long long)ws->mem_stats.count[h],
+              (unsigned long long)(ws->mem_stats.peak_bytes[h] >> 20),
+              (unsigned long long)(ws->mem_stats.padding[h] >> 20),
+              (unsigned long long)(ws->cached_bytes[h] >> 20));
+      for (c = 0; c < 24; c++)
+         if (ws->mem_stats.class_count[h][c])
+            fprintf(stderr, "rdn memory   under %llu KB: %llu buffers, %llu MB\n",
+                    (unsigned long long)(4ull << c),
+                    (unsigned long long)ws->mem_stats.class_count[h][c],
+                    (unsigned long long)(ws->mem_stats.class_bytes[h][c] >> 20));
+   }
+   fprintf(stderr, "rdn memory: %llu buffers created in all, %llu of them from the cache\n",
+           (unsigned long long)ws->mem_stats.creates,
+           (unsigned long long)ws->mem_stats.cache_hits);
+}
+
+static void rdn_mem_stats_exit(void)
+{
+   rdn_mem_stats_print("when the most was allocated");
+}
+
 static struct pb_buffer_lean *
 rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
                   enum radeon_bo_domain domain, enum radeon_bo_flag flags)
@@ -294,7 +379,9 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
    if (rdn_cache_get(ws, size, alignment, want_hidden, &bo->offset)) {
       bo->hidden = want_hidden;
       r = 0;
+      ws->mem_stats.cache_hits++;
    }
+   ws->mem_stats.creates++;
    if (r && want_hidden) {
       r = ws->dev->alloc_hidden(ws->dev, size, alignment, &bo->offset);
       bo->hidden = !r;
@@ -306,12 +393,20 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
       rdn_cache_trim(ws, true);
       r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
    }
-   if (!r)
+   if (!r) {
       ws->allocated_bytes += size;
+      rdn_mem_stats_account(ws, size, bo->hidden, 1);
+   }
    simple_mtx_unlock(&ws->lock);
    if (r) {
+      static bool said;
+
       fprintf(stderr, "rdn: out of video memory (%llu bytes asked, %llu in use)\n",
               (unsigned long long)size, (unsigned long long)ws->allocated_bytes);
+      if (rdn_mem_stats_on() && !said) {
+         said = true;
+         rdn_mem_stats_print("when it ran out");
+      }
       FREE(bo);
       return NULL;
    }
@@ -339,6 +434,7 @@ static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean 
       simple_mtx_lock(&ws->lock);
       rdn_cache_put(ws, bo->offset, bo->base.size, bo->hidden, bo->last_use);
       ws->allocated_bytes -= bo->base.size;
+      rdn_mem_stats_account(ws, bo->base.size, bo->hidden, -1);
       simple_mtx_unlock(&ws->lock);
    }
    rdn_fence_set(&bo->last_use, NULL);
@@ -957,6 +1053,13 @@ struct radeon_winsys *rdn_winsys_create(struct rdn_device *dev,
    pipe_reference_init(&ws->reference, 1);
    simple_mtx_init(&ws->lock, mtx_plain);
    list_inithead(&ws->pending_ibs);
+   if (rdn_mem_stats_on()) {
+      static bool registered;
+
+      if (!registered)
+         atexit(rdn_mem_stats_exit);
+      registered = true;
+   }
    list_inithead(&ws->cache_all);
    for (unsigned b = 0; b < ARRAY_SIZE(ws->cache_buckets); b++)
       list_inithead(&ws->cache_buckets[b]);
