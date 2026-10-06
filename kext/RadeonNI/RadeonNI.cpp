@@ -9,6 +9,7 @@
 #include <libkern/OSByteOrder.h>
 #include <libkern/libkern.h>
 #include <kern/clock.h>
+#include <pexpert/pexpert.h>
 
 #include "RadeonNI.h"
 #include "RadeonNIAccel.h"
@@ -203,9 +204,10 @@ bool RadeonNI::bringUp()
 	}
 	/* For ioreg: what the monitor said, when a mode is refused. */
 	setProperty("EDID", fEdid, fEdidLen);
-	IOLog("RadeonNI: EDID %d bytes, %s input, %s signalling\n", fEdidLen,
-	      (fEdid[20] & 0x80) ? "digital" : "analog",
-	      rdn_edid_is_hdmi(fEdid, fEdidLen) ? "HDMI" : "DVI");
+	fForceDVI = PE_parse_boot_arg("rdn_dvi", &i) && i;
+	IOLog("RadeonNI: EDID %d bytes, %s input, %s signalling%s\n", fEdidLen,
+	      (fEdid[20] & 0x80) ? "digital" : "analog", useHDMI() ? "HDMI" : "DVI",
+	      fForceDVI ? " (rdn_dvi)" : "");
 	fModeCount = 0;
 	for (i = 0; i < kMaxModes; i++)
 		if (rdn_edid_detailed_mode(fEdid, i, &fModes[fModeCount])) {
@@ -260,6 +262,11 @@ bool RadeonNI::bringUp()
 	return programMode(1, kDepth32) == kIOReturnSuccess;
 }
 
+bool RadeonNI::useHDMI()
+{
+	return !fForceDVI && rdn_edid_is_hdmi(fEdid, fEdidLen);
+}
+
 IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 {
 	const struct rdn_mode *mode = modeForID(id);
@@ -269,17 +276,12 @@ IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 		return kIOReturnUnsupportedMode;
 
 	describeFb(mode, depth, &fFb);
-	r = rdn_modeset(&fCard, mode, &fFb, rdn_edid_is_hdmi(fEdid, fEdidLen));
+	r = rdn_modeset(&fCard, mode, &fFb, useHDMI());
 	IOLog("RadeonNI: mode %ld depth %ld (%ux%u, %lu bpp): %d\n", (long)id,
 	      (long)depth, mode->hdisplay, mode->vdisplay,
 	      (unsigned long)fFb.bpp, r);
 	if (r)
 		return kIOReturnIOError;
-	/* CRTC 0 as programmed: totals, blanking and sync, horizontal then vertical. */
-	IOLog("RadeonNI: crtc h %08lx %08lx %08lx v %08lx %08lx %08lx\n",
-	      (unsigned long)readReg(0x6e00), (unsigned long)readReg(0x6e04),
-	      (unsigned long)readReg(0x6e08), (unsigned long)readReg(0x6e0c),
-	      (unsigned long)readReg(0x6e14), (unsigned long)readReg(0x6e18));
 	fCurrentMode = id;
 	fCurrentDepth = depth;
 	fModeSet = true;

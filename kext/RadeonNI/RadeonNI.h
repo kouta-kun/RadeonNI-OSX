@@ -113,6 +113,8 @@ private:
 	/* The display's EDID and the modes taken from its detailed timings. */
 	UInt8 fEdid[RDN_EDID_MAX_SIZE];
 	int fEdidLen;
+	/* DVI signalling even when the EDID asks for HDMI (boot-arg rdn_dvi=1). */
+	bool fForceDVI;
 	struct rdn_mode fModes[kMaxModes];
 	UInt32 fModeCount;
 	UInt32 fSurfaceBytes;
@@ -137,6 +139,7 @@ private:
 	void describeFb(const struct rdn_mode *mode, IOIndex depth,
 			struct rdn_fb *fb);
 	IOReturn programMode(IODisplayModeID id, IOIndex depth);
+	bool useHDMI();
 	void loadColors();
 	void cleanUp();
 };

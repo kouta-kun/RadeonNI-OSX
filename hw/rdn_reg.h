@@ -99,6 +99,27 @@
 /* Memory address space (evergreend.h) */
 #define MC_VM_FB_LOCATION				0x2024
 
+/* HDMI packets of digital encoder 0 (evergreend.h) */
+#define HDMI_CONTROL					0x7030
+#define		HDMI_DEEP_COLOR_ENABLE				(1 << 24)
+#define		HDMI_DEEP_COLOR_DEPTH_MASK			(3 << 28)
+#define HDMI_VBI_PACKET_CONTROL				0x7040
+#define		HDMI_NULL_SEND					(1 << 0)
+#define		HDMI_GC_SEND					(1 << 4)
+#define		HDMI_GC_CONT					(1 << 5)
+#define HDMI_INFOFRAME_CONTROL0				0x7044
+#define		HDMI_AVI_INFO_SEND				(1 << 0)
+#define		HDMI_AVI_INFO_CONT				(1 << 1)
+#define HDMI_INFOFRAME_CONTROL1				0x7048
+#define		HDMI_AVI_INFO_LINE(x)				(((x) & 0x3f) << 0)
+#define		HDMI_AVI_INFO_LINE_MASK				(0x3f << 0)
+#define HDMI_GC						0x7058
+#define		HDMI_GC_AVMUTE					(1 << 0)
+#define AFMT_AVI_INFO0					0x7084
+#define AFMT_AVI_INFO1					0x7088
+#define AFMT_AVI_INFO2					0x708c
+#define AFMT_AVI_INFO3					0x7090
+
 /* VGA (avivod.h) */
 #define AVIVO_D1VGA_CONTROL				0x0330
 

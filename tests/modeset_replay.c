@@ -48,6 +48,8 @@ static const uint32_t exempt_regs[] = {
 	EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS,
 	EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS_HIGH,
 	EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS_HIGH,
+	/* Linux also enables the audio infoframe here; we have no audio. */
+	HDMI_INFOFRAME_CONTROL0,
 };
 
 static void digest_add(struct mock *m, uint32_t w)

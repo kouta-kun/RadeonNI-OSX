@@ -131,8 +131,9 @@ Driver:
   The DisplayPort connector is not driven at all.
 - **Modes** are only the EDID's detailed timings (two on the test monitor).
   No standard or established timings, no CEA modes, no scaling.
-- **HDMI** signalling is used when the EDID asks for it, without infoframes
-  or audio. The user saw white looking slightly yellow; untested whether
+- **HDMI** signalling is used when the EDID asks for it, with the AVI
+  infoframe (since 2026-10-05) but without audio. The boot argument
+  `rdn_dvi=1` makes the kext use DVI signalling instead. The user saw white looking slightly yellow; untested whether
   that is the monitor or this. `rdn_tool -d modeset` forces DVI signalling.
 - **Line buffer and watermark setup** (Linux's `radeon_bandwidth_update`) is
   not ported.

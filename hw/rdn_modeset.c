@@ -676,6 +676,122 @@ static void load_lut(struct rdn_card *card)
 }
 
 /*
+ * The CEA-861 formats the AVI infoframe can name by number. A mode is one
+ * of them only if every timing and both sync polarities agree; the clock
+ * may be the 1000/1001 variant. The last field is the picture aspect code
+ * (1 is 4:3, 2 is 16:9).
+ */
+static const struct {
+	uint8_t vic, aspect;
+	struct rdn_mode mode;
+} cea_modes[] = {
+	{ 1, 1, { 25175, 640, 656, 752, 800, 480, 490, 492, 525,
+		  RDN_MODE_NHSYNC | RDN_MODE_NVSYNC } },
+	{ 2, 1, { 27000, 720, 736, 798, 858, 480, 489, 495, 525,
+		  RDN_MODE_NHSYNC | RDN_MODE_NVSYNC } },
+	{ 4, 2, { 74250, 1280, 1390, 1430, 1650, 720, 725, 730, 750, 0 } },
+	{ 16, 2, { 148500, 1920, 2008, 2052, 2200, 1080, 1084, 1089, 1125, 0 } },
+	{ 17, 1, { 27000, 720, 732, 796, 864, 576, 581, 586, 625,
+		   RDN_MODE_NHSYNC | RDN_MODE_NVSYNC } },
+	{ 19, 2, { 74250, 1280, 1720, 1760, 1980, 720, 725, 730, 750, 0 } },
+	{ 31, 2, { 148500, 1920, 2448, 2492, 2640, 1080, 1084, 1089, 1125, 0 } },
+};
+
+static bool cea_match(const struct rdn_mode *mode, uint8_t *vic,
+		      uint8_t *aspect)
+{
+	unsigned i;
+
+	for (i = 0; i < sizeof(cea_modes) / sizeof(cea_modes[0]); i++) {
+		const struct rdn_mode *c = &cea_modes[i].mode;
+		uint32_t low = c->clock - c->clock / 1001 - 5;
+
+		if (mode->clock < low || mode->clock > c->clock + 5 ||
+		    mode->hdisplay != c->hdisplay ||
+		    mode->hsync_start != c->hsync_start ||
+		    mode->hsync_end != c->hsync_end ||
+		    mode->htotal != c->htotal ||
+		    mode->vdisplay != c->vdisplay ||
+		    mode->vsync_start != c->vsync_start ||
+		    mode->vsync_end != c->vsync_end ||
+		    mode->vtotal != c->vtotal || mode->flags != c->flags)
+			continue;
+		*vic = cea_modes[i].vic;
+		*aspect = cea_modes[i].aspect;
+		return true;
+	}
+	return false;
+}
+
+/*
+ * The video half of radeon_audio_hdmi_mode_set() for DCE4 and later
+ * (evergreen_hdmi.c): general control packets, no deep colour, and the AVI
+ * infoframe, which tells the display what the picture is. A display may
+ * refuse an HDMI signal that has none. The picture is muted meanwhile.
+ * Not done: audio (clock regeneration, audio packets and infoframe).
+ *
+ * The infoframe is what drm_hdmi_avi_infoframe_from_display_mode() builds:
+ * RGB, underscanned, active picture as coded, the CEA format number when
+ * the mode is one. Its checksum makes header and payload sum to zero.
+ */
+static void hdmi_mode_set(struct rdn_card *card, const struct rdn_mode *mode)
+{
+	uint8_t frame[14], vic = 0, aspect = 0, sum;
+	uint32_t tmp;
+	unsigned i;
+
+	memset(frame, 0, sizeof(frame));
+	cea_match(mode, &vic, &aspect);
+	frame[1] = (1 << 4) | 2;	/* active format valid, underscan */
+	frame[2] = (uint8_t)(aspect << 4) | 8;	/* active as the picture */
+	frame[4] = vic;
+	sum = 0x82 + 2 + 13;		/* type, version, length */
+	for (i = 1; i < sizeof(frame); i++)
+		sum = (uint8_t)(sum + frame[i]);
+	frame[0] = (uint8_t)(0x100 - sum);
+
+	/* dce4_set_mute() */
+	rdn_wreg(card, HDMI_GC, rdn_rreg(card, HDMI_GC) | HDMI_GC_AVMUTE);
+
+	/* dce4_set_vbi_packet() */
+	rdn_wreg(card, HDMI_VBI_PACKET_CONTROL,
+		 HDMI_NULL_SEND | HDMI_GC_SEND | HDMI_GC_CONT);
+
+	/* dce4_hdmi_set_color_depth(), 8 bits per colour */
+	tmp = rdn_rreg(card, HDMI_CONTROL);
+	tmp &= ~(HDMI_DEEP_COLOR_ENABLE | HDMI_DEEP_COLOR_DEPTH_MASK);
+	rdn_wreg(card, HDMI_CONTROL, tmp);
+
+	/* evergreen_set_avi_packet(); the top byte is the version */
+	rdn_wreg(card, AFMT_AVI_INFO0, frame[0] | (frame[1] << 8) |
+		 (frame[2] << 16) | ((uint32_t)frame[3] << 24));
+	rdn_wreg(card, AFMT_AVI_INFO1, frame[4] | (frame[5] << 8) |
+		 (frame[6] << 16) | ((uint32_t)frame[7] << 24));
+	rdn_wreg(card, AFMT_AVI_INFO2, frame[8] | (frame[9] << 8) |
+		 (frame[10] << 16) | ((uint32_t)frame[11] << 24));
+	rdn_wreg(card, AFMT_AVI_INFO3, frame[12] | (frame[13] << 8) |
+		 ((uint32_t)2 << 24));
+	tmp = rdn_rreg(card, HDMI_INFOFRAME_CONTROL1);
+	tmp &= ~HDMI_AVI_INFO_LINE_MASK;
+	rdn_wreg(card, HDMI_INFOFRAME_CONTROL1, tmp | HDMI_AVI_INFO_LINE(2));
+
+	rdn_wreg(card, HDMI_GC, rdn_rreg(card, HDMI_GC) & ~HDMI_GC_AVMUTE);
+
+	rdn_log(card->os, RDN_LOG_INFO, "HDMI AVI infoframe, format %u",
+		(unsigned)vic);
+}
+
+/*
+ * evergreen_hdmi_enable() for a display without audio: send the AVI
+ * infoframe with every frame. With DVI signalling nothing is sent.
+ */
+static void hdmi_enable(struct rdn_card *card, bool enable)
+{
+	rdn_wreg(card, HDMI_INFOFRAME_CONTROL0,
+		 enable ? HDMI_AVI_INFO_SEND | HDMI_AVI_INFO_CONT : 0);
+}
+
+/*
  * atombios_dig_encoder_setup2(), DIG_ENCODER_CONTROL_PARAMETERS_V4.
  * For the panel-mode action Linux tests the panel mode byte as if it were
  * an encoder mode, finds "DisplayPort" (0) and sends a lane count of 0.
@@ -832,6 +948,8 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 
 	/* Encoder prepare: output off while the CRTC comes up */
 	dig_transmitter_setup(card, mode, ATOM_TRANSMITTER_ACTION_DISABLE);
+	if (hdmi)
+		hdmi_mode_set(card, mode);
 
 	/* CRTC commit: on, unblanked, unlocked */
 	enable_crtc(card, ATOM_ENABLE);
@@ -845,6 +963,7 @@ unlock:
 		return r;
 
 	/* Encoder commit */
+	hdmi_enable(card, hdmi);
 	r = dig_encoder_setup(card, mode, ATOM_ENCODER_CMD_SETUP, encoder_mode);
 	if (r)
 		return r;

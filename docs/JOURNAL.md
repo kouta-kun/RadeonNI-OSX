@@ -2030,3 +2030,45 @@ CRTC 0's timing registers (0x6e00 to 0x6e18) as read back.
 restarting was not permitted to me in this session; the user does it.
 
 **Open:** why the monitor refuses the mode; why IODisplay has no EDID.
+
+## 2026-10-05 — G5: the refused mode; HDMI signalling now carries the AVI infoframe
+
+The user allowed the install. With the diagnostic kext on the G5:
+
+- The monitor is a Xiaomi G24i (EDID name "Mi Monitor", vendor XMI,
+  48 to 180 Hz) on the same DVI-to-HDMI adapter as before. Its EDID has
+  an HDMI vendor block and an HDMI Forum block (600 MHz, SCDC), so the
+  kext chose HDMI signalling.
+- The preferred timing is CEA 1080p60 except that the EDID marks vertical
+  sync as negative (flag byte 0x1a). The kext follows the EDID.
+- CRTC 0 read back: H_TOTAL 0x897, blanking 0x00c00840, sync 0x002c0000.
+  The horizontal timing is exactly the mode's, so the "1368x768" the
+  earlier TV showed was its own rounding. (The three vertical values in
+  that log line were read from the wrong offsets and mean nothing; the
+  line is removed again.)
+
+**Conclusion:** the timing is right; what was missing is the known gap
+"HDMI without infoframes". The TV tolerated that, this monitor
+apparently does not.
+
+**Changed.** `rdn_modeset()` with HDMI signalling now does the video half
+of Linux's `radeon_audio_hdmi_mode_set()` and `evergreen_hdmi_enable()`:
+AV mute, general control packets, no deep colour, the AVI infoframe (RGB,
+underscan, the CEA format number only if timing and polarities match a
+CEA format, so 0 for this monitor's mode), unmute, send it every frame.
+No audio: no clock regeneration, audio packets or audio infoframe.
+`modeset_replay` passes on both architectures: our words for 0x7030,
+0x7040, 0x7048, 0x7058 and 0x7084-0x7090 are the ones Linux wrote for
+1366x768; 0x7044 is exempt (Linux also enables the audio infoframe).
+The kext also takes the boot argument `rdn_dvi=1` (DVI signalling), and
+keeps the `EDID` property and the signalling log line.
+
+**On the G5:** installed with `install.sh --accel --hwcursor`, restarted.
+Log: "HDMI signalling", "HDMI AVI infoframe, format 0", mode set 0,
+3D engine up; `~/gl/qe`: Quartz Extreme in use at 1920x1080. The package
+before the diagnostics is `~/RadeonNI-g5.prev2` there.
+
+**Not known:** whether the monitor shows the picture now. The user has to
+look. If not: `sudo nvram boot-args="rdn_dvi=1"` on the G5 and restart.
+Still open: IODisplay does not get our EDID (`AppleDisplay` vendor
+`unkn`).
