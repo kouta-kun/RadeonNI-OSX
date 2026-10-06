@@ -2274,3 +2274,35 @@ registers I dump except the cursor's position.
 **Also measured:** at the boot clocks, with the swap and buffer changes,
 the demo runs at 80.8 fps. So most of the gain is the driver fixes; the
 engine clock is worth 80.8 -> 96.4.
+
+## 2026-10-06 — Engine clock raised with the user watching: the display starves while the GPU works
+
+After the restart the desktop was fine at the boot clocks, and a demo run
+looked right. `rdnuc power performance 3` again (649.96 MHz read back);
+the register dump before and after differs only in the engine PLL (0x600,
+0x608) and the memory arbiter's timing (0x2774, 0x2778, 0x27b0), which
+the VBIOS recomputes. No display or cursor register changed.
+
+**The user, on the monitor at 650 MHz:** "it flickers a bit", with a
+video (60 fps, a Finder window dragged through VNC, which was turned on
+at their request: `kickstart ... -setvnclegacy`, password `tiger`).
+Frame by frame: in single frames a band of the screen, the full width
+and from some row down, shows fine vertical stripes instead of the
+picture, and thin horizontal streaks run from the window's right edge.
+The next frame is right again. The band is not confined to the window,
+so it is not a texture or a half-drawn update: rows of the scanout
+itself are wrong for a frame.
+
+**Reading.** The display controller does not get its rows from memory in
+time while the GPU is busy, and repeats what its line buffer holds. The
+priority marks are zero (PRIORITY_A_CNT 0x6b18 and PRIORITY_B_CNT 0x6b1c
+read 0): we never program the display watermarks, which Linux computes
+from the mode and both clocks (`evergreen_program_watermarks`). At
+100 MHz the GPU asks for little memory and the display keeps up; at
+650 MHz on a 150 MHz memory clock it does not. This morning's stripes
+over the whole screen look like the same failure not recovering, which
+is not shown.
+
+Back to the boot clocks (`rdnuc power boot 3`). The engine clock stays
+there until the watermarks are programmed; the memory clock is the other
+half.
