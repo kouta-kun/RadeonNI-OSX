@@ -140,13 +140,20 @@ cpu = 'ppc7400'
 endian = 'big'
 INI
     shift || true
-    [ -f build-darwin/build.ninja ] || "$root/scripts/darwin.sh" meson setup build-darwin \
+    # RDN_MESA_OPT=2 builds for speed (-O2) into build-darwin-O2 instead
+    # of for size into build-darwin, to compare the two.
+    case "${RDN_MESA_OPT:-s}" in
+    s) bdir=build-darwin; opt=(-Dbuildtype=minsize) ;;
+    2) bdir=build-darwin-O2; opt=(-Dbuildtype=release -Doptimization=2) ;;
+    *) echo "RDN_MESA_OPT is s or 2" >&2; exit 2 ;;
+    esac
+    [ -f $bdir/build.ninja ] || "$root/scripts/darwin.sh" meson setup $bdir \
         "${common[@]}" --cross-file "$tp/mesa-darwin-cross.ini" \
         -Dxmlconfig=disabled -Dshader-cache=disabled \
         -Dzlib:default_library=static -Dexpat:default_library=static \
-        -Dbuildtype=minsize -Db_ndebug=true \
+        "${opt[@]}" -Db_ndebug=true \
         --wrap-mode=nodownload
-    "$root/scripts/darwin.sh" ninja -C build-darwin "$@"
+    "$root/scripts/darwin.sh" ninja -C $bdir "$@"
     ;;
 *)
     echo "usage: $0 [x86|ppc|darwin]" >&2
