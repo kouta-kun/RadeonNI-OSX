@@ -4,6 +4,11 @@
 #
 #   d3save.sh <save name> [environment assignments for the game]
 #
+# D3ARGS in the environment of this script is put on the game's command
+# line before the save is loaded (settings: "+set r_multiSamples 4").
+# The game writes changed settings to its config when it quits: keep a
+# copy of DoomConfig.cfg if they are not meant to stay.
+#
 # The save is made in the game (console: saveGame <name>) at a place worth
 # measuring. Works with any graphics card: nothing here is ours.
 #
@@ -15,7 +20,7 @@ L="$D/qconsole.log"
 printf 'wait 60\necho MARK1\nwait 300\necho MARK2\nwait 5\nquit\n' > "$D/d3save.cfg"
 rm -f "$L"
 cd ~/Desktop/Doom\ 3\ Demo
-env A=1 "$@" ./Doom\ 3\ Demo.app/Contents/MacOS/Doom\ 3\ Demo +set r_mode -1 +set r_customWidth 1920 +set r_customHeight 1080 +set r_fullscreen 1 +set r_aspectRatio 1 +set logFile 2 +loadGame "$save" +exec d3save.cfg > /tmp/d3.out 2>&1 &
+env A=1 "$@" ./Doom\ 3\ Demo.app/Contents/MacOS/Doom\ 3\ Demo +set r_mode -1 +set r_customWidth 1920 +set r_customHeight 1080 +set r_fullscreen 1 +set r_aspectRatio 1 +set logFile 2 $D3ARGS +loadGame "$save" +exec d3save.cfg > /tmp/d3.out 2>&1 &
 perl -MTime::HiRes=time,sleep -e '
   my ($log, $frames) = @ARGV; my ($t0, $t1); my $deadline = time + 300;
   while (time < $deadline) {

@@ -2761,3 +2761,20 @@ kernel under OpenGL calls 7 % and 5 %, the rest Doom's own code, which is
 most of `bench2`. So the GeForce is not waiting for its GPU in these
 scenes either; both cards are limited by the processor, and the
 difference between them is how much of it the driver takes.
+
+## 2026-10-06 — Doom 3 quality settings on the GeForce 6600 LE
+
+The demo's config is at the game's defaults: compressed textures
+(`image_useCompression 1`, `image_useNormalCompression 2`), anisotropy
+1, no antialiasing, shadows on, 1920x1080. `tools/guest/d3quality.sh`
+runs both saves at three settings (through `D3ARGS` of `d3save.sh`) and
+puts the user's config back after each run.
+
+| GeForce 6600 LE | bench | bench2 |
+|---|---|---|
+| As configured | 26.1 | 18.7 |
+| Ultra (no texture compression, anisotropy 8) | 23.1 | 16.0 |
+| Ultra and `r_multiSamples 4` | 5.0 | 3.6 |
+
+With antialiasing the GeForce is limited by its GPU at last. The Radeon
+has not run these yet (the GeForce is in the machine).
