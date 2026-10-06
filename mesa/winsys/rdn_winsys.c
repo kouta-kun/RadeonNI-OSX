@@ -40,6 +40,13 @@ uint32_t rdn_shim_tiling_config;
 /* Command words per stream; r600 flushes itself well below this. */
 #define RDN_CS_MAX_DW (64 * 1024)
 
+/*
+ * Where a buffer's memory is: video memory the CPU maps through the
+ * aperture, video memory beyond it, or the program's own memory, which
+ * the GPU reaches through the GART.
+ */
+enum rdn_place { RDN_VISIBLE, RDN_HIDDEN, RDN_GART, RDN_REGIONS };
+
 struct rdn_fence {
    struct pipe_reference reference;
    uint32_t number;
@@ -57,8 +64,7 @@ struct rdn_bo {
    struct rdn_fence *last_write;
    /* Memory that is not from the allocator (the screen). */
    bool foreign;
-   /* Beyond the aperture: the CPU cannot map it. */
-   bool hidden;
+   enum rdn_place region;
 };
 
 struct rdn_cs_buffer {
@@ -82,7 +88,7 @@ struct rdn_cs {
 struct rdn_cached {
    struct list_head all, bucket;
    uint64_t offset, size;
-   bool hidden;
+   enum rdn_place region;
    /* The last command buffer that used the memory. */
    struct rdn_fence *fence;
    /* ws->num_flushes when it was let go of. */
@@ -183,19 +189,29 @@ static void rdn_ws_fence_reference(struct radeon_winsys *rws,
  * is called with the lock held.
  */
 #define RDN_CACHE_FLUSHES 128
-static const uint64_t RDN_CACHE_BYTES[2] = { 32ull << 20, 128ull << 20 };
+static const uint64_t RDN_CACHE_BYTES[RDN_REGIONS] = { 32ull << 20, 128ull << 20, 64ull << 20 };
 
 static struct list_head *rdn_cache_bucket(struct radeon_drm_winsys *ws,
-                                          uint64_t size, bool hidden)
+                                          uint64_t size, enum rdn_place region)
 {
-   unsigned h = (unsigned)(size >> 8) ^ (unsigned)(size >> 15) ^ (hidden ? 0x55 : 0);
+   unsigned h = (unsigned)(size >> 8) ^ (unsigned)(size >> 15) ^ (region * 0x55);
 
    return &ws->cache_buckets[h % ARRAY_SIZE(ws->cache_buckets)];
 }
 
+/* Give memory back to where it came from. */
+static void rdn_region_free(struct radeon_drm_winsys *ws, enum rdn_place region,
+                            uint64_t offset)
+{
+   if (region == RDN_GART)
+      ws->dev->gart_free(ws->dev, offset);
+   else
+      ws->dev->free(ws->dev, offset);
+}
+
 static void rdn_cache_drop(struct radeon_drm_winsys *ws, struct rdn_cached *c)
 {
-   ws->cached_bytes[c->hidden] -= c->size;
+   ws->cached_bytes[c->region] -= c->size;
    rdn_fence_set(&c->fence, NULL);
    list_del(&c->all);
    list_del(&c->bucket);
@@ -204,36 +220,36 @@ static void rdn_cache_drop(struct radeon_drm_winsys *ws, struct rdn_cached *c)
 
 /* Keep memory for later, or give it back at once if that cannot be noted. */
 static void rdn_cache_put(struct radeon_drm_winsys *ws, uint64_t offset,
-                          uint64_t size, bool hidden, struct rdn_fence *fence)
+                          uint64_t size, enum rdn_place region, struct rdn_fence *fence)
 {
    struct rdn_cached *c = CALLOC_STRUCT(rdn_cached);
 
    if (!c) {
       rdn_fence_wait(ws, fence, OS_TIMEOUT_INFINITE);
-      ws->dev->free(ws->dev, offset);
+      rdn_region_free(ws, region, offset);
       return;
    }
    c->offset = offset;
    c->size = size;
-   c->hidden = hidden;
+   c->region = region;
    c->stamp = ws->num_flushes;
    rdn_fence_set(&c->fence, fence);
    list_addtail(&c->all, &ws->cache_all);
-   list_addtail(&c->bucket, rdn_cache_bucket(ws, size, hidden));
-   ws->cached_bytes[hidden] += size;
+   list_addtail(&c->bucket, rdn_cache_bucket(ws, size, region));
+   ws->cached_bytes[region] += size;
 }
 
 /* Memory of exactly this size that the GPU has finished with, if any. */
 static bool rdn_cache_get(struct radeon_drm_winsys *ws, uint64_t size,
-                          uint64_t alignment, bool hidden, uint64_t *offset)
+                          uint64_t alignment, enum rdn_place region, uint64_t *offset)
 {
-   struct list_head *bucket = rdn_cache_bucket(ws, size, hidden);
+   struct list_head *bucket = rdn_cache_bucket(ws, size, region);
    unsigned looked = 0;
 
    list_for_each_entry_safe(struct rdn_cached, c, bucket, bucket) {
       if (++looked > 32)
          break;
-      if (c->size != size || c->hidden != hidden || (c->offset & (alignment - 1)))
+      if (c->size != size || c->region != region || (c->offset & (alignment - 1)))
          continue;
       /* The oldest first: if the GPU still has that one, it has the rest. */
       if (!rdn_fence_wait(ws, c->fence, 0))
@@ -253,7 +269,7 @@ static void rdn_cache_trim(struct radeon_drm_winsys *ws, bool all)
 {
    list_for_each_entry_safe(struct rdn_cached, c, &ws->cache_all, all) {
       bool old = ws->num_flushes - c->stamp > RDN_CACHE_FLUSHES;
-      bool much = ws->cached_bytes[c->hidden] > RDN_CACHE_BYTES[c->hidden];
+      bool much = ws->cached_bytes[c->region] > RDN_CACHE_BYTES[c->region];
 
       if (!all && !old && !much)
          break;
@@ -262,7 +278,7 @@ static void rdn_cache_trim(struct radeon_drm_winsys *ws, bool all)
             continue;
          break;
       }
-      ws->dev->free(ws->dev, c->offset);
+      rdn_region_free(ws, c->region, c->offset);
       rdn_cache_drop(ws, c);
    }
 }
@@ -274,7 +290,7 @@ static void rdn_cache_trim(struct radeon_drm_winsys *ws, bool all)
 static uint64_t rdn_stats_most;
 static struct rdn_stats_picture {
    __typeof__(((struct radeon_drm_winsys *)0)->mem_stats) mem_stats;
-   uint64_t cached_bytes[2];
+   uint64_t cached_bytes[RDN_REGIONS];
 } rdn_stats_at_most;
 
 static bool rdn_mem_stats_on(void)
@@ -296,26 +312,27 @@ static unsigned rdn_size_class(uint64_t size)
 }
 
 static void rdn_mem_stats_account(struct radeon_drm_winsys *ws, uint64_t size,
-                                  bool hidden, int sign)
+                                  enum rdn_place region, int sign)
 {
    unsigned c = rdn_size_class(size);
 
    if (!rdn_mem_stats_on())
       return;
    /* The kext gives memory out at multiples of 4 KB. */
-   ws->mem_stats.bytes[hidden] += sign * (int64_t)size;
-   ws->mem_stats.count[hidden] += sign;
-   ws->mem_stats.padding[hidden] += sign * (int64_t)(align64(size, 4096) - size);
-   ws->mem_stats.class_bytes[hidden][c] += sign * (int64_t)size;
-   ws->mem_stats.class_count[hidden][c] += sign;
-   if (ws->mem_stats.bytes[hidden] > ws->mem_stats.peak_bytes[hidden])
-      ws->mem_stats.peak_bytes[hidden] = ws->mem_stats.bytes[hidden];
+   ws->mem_stats.bytes[region] += sign * (int64_t)size;
+   ws->mem_stats.count[region] += sign;
+   ws->mem_stats.padding[region] += sign * (int64_t)(align64(size, 4096) - size);
+   ws->mem_stats.class_bytes[region][c] += sign * (int64_t)size;
+   ws->mem_stats.class_count[region][c] += sign;
+   if (ws->mem_stats.bytes[region] > ws->mem_stats.peak_bytes[region])
+      ws->mem_stats.peak_bytes[region] = ws->mem_stats.bytes[region];
    /* Keep the picture of the moment the most was allocated. */
-   if (ws->mem_stats.bytes[0] + ws->mem_stats.bytes[1] > rdn_stats_most) {
-      rdn_stats_most = ws->mem_stats.bytes[0] + ws->mem_stats.bytes[1];
+   if (ws->mem_stats.bytes[0] + ws->mem_stats.bytes[1] + ws->mem_stats.bytes[2] > rdn_stats_most) {
+      rdn_stats_most = ws->mem_stats.bytes[0] + ws->mem_stats.bytes[1] + ws->mem_stats.bytes[2];
       rdn_stats_at_most.mem_stats = ws->mem_stats;
       rdn_stats_at_most.cached_bytes[0] = ws->cached_bytes[0];
       rdn_stats_at_most.cached_bytes[1] = ws->cached_bytes[1];
+      rdn_stats_at_most.cached_bytes[2] = ws->cached_bytes[2];
    }
 }
 
@@ -326,10 +343,14 @@ static void rdn_mem_stats_print(const char *when)
 
    if (!rdn_stats_most)
       return;
-   for (h = 0; h < 2; h++) {
+   static const char *const where[RDN_REGIONS] = {
+      "in the aperture", "beyond the aperture", "in system memory (GART)"
+   };
+
+   for (h = 0; h < RDN_REGIONS; h++) {
       fprintf(stderr, "rdn memory (%s), %s: %llu MB in %llu buffers, most %llu MB, "
               "%llu MB lost to 4 KB rounding, %llu MB kept in the cache\n",
-              when, h ? "beyond the aperture" : "in the aperture",
+              when, where[h],
               (unsigned long long)(ws->mem_stats.bytes[h] >> 20),
               (unsigned long long)ws->mem_stats.count[h],
               (unsigned long long)(ws->mem_stats.peak_bytes[h] >> 20),
@@ -358,7 +379,7 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
 {
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
    struct rdn_bo *bo = CALLOC_STRUCT(rdn_bo);
-   bool want_hidden;
+   enum rdn_place want;
    int r;
 
    if (!bo)
@@ -372,30 +393,50 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
    /*
     * What r600 will never map (tiled textures and render targets, which
     * it fills through a staging copy) goes to the video memory beyond the
-    * aperture, if the device has any, and leaves the rest for buffers.
+    * aperture, if the device has any. What it asks for in the GTT domain
+    * alone (buffers the CPU keeps writing: vertices, constants, staging
+    * copies) goes to the program's own memory behind the GART, if that is
+    * on: ordinary cached memory instead of the aperture. The rest, and
+    * whatever does not fit where it should, goes in the aperture.
     */
-   want_hidden = (flags & RADEON_FLAG_NO_CPU_ACCESS) && ws->dev->alloc_hidden;
+   if ((flags & RADEON_FLAG_NO_CPU_ACCESS) && ws->dev->alloc_hidden)
+      want = RDN_HIDDEN;
+   else if (domain == RADEON_DOMAIN_GTT && ws->dev->gart_alloc)
+      want = RDN_GART;
+   else
+      want = RDN_VISIBLE;
    r = -1;
-   if (rdn_cache_get(ws, size, alignment, want_hidden, &bo->offset)) {
-      bo->hidden = want_hidden;
+   if (rdn_cache_get(ws, size, alignment, want, &bo->offset)) {
+      bo->region = want;
       r = 0;
       ws->mem_stats.cache_hits++;
    }
    ws->mem_stats.creates++;
-   if (r && want_hidden) {
+   if (r && want == RDN_HIDDEN) {
       r = ws->dev->alloc_hidden(ws->dev, size, alignment, &bo->offset);
-      bo->hidden = !r;
+      if (!r)
+         bo->region = RDN_HIDDEN;
    }
-   if (r)
+   if (r && want == RDN_GART) {
+      r = ws->dev->gart_alloc(ws->dev, size, alignment, &bo->offset);
+      if (!r)
+         bo->region = RDN_GART;
+   }
+   if (r) {
       r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
+      if (!r)
+         bo->region = RDN_VISIBLE;
+   }
    if (r) {
       /* What is kept for later may make room. */
       rdn_cache_trim(ws, true);
       r = ws->dev->alloc(ws->dev, size, alignment, &bo->offset);
+      if (!r)
+         bo->region = RDN_VISIBLE;
    }
    if (!r) {
       ws->allocated_bytes += size;
-      rdn_mem_stats_account(ws, size, bo->hidden, 1);
+      rdn_mem_stats_account(ws, size, bo->region, 1);
    }
    simple_mtx_unlock(&ws->lock);
    if (r) {
@@ -432,9 +473,9 @@ static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean 
        * memory is kept, with the fence after which it is free.
        */
       simple_mtx_lock(&ws->lock);
-      rdn_cache_put(ws, bo->offset, bo->base.size, bo->hidden, bo->last_use);
+      rdn_cache_put(ws, bo->offset, bo->base.size, bo->region, bo->last_use);
       ws->allocated_bytes -= bo->base.size;
-      rdn_mem_stats_account(ws, bo->base.size, bo->hidden, -1);
+      rdn_mem_stats_account(ws, bo->base.size, bo->region, -1);
       simple_mtx_unlock(&ws->lock);
    }
    rdn_fence_set(&bo->last_use, NULL);
@@ -495,7 +536,7 @@ static void *rdn_buffer_map(struct radeon_winsys *rws, struct pb_buffer_lean *bu
    struct rdn_bo *bo = rdn_bo(buf);
    struct rdn_cs *cs = rcs ? (struct rdn_cs *)rcs->priv : NULL;
 
-   if (bo->hidden)
+   if (bo->region == RDN_HIDDEN)
       return NULL;
    if (!(usage & PIPE_MAP_UNSYNCHRONIZED)) {
       /* Reading needs pending writes done; writing needs every use done. */
@@ -516,8 +557,12 @@ static void *rdn_buffer_map(struct radeon_winsys *rws, struct pb_buffer_lean *bu
             cs->flush_cs(cs->flush_data, RADEON_FLUSH_START_NEXT_GFX_IB_NOW, NULL);
          rdn_buffer_wait(rws, buf, OS_TIMEOUT_INFINITE, wait_usage);
       }
-      ws->dev->sync_for_cpu(ws->dev);
+      /* The aperture's cache of host accesses; system memory has none. */
+      if (bo->region != RDN_GART)
+         ws->dev->sync_for_cpu(ws->dev);
    }
+   if (bo->region == RDN_GART)
+      return ws->dev->gart_cpu(ws->dev, bo->offset);
    return (uint8_t *)ws->dev->aperture + bo->offset;
 }
 
@@ -599,11 +644,15 @@ static uint64_t rdn_buffer_get_virtual_address(struct pb_buffer_lean *buf)
 {
    /* Filled in at creation of the winsys: see rdn_winsys_create(). */
    extern uint64_t rdn_vram_gpu_base;
+   extern uint64_t rdn_gart_gpu_base;
 
+   if (rdn_bo(buf)->region == RDN_GART)
+      return rdn_gart_gpu_base + rdn_bo(buf)->offset;
    return rdn_vram_gpu_base + rdn_bo(buf)->offset;
 }
 
 uint64_t rdn_vram_gpu_base;
+uint64_t rdn_gart_gpu_base;
 
 static unsigned rdn_buffer_get_reloc_offset(struct pb_buffer_lean *buf)
 {
@@ -776,7 +825,7 @@ static void rdn_reap_ibs(struct radeon_drm_winsys *ws, bool wait)
    list_for_each_entry_safe(struct rdn_pending_ib, ib, &ws->pending_ibs, list) {
       if (!rdn_fence_wait(ws, ib->fence, wait ? OS_TIMEOUT_INFINITE : 0))
          break;
-      rdn_cache_put(ws, ib->offset, ib->size, false, ib->fence);
+      rdn_cache_put(ws, ib->offset, ib->size, RDN_VISIBLE, ib->fence);
       rdn_fence_set(&ib->fence, NULL);
       list_del(&ib->list);
       FREE(ib);
@@ -841,7 +890,7 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
    rdn_reap_ibs(ws, false);
    rdn_cache_trim(ws, false);
    rdn_throttle(ws);
-   r = rdn_cache_get(ws, ib_size, 4096, false, &offset) ? 0 :
+   r = rdn_cache_get(ws, ib_size, 4096, RDN_VISIBLE, &offset) ? 0 :
        ws->dev->alloc(ws->dev, ib_size, 4096, &offset);
    if (r) {
       /* Wait for the earlier ones to finish and try once more. */
@@ -1064,6 +1113,7 @@ struct radeon_winsys *rdn_winsys_create(struct rdn_device *dev,
    for (unsigned b = 0; b < ARRAY_SIZE(ws->cache_buckets); b++)
       list_inithead(&ws->cache_buckets[b]);
    rdn_vram_gpu_base = dev->info.vram_gpu_base;
+   rdn_gart_gpu_base = dev->info.gart_gpu_base;
    rdn_init_info(ws);
 
    rdn_shim_device_id = dev->info.pci_device_id;

@@ -79,6 +79,24 @@ enum {
 	RDN_UC_ALLOC_HIDDEN,
 	/* scalars out: offset and size of the region RDN_UC_ALLOC_HIDDEN uses */
 	RDN_UC_HIDDEN_INFO,
+	/*
+	 * scalars out: 1 if the GART is on, the GPU address its range starts
+	 * at (low 32 bits; it is below 4 GB) and the range's size in pages of
+	 * 4 KB.
+	 */
+	RDN_UC_GART_INFO,
+	/*
+	 * scalars in: address and size in bytes of memory of the calling
+	 * program, both multiples of 4 KB; out: where the GPU finds it, as a
+	 * byte offset into the GART's range. The pages are wired and stay so
+	 * until RDN_UC_GART_UNBIND or the client's end. The program reads
+	 * and writes the memory as any other; what the GPU reads there is
+	 * what the bytes are (the same as video memory seen through the
+	 * aperture).
+	 */
+	RDN_UC_GART_BIND,
+	/* scalar in: the offset RDN_UC_GART_BIND gave. The GPU must be done with it. */
+	RDN_UC_GART_UNBIND,
 	RDN_UC_METHOD_COUNT
 };
 

@@ -16,10 +16,27 @@
 
 #include "rdn_device.h"
 #include "hw/rdn_user.h"
+#include "hw/rdn_mem.h"
+
+/*
+ * Memory behind the GART comes in chunks: a piece of this program's own
+ * address space, wired and entered in the page table by the kext with one
+ * call, and divided up here.
+ */
+#define GART_CHUNK_BYTES	(16u << 20)
+#define GART_CHUNKS		48
+
+struct gart_chunk {
+	uint8_t *cpu;
+	uint32_t offset, size;		/* in the GART's range */
+	struct rdn_mem mem;
+};
 
 struct darwin_device {
 	struct rdn_device base;
 	io_connect_t conn;
+	struct rdn_os mem_os;
+	struct gart_chunk gart[GART_CHUNKS];
 };
 
 static int dev_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
@@ -48,6 +65,88 @@ static int dev_alloc_hidden(struct rdn_device *dev, uint64_t size, uint64_t alig
 		return -1;
 	*offset = (uint32_t)off;
 	return 0;
+}
+
+static void *mem_os_alloc(void *cookie, size_t size)
+{
+	(void)cookie;
+	return calloc(1, size);
+}
+
+static void mem_os_free(void *cookie, void *ptr)
+{
+	(void)cookie;
+	free(ptr);
+}
+
+/* A new chunk of at least `size` bytes in a free slot; NULL if there is none. */
+static struct gart_chunk *gart_new_chunk(struct darwin_device *d, uint64_t size)
+{
+	vm_address_t addr = 0;
+	vm_size_t bytes = size > GART_CHUNK_BYTES ?
+		(vm_size_t)((size + 4095) & ~4095ull) : GART_CHUNK_BYTES;
+	struct gart_chunk *c = NULL;
+	int i, offset = 0;
+
+	for (i = 0; i < GART_CHUNKS && !c; i++)
+		if (!d->gart[i].cpu)
+			c = &d->gart[i];
+	if (!c || vm_allocate(mach_task_self(), &addr, bytes, VM_FLAGS_ANYWHERE))
+		return NULL;
+	if (IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_BIND, 2, 1,
+					  (int)addr, (int)bytes, &offset) ||
+	    rdn_mem_init(&c->mem, &d->mem_os, (uint32_t)offset, bytes)) {
+		vm_deallocate(mach_task_self(), addr, bytes);
+		return NULL;
+	}
+	c->cpu = (uint8_t *)addr;
+	c->offset = (uint32_t)offset;
+	c->size = (uint32_t)bytes;
+	return c;
+}
+
+static int dev_gart_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
+			  uint64_t *offset)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	struct gart_chunk *c;
+	int i;
+
+	if (size > (256u << 20))
+		return -1;
+	for (i = 0; i < GART_CHUNKS; i++)
+		if (d->gart[i].cpu && size <= d->gart[i].size &&
+		    !rdn_mem_alloc(&d->gart[i].mem, size, align, offset))
+			return 0;
+	c = gart_new_chunk(d, size);
+	return c ? rdn_mem_alloc(&c->mem, size, align, offset) : -1;
+}
+
+static struct gart_chunk *gart_chunk_of(struct darwin_device *d, uint64_t offset)
+{
+	int i;
+
+	for (i = 0; i < GART_CHUNKS; i++)
+		if (d->gart[i].cpu && offset >= d->gart[i].offset &&
+		    offset - d->gart[i].offset < d->gart[i].size)
+			return &d->gart[i];
+	return NULL;
+}
+
+static void dev_gart_free(struct rdn_device *dev, uint64_t offset)
+{
+	struct gart_chunk *c = gart_chunk_of((struct darwin_device *)dev, offset);
+
+	/* The chunk stays bound: the next buffers will want it. */
+	if (c)
+		rdn_mem_free(&c->mem, offset);
+}
+
+static void *dev_gart_cpu(struct rdn_device *dev, uint64_t offset)
+{
+	struct gart_chunk *c = gart_chunk_of((struct darwin_device *)dev, offset);
+
+	return c ? c->cpu + (offset - c->offset) : NULL;
 }
 
 static void dev_free(struct rdn_device *dev, uint64_t offset)
@@ -308,6 +407,21 @@ struct rdn_device *rdn_device_open(void)
 	d->base.info.vram_gpu_base = ((uint64_t)info.vram_gpu_base_hi << 32) |
 				     info.vram_gpu_base_lo;
 	d->base.info.vram_size = info.heap_size;
+	/* The GART, if the kext has it on (boot argument rdn_gart=1). */
+	{
+		int on = 0, gpu_start = 0, pages = 0;
+
+		d->mem_os.alloc = mem_os_alloc;
+		d->mem_os.free = mem_os_free;
+		if (!getenv("RDN_NO_GART") &&
+		    !IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_INFO, 0, 3,
+						   &on, &gpu_start, &pages) && on) {
+			d->base.info.gart_gpu_base = (uint32_t)gpu_start;
+			d->base.gart_alloc = dev_gart_alloc;
+			d->base.gart_free = dev_gart_free;
+			d->base.gart_cpu = dev_gart_cpu;
+		}
+	}
 	/* An older kext has no such method: then there is no hidden memory. */
 	{
 		int hidden_offset = 0, hidden_size = 0;

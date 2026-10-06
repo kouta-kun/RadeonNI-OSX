@@ -306,10 +306,125 @@ void RadeonNIAccel::startGart(void)
 		if (r)
 			rdn_gart_disable(&fGart);
 	}
+	/* Page 0 stays the test page; programs get the rest. */
+	if (!r && rdn_mem_init(&fGartSpace, fFramebuffer->os(), RDN_GART_PAGE_SIZE,
+			       (uint64_t)(RDN_GART_PAGES - 1) * RDN_GART_PAGE_SIZE)) {
+		rdn_gart_disable(&fGart);
+		r = -1;
+	}
 	IOLockUnlock(fLock);
 	IOLog("RadeonNI: GART: table at 0x%lx, dummy page at bus 0x%lx, test page at bus 0x%lx: %s (%d)\n",
 	      fGartTable, dummyBus, testBus,
 	      r ? "FAILED, switched off" : "the GPU ran a command buffer from system memory", r);
+}
+
+void RadeonNIAccel::gartInfo(UInt32 *on, UInt32 *gpuStart, UInt32 *pages)
+{
+	*on = fGart.ready ? 1 : 0;
+	*gpuStart = (UInt32)RDN_GART_GPU_START;
+	*pages = RDN_GART_PAGES;
+}
+
+/*
+ * Wire a piece of a program's memory and enter its pages in the table.
+ * The memory stays the program's: no kernel address space is spent on it,
+ * which on this 32-bit kernel would not reach far.
+ */
+IOReturn RadeonNIAccel::gartBind(task_t task, UInt32 address, UInt32 size,
+				 void *owner, UInt32 *offset)
+{
+	IOMemoryDescriptor *memory;
+	uint64_t at = 0;
+	UInt32 slot, done;
+
+	if (!fGart.ready)
+		return kIOReturnNotReady;
+	if (!size || (address & (RDN_GART_PAGE_SIZE - 1)) ||
+	    (size & (RDN_GART_PAGE_SIZE - 1)))
+		return kIOReturnBadArgument;
+	memory = IOMemoryDescriptor::withAddress((vm_address_t)address, size,
+						 kIODirectionOutIn, task);
+	if (!memory)
+		return kIOReturnNoMemory;
+	if (memory->prepare() != kIOReturnSuccess) {
+		memory->release();
+		return kIOReturnVMError;
+	}
+
+	IOLockLock(fLock);
+	for (slot = 0; slot < kMaxGartBindings && fGartBound[slot].memory; slot++)
+		;
+	if (slot == kMaxGartBindings ||
+	    rdn_mem_alloc(&fGartSpace, size, RDN_GART_PAGE_SIZE, &at)) {
+		IOLockUnlock(fLock);
+		memory->complete();
+		memory->release();
+		return kIOReturnNoResources;
+	}
+	for (done = 0; done < size; done += RDN_GART_PAGE_SIZE) {
+		IOByteCount length = 0;
+		IOPhysicalAddress bus = memory->getPhysicalSegment(done, &length);
+
+		if (!bus)
+			break;
+		rdn_gart_set_page(&fGart, (UInt32)((at + done) / RDN_GART_PAGE_SIZE), bus);
+	}
+	if (done < size) {
+		/* A page without a bus address: take everything back. */
+		while (done) {
+			done -= RDN_GART_PAGE_SIZE;
+			rdn_gart_clear_page(&fGart, (UInt32)((at + done) / RDN_GART_PAGE_SIZE));
+		}
+		rdn_gart_flush(&fGart);
+		rdn_mem_free(&fGartSpace, at);
+		IOLockUnlock(fLock);
+		memory->complete();
+		memory->release();
+		return kIOReturnVMError;
+	}
+	rdn_gart_flush(&fGart);
+	fGartBound[slot].memory = memory;
+	fGartBound[slot].offset = (UInt32)at;
+	fGartBound[slot].size = size;
+	fGartBound[slot].owner = owner;
+	IOLockUnlock(fLock);
+	*offset = (UInt32)at;
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIAccel::gartUnbind(UInt32 offset, void *owner)
+{
+	IOMemoryDescriptor *memory = 0;
+	UInt32 slot, done;
+
+	IOLockLock(fLock);
+	for (slot = 0; slot < kMaxGartBindings; slot++)
+		if (fGartBound[slot].memory && fGartBound[slot].offset == offset &&
+		    fGartBound[slot].owner == owner)
+			break;
+	if (slot < kMaxGartBindings) {
+		for (done = 0; done < fGartBound[slot].size; done += RDN_GART_PAGE_SIZE)
+			rdn_gart_clear_page(&fGart, (offset + done) / RDN_GART_PAGE_SIZE);
+		rdn_gart_flush(&fGart);
+		rdn_mem_free(&fGartSpace, offset);
+		memory = fGartBound[slot].memory;
+		fGartBound[slot].memory = 0;
+	}
+	IOLockUnlock(fLock);
+	if (!memory)
+		return kIOReturnBadArgument;
+	memory->complete();
+	memory->release();
+	return kIOReturnSuccess;
+}
+
+void RadeonNIAccel::gartUnbindAll(void *owner)
+{
+	UInt32 slot;
+
+	for (slot = 0; slot < kMaxGartBindings; slot++)
+		if (fGartBound[slot].memory && fGartBound[slot].owner == owner)
+			gartUnbind(fGartBound[slot].offset, owner);
 }
 
 void RadeonNIAccel::retire(IOService *provider)
@@ -739,6 +854,7 @@ bool RadeonNIUserClient::initWithTask(task_t owningTask, void *securityID,
 {
 	if (!super::initWithTask(owningTask, securityID, type))
 		return false;
+	fTask = owningTask;
 	fOffsets = (UInt32 *)IOMalloc(kMaxAllocations * sizeof(UInt32));
 	fCount = 0;
 	return fOffsets != 0;
@@ -763,6 +879,7 @@ void RadeonNIUserClient::freeAll(void)
 	for (i = 0; i < fCount; i++)
 		fAccel->freeVram(fOffsets[i]);
 	fCount = 0;
+	fAccel->gartUnbindAll(this);
 }
 
 IOReturn RadeonNIUserClient::clientClose(void)
@@ -819,6 +936,12 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 2, 1 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodHiddenInfo,
 		  kIOUCScalarIScalarO, 0, 2 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodGartInfo,
+		  kIOUCScalarIScalarO, 0, 3 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodGartBind,
+		  kIOUCScalarIScalarO, 2, 1 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodGartUnbind,
+		  kIOUCScalarIScalarO, 1, 0 },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -884,6 +1007,28 @@ IOReturn RadeonNIUserClient::methodHiddenInfo(UInt32 *offset, UInt32 *size)
 {
 	fAccel->hiddenInfo(offset, size);
 	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodGartInfo(UInt32 *on, UInt32 *gpuStart,
+					    UInt32 *pages)
+{
+	fAccel->gartInfo(on, gpuStart, pages);
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIUserClient::methodGartBind(UInt32 address, UInt32 size,
+					    UInt32 *offset)
+{
+	return fAccel->gartBind(fTask, address, size, this, offset);
+}
+
+IOReturn RadeonNIUserClient::methodGartUnbind(UInt32 offset)
+{
+	/*
+	 * The caller has waited for the GPU to be done with the memory. If
+	 * it has not, the GPU reads the dummy page from here on: harmless.
+	 */
+	return fAccel->gartUnbind(offset, this);
 }
 
 IOReturn RadeonNIUserClient::methodFree(UInt32 offset)

@@ -29,6 +29,8 @@ struct rdn_device_info {
    uint64_t vram_size;
    /* Bytes alloc_hidden() manages; 0 if there is no such memory. */
    uint64_t hidden_size;
+   /* GPU address of offset 0 of what gart_alloc() hands out. */
+   uint64_t gart_gpu_base;
    /* From the 3D engine setup (evergreen_gpu_init). */
    uint32_t tile_config;
    uint32_t backend_map;
@@ -80,6 +82,16 @@ struct rdn_device {
     */
    int (*alloc_hidden)(struct rdn_device *dev, uint64_t size, uint64_t align,
                        uint64_t *offset);
+   /*
+    * Memory of the program itself that the GPU reaches through the GART:
+    * ordinary cached memory for the CPU. The offset counts from
+    * info.gart_gpu_base for the GPU; gart_cpu() gives the CPU's address
+    * of the same byte. NULL when the device has no GART.
+    */
+   int (*gart_alloc)(struct rdn_device *dev, uint64_t size, uint64_t align,
+                     uint64_t *offset);
+   void (*gart_free)(struct rdn_device *dev, uint64_t offset);
+   void *(*gart_cpu)(struct rdn_device *dev, uint64_t offset);
 
    /*
     * Run `words` command words stored at `offset`, in the CPU's byte order

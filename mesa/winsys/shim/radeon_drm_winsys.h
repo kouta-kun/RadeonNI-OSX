@@ -45,19 +45,19 @@ struct radeon_drm_winsys {
     */
    struct list_head cache_all;
    struct list_head cache_buckets[128];
-   uint64_t cached_bytes[2];   /* in the aperture, beyond it */
+   uint64_t cached_bytes[3];   /* by region: enum rdn_place */
    /* The newest fence known to have been reached. */
    uint32_t last_done;
    bool have_last_done;
    uint64_t allocated_bytes;
    /*
-    * RDN_STATS: what is allocated now, by where it is (aperture, beyond)
+    * RDN_STATS: what is allocated now, by where it is (enum rdn_place)
     * and by size class (class c: under 4 KB << c), and the most there was.
     */
    struct {
-      uint64_t bytes[2], count[2], padding[2];
-      uint64_t class_bytes[2][24], class_count[2][24];
-      uint64_t peak_bytes[2], creates, cache_hits;
+      uint64_t bytes[3], count[3], padding[3];
+      uint64_t class_bytes[3][24], class_count[3][24];
+      uint64_t peak_bytes[3], creates, cache_hits;
    } mem_stats;
    uint64_t num_flushes;
 };

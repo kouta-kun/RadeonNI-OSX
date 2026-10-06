@@ -78,6 +78,12 @@ public:
 	IOReturn allocVram(UInt32 size, UInt32 align, UInt32 *offset,
 			   bool hidden = false);
 	void hiddenInfo(UInt32 *offset, UInt32 *size);
+	/* A program's memory in the GART (rdn_user.h). */
+	void gartInfo(UInt32 *on, UInt32 *gpuStart, UInt32 *pages);
+	IOReturn gartBind(task_t task, UInt32 address, UInt32 size, void *owner,
+			  UInt32 *offset);
+	IOReturn gartUnbind(UInt32 offset, void *owner);
+	void gartUnbindAll(void *owner);
 	void freeVram(UInt32 offset);
 	IOReturn submit(UInt32 offset, UInt32 words, UInt32 *fence);
 	bool fenceWait(UInt32 fence, UInt32 timeoutMs);
@@ -135,6 +141,14 @@ private:
 	struct rdn_gart fGart;
 	IOBufferMemoryDescriptor *fGartDummy, *fGartTest;
 	UInt32 fGartTable;
+	/* What programs have bound: byte offsets of the GART's range. */
+	struct rdn_mem fGartSpace;
+	enum { kMaxGartBindings = 512 };
+	struct {
+		IOMemoryDescriptor *memory;
+		UInt32 offset, size;
+		void *owner;
+	} fGartBound[kMaxGartBindings];
 	void *copyFirmware(const char *key, UInt32 *size);
 };
 
@@ -172,11 +186,15 @@ public:
 	IOReturn methodRegRead(UInt32 offset, UInt32 *value);
 	IOReturn methodAllocHidden(UInt32 size, UInt32 align, UInt32 *offset);
 	IOReturn methodHiddenInfo(UInt32 *offset, UInt32 *size);
+	IOReturn methodGartInfo(UInt32 *on, UInt32 *gpuStart, UInt32 *pages);
+	IOReturn methodGartBind(UInt32 address, UInt32 size, UInt32 *offset);
+	IOReturn methodGartUnbind(UInt32 offset);
 	IOReturn methodPower(UInt32 state, UInt32 what, UInt32 *sclk,
 			     UInt32 *mclk, UInt32 *temperature);
 
 private:
 	RadeonNIAccel *fAccel;
+	task_t fTask;
 	/* What this client allocated, so that it can be freed when it goes. */
 	UInt32 *fOffsets;
 	UInt32 fCount;
