@@ -3006,3 +3006,142 @@ Where the two cards stand on the same scenes, default settings:
 Why the larger batch helps when spinning does not is not explained;
 fewer hand-overs with the worker's caches staying warm on its own
 processor is a guess.
+
+## 2026-10-06 — Doom 3 was drawing the slow way: the extension list was wrong (`bool` again); and four smaller things
+
+**The user:** find another CPU-side optimisation in our driver without
+touching Mesa.
+
+**Where the time was** (`sample` of Doom 3 on the save `bench`, 10 s,
+glthread on, read with `scripts/sample-profile.py`):
+
+- The program's thread waited 36 % of the time, 30 % of it in
+  `_mesa_glthread_finish` under `glBufferData`. glthread records a call
+  with its data only if both fit in one batch; a larger one it runs at
+  once in the program's thread, after waiting for the other thread to
+  finish everything before it. Doom 3 uploads the vertices of its
+  animated models that way early in every frame, so once a frame the
+  program stopped until the previous frame was drawn. (This is why the
+  larger batches of the last entry helped, which that entry could not
+  explain: fewer uploads were over the limit.)
+- Mesa's thread was busy 87 %. Of that, ours: `__emutls_get_address`
+  with what it called about 8 % (`pthread_self` and `pthread_equal`
+  through C library stubs, a stack frame, out-of-line register saves);
+  the copy of the command buffer at each flush 3.7 % (`__bigcopy`); the
+  list of buffers in a command buffer 4 % (a search that fell back to
+  walking the list, two reference counts per buffer per flush).
+
+**Four changes in our code.**
+1. The entry points for `glBufferData` and `glBufferSubData`
+   (`gld/gen_dispatch.py`) hand data larger than the limit over in
+   pieces: `glBufferData` without data, then `glBufferSubData` for each
+   piece. The front end says what the limit is
+   (`OSMesaAsyncDataLimit()`); `RDN_GLD_NO_SPLIT=1` leaves the data
+   whole. If such a call is in error, pieces before the error are
+   written; whole, nothing would be.
+2. `mesa/darwin8/tiger_emutls.c` recognises a thread by its stack
+   pointer lying in the stack noted when the thread first came: no call,
+   no stack frame, 23 instructions for the first thread and 29 for the
+   second. The C library of 10.4 reports 512 KB for the first thread's
+   stack; the real size is the process's limit (8 MB), checked on the G5
+   with `vmmap`.
+3. The winsys finds a buffer in a command buffer's list through a table
+   with open addressing that is exact, and a buffer notes the number of
+   the last command buffer that used it instead of holding a reference
+   to a fence.
+4. Tried and taken out: r600 writing its commands straight into the
+   command buffer in video memory, so that a flush copies nothing.
+   `tools/guest/apcopy.c` shows why it gains nothing: the aperture takes
+   720 MB a second whether the stores are 4, 8 or 16 bytes or a
+   `memcpy` (1400 to 2000 into ordinary memory; 52 to 208 with the
+   kernel's default mapping). The time only moved from the copy into
+   the functions that write. Doom 3 sends about 1.1 MB of commands a
+   frame on the old path, 1.5 ms of copying; only a command buffer in
+   system memory would save that, and the kext takes none there.
+
+Found on the way: `rdn_swap()` in `gld/rdn_mesa.c` had lost the braces
+of its loop when the full-screen case went in (661cac2, 2026-10-05), so
+the case of a window that is a surface ran once, after the loop, on the
+entry past the end of the table. A windowed program's swap has gone to
+Apple's engine since then. Braces back. Not tested with a windowed
+program yet.
+
+**The extension list.** With those in, the profile had Mesa's thread 95 %
+busy drawing, and Doom's own log said why there was so much to draw:
+`X..GL_ARB_vertex_program not found`, `R_ARB2_Init: Not available`,
+`using ARB renderSystem`. That is the path Doom 3 keeps for cards
+without fragment programs: several passes for every light on every
+surface. Mesa has the extension. `_mesa_extension_supported()` reads the
+context's flags (`struct gl_extensions`, one byte each) through a
+`const bool *`, and `bool` has four bytes here, so flag n is looked for
+at byte 4n. `tools/guest/glext.c` on the G5: 220 extensions in the list,
+14 of them not the context's (`GL_EXT_depth_bounds_test`, which Doom 3
+was "using"), and 87 missing, among them `GL_ARB_vertex_program`,
+`GL_ARB_vertex_shader`, `GL_EXT_stencil_two_side`,
+`GL_ATI_separate_stencil`, `GL_EXT_texture_compression_s3tc`,
+`GL_ARB_texture_rectangle`, `GL_ARB_shadow`. Mesa itself asks each flag
+by name and works; only what programs are told was wrong, since the
+first day.
+
+Our front end now makes the list as Mesa means to (same order) and puts
+it where `glGetString()` looks (`osmesa_extension_string()`); Mesa is not
+changed. `glGetStringi()` and `GL_NUM_EXTENSIONS` still go Mesa's way.
+`RDN_EXTENSIONS=mesa` gives a program Mesa's list. The window server
+keeps Mesa's list unless `/Library/Application
+Support/RadeonNI/true-extensions` exists: the desktop has only been seen
+with that one, and I cannot see it.
+
+**Results** on the G5, 1920x1080, default settings, frames a second
+(`d3save.sh`, `td.sh`):
+
+| | bench | bench2 | Quake 3 `four` |
+|---|---|---|---|
+| Before this entry | 23.3 | 26.5 | 146.8 |
+| Changes 2 and 3 (`RDN_GLD_NO_SPLIT=1`, Mesa's list) | 25.7 | 29.0 | |
+| and the split (Mesa's list: `RDN_EXTENSIONS=mesa`) | 27.8 to 28.1 | 28.9 to 29.0 | 149.4 |
+| and the true list: Doom 3 on its ARB2 path | 47.7 to 49.2 | 50.7 to 50.9 | 148.5 to 149.9 |
+| The same without the split | 41.9 | 50.5 | |
+| The same without glthread (`RDN_GLTHREAD=0`) | 28.1 | 26.4 | |
+| The same with commands written in place (taken out) | 47.8 against 48.1 | 50.7 against 50.4 | |
+
+Doom's log with the true list: `R_ARB2_Init: Available`, `using ARB2
+renderSystem`, and `EXT_depth_bounds_test not found`, which is right. It
+sends half the commands for the same frames (191 MB against 455 MB for a
+run). The GeForce 6600 LE with Apple's driver, which always had the
+right list: 26.2 and 18.7.
+
+**Checked by readback** with the installed bundle
+(`RadeonNIGLDriver.dylib` d331b142, the one before it kept as
+`~/RadeonNIGLDriver.prev9`): a frame of `bench` on the ARB2 path shows
+the scene with the bump mapping and highlights the old path did not
+have; a still of q3dm1 is as before; `glwin` in its window (the swap
+goes our way again) and Apple's Chess with board and pieces are right on
+the desktop; `listwin`'s pixels are right. `make test`: 18 PASS.
+`nm -u` on the bundle names nothing of ours.
+
+**Where Doom 3 stands now** (the same profile, ARB2 path): Mesa's thread
+is busy 94 % of the time and is the limit; the program's waits 26 %,
+nearly all of it in `glGetError`, which Doom calls once a frame and
+which glthread answers only after the other thread has caught up. Of
+Mesa's thread, still ours: the copy of the command buffer 3.2 %,
+`__emutls_get_address` 2.5 %, the list of buffers 2 %. Not ours but not
+Mesa's either: Tiger's mutexes about 4 % (`__spin_lock`,
+`pthread_mutex_lock`), the compiler's out-of-line register saves 5.7 %
+(`saveGPR`, `restGPRx`: GCC does that on Darwin at any optimisation
+level).
+
+**Not done, not known:**
+- The window server has not run this bundle (it starts with it at the
+  next restart or login) and by choice keeps Mesa's list.
+- Other programs that look at the list (Dashboard, Core Image, iTunes'
+  visualiser, QuickTime) now see texture rectangles and vertex programs
+  where they saw none. None has been tried.
+- The screen saver shows a black screen and draws nothing with the card
+  (0 command buffers in 5 s), with the bundle from before this entry and
+  with this one, with either list. Found because it covered the desktop
+  during these tests; not looked into. Synthetic mouse movement did not
+  end it; `killall ScreenSaverEngine` did.
+- The fix in Mesa itself is one line (`const GLboolean *` in
+  `_mesa_extension_supported()`) and would also put `glGetStringi()`
+  right. Not made: the user's rule for this work was no change to Mesa.
+- The user has seen none of this.

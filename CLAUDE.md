@@ -100,6 +100,22 @@ been planned in detail.
 - `bool` has four bytes on Tiger PowerPC. Mesa code that assumes one
   breaks silently there and not in the big-endian Linux test build
   (`mesa/patches/0002`, Quake 3's black floors, journal 2026-10-06).
+  Found twice so far; the second time it was the list of extensions
+  (below). Suspect it first when something works on Linux and not here.
+- The extension list (2026-10-06, journal): Mesa makes the string
+  `glGetString(GL_EXTENSIONS)` returns by reading its one-byte flags
+  through a `bool` pointer, so on Tiger programs got a list of 220 with
+  14 the context lacks and without 87 it has (`GL_ARB_vertex_program`,
+  `GL_EXT_stencil_two_side`, S3TC, texture rectangles). Doom 3 drew with
+  its fixed-function path because of it. Our front end now makes the
+  true list (293) itself, Mesa untouched; with it Doom 3 uses its ARB2
+  path, at twice the frames. `RDN_EXTENSIONS=mesa` in a program's
+  environment gives Mesa's list. The window server keeps Mesa's list
+  until `/Library/Application Support/RadeonNI/true-extensions` exists:
+  what it does with the true one is not known. `glGetStringi` and
+  `GL_NUM_EXTENSIONS` still go Mesa's way. The one-line fix in Mesa
+  (`_mesa_extension_supported()`) would replace all of this; the user has
+  not been asked. `~/gl/glext` on the G5 prints the list.
   `RDN_SYNC=1|2|3` (wait for every command buffer, one per draw) and
   `RDN_GLD_TRACE_ONLY=glName,...` (trace only those calls) in a
   program's environment are for telling races from such bugs.
@@ -149,6 +165,18 @@ been planned in detail.
   both games look right. Not tried with the window server or windowed
   programs. `tools/guest/d3save.sh <save>` times 300 frames of a Doom 3
   save game on any card (the user's saves: `bench`, `bench2`).
+  glthread makes the program's thread wait for the other one at every
+  call it cannot record: any `glGet*`, `glGetError`, texture uploads,
+  and buffer data larger than a batch. The entry points split large
+  `glBufferData` and `glBufferSubData` for that reason
+  (`RDN_GLD_NO_SPLIT=1` does not). Look for `_mesa_glthread_finish` in a
+  profile of the program's thread.
+- Profiling a game (2026-10-06): `tools/guest/d3saveprof.sh` samples a
+  Doom 3 save; `scripts/sample-profile.py` reads what `sample` wrote,
+  per thread. `RDN_STATS=1` also prints how many command buffers and
+  bytes of commands went to the GPU. `tools/guest/apcopy.c` measures how
+  fast the CPU writes through the aperture: 720 MB a second whatever the
+  size of the stores, against 1400 to 2000 into ordinary memory.
 - Video memory (2026-10-06): programs get the 768 MB beyond the 256 MB
   aperture too, for what the CPU never maps, and the winsys keeps
   released memory in a cache instead of calling the kext for every
@@ -165,7 +193,12 @@ been planned in detail.
   Mesa's buffers and is resolved on the way to the screen; pixel format
   record word 9 carries sample buffers and samples. Doom 3 at ultra with
   4 samples: 20.9 and 21.7 fps, the GeForce 6600 LE 5.0 and 3.6.
-- A6 and A7 have not started.
+- Where the two games stand (2026-10-06, end of day, G5, 1920x1080):
+  Doom 3 demo 48 and 51 fps on the saves `bench` and `bench2` (ARB2
+  path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.
+  In Doom 3 Mesa's thread is the limit. The screen saver shows black
+  and draws nothing with the card; not looked into.
+- A6 has not started; A7 has (GART).
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
   snapshots do not. They are inert unless the kext is loaded with
