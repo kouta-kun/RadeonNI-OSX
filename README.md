@@ -9,7 +9,7 @@ This project is vibecoded, meatproxied and any other AI slur you can think of. I
 ## What you need
 
 - A PowerPC Mac with a PCI Express slot and Mac OS X 10.4.11.
-- A Radeon HD 7570. Currently hardcoded to PCI ID `1002:675d` and the DVI-I output.
+- A Radeon HD 7570. Currently hardcoded to PCI ID `1002:675d` and the DVI-I output. IMPORTANT: The Radeon HD must be inserted on an x8 slot. It hates the x16 slot on the Mac for some reason, it fails to initialize on Linux as well.
 - Recommended: enable ssh (Remote Login) in case installation fails..
 
 ## Install
