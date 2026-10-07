@@ -4248,3 +4248,26 @@ changed. That keeps the world's 20 MB ranges out of it. The first change
 of a block made without any flush is still not seen.
 `RDN_VAR=1 VARTEST_NO_FLUSH=1 vartest` step 4 reads blue now (green
 before). Installed on the G5; not yet run in the game.
+
+## 2026-10-07: copy mode: the menu's text after a minute of play
+
+The user: the map is as fast as before; the menu still flickers, but only
+after a minute or so of play. Eight grabs of the menu while it flickered:
+they differ only in the menu's text (x 1106 to 1330), whose letters have
+bands of rows drawn from the wrong place. So some of the glyphs' vertices
+are stale: the game's 2 MB of computed vertices again.
+
+The look before a draw only took mirrors that a flush had found changed. A
+mirror made for one range of a small block or of a region where no block
+was found (the lookup remembered such regions for good, which goes wrong
+once malloc has put a large block there) is flushed once, when it is
+made, and so never counted as changing.
+
+Changed: the default malloc zone is watched from the first mirror on, in
+copy mode too (`var_watch`). Every block of 15 KB or more that malloc
+frees or hands out is noted (`var_moving`, 64 of them kept), and before a
+draw the mirrors that overlap one are marked as changing
+(`var_moved_look`); the lookup forgets its regions without a block when
+that happens. A buffer rewritten in place with neither a flush nor a free
+is still not seen. Tests as before. Installed on the G5; the game that was
+running is the build before.

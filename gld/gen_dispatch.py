@@ -261,6 +261,13 @@ static unsigned var_swaps;
 static struct var_mirror *var_dirty[VAR_DIRTY];
 static unsigned var_dirty_count;
 static void var_settle(void *ctx);
+/*
+ * The large blocks malloc has freed or handed out lately (var_moving):
+ * a program's sign that it has other vertices at those addresses now.
+ */
+#define VAR_MOVED 64
+static struct { volatile vm_address_t start, end; } var_moved[VAR_MOVED];
+static volatile unsigned var_moved_count;
 static unsigned var_draws;	/* draws so far */
 static struct var_vao *var_vao(void);
 static void var_point(struct var_mirror *m);
@@ -290,12 +297,19 @@ static int var_block(const char *ptr, size_t len, const char **base, size_t *siz
 	struct vm_region_basic_info info;
 	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT;
 	mach_port_t object = MACH_PORT_NULL;
-	/* Regions no block was found in: small blocks live there. */
+	/*
+	 * Regions no block was found in: small blocks live there. Until
+	 * malloc moves a large block: what a region is changes then.
+	 */
 	static struct { vm_address_t start, end; } none[32];
-	static unsigned none_next;
+	static unsigned none_next, none_moved;
 	size_t s;
 	unsigned n;
 
+	if (none_moved != var_moved_count) {
+		none_moved = var_moved_count;
+		memset(none, 0, sizeof(none));
+	}
 	for (n = 0; n < 32; n++)
 		if ((vm_address_t)ptr >= none[n].start && (vm_address_t)ptr < none[n].end)
 			return 0;
@@ -393,6 +407,19 @@ static void *(*var_zone_malloc)(malloc_zone_t *zone, size_t size);
 static void *(*var_zone_calloc)(malloc_zone_t *zone, size_t count, size_t size);
 static void *(*var_zone_valloc)(malloc_zone_t *zone, size_t size);
 
+/* Any thread, inside malloc: a page-aligned block comes or goes. */
+static void var_moving(void *ptr, size_t size)
+{
+	unsigned i;
+
+	/* One small block in 256 starts a page too; a large one is 15 KB up. */
+	if (size < 15 * 1024)
+		return;
+	i = __sync_fetch_and_add(&var_moved_count, 1) % VAR_MOVED;
+	var_moved[i].start = (vm_address_t)ptr;
+	var_moved[i].end = (vm_address_t)ptr + size;
+}
+
 /* Any thread, inside malloc: only looks and sets flags. */
 static void var_freeing(void *ptr)
 {
@@ -400,6 +427,7 @@ static void var_freeing(void *ptr)
 
 	if (!ptr || ((vm_address_t)ptr & 4095))
 		return;
+	var_moving(ptr, var_zone->size(var_zone, ptr));
 	for (i = 0; i < VAR_USERS; i++)
 		if (var_user[i].base == (vm_address_t)ptr) {
 			var_user[i].freed = 1;
@@ -411,7 +439,10 @@ static void *var_taking(void *ptr, size_t size)
 {
 	unsigned i;
 
-	if (size < VAR_USER_LEAST || !ptr || ((vm_address_t)ptr & 4095))
+	if (!ptr || ((vm_address_t)ptr & 4095))
+		return ptr;
+	var_moving(ptr, size);
+	if (size < VAR_USER_LEAST)
 		return ptr;
 	for (i = 0; i < VAR_USERS; i++)
 		if (var_user[i].base == (vm_address_t)ptr) {
@@ -446,6 +477,53 @@ static void *var_hook_calloc(malloc_zone_t *zone, size_t count, size_t size)
 static void *var_hook_valloc(malloc_zone_t *zone, size_t size)
 {
 	return var_taking(var_zone_valloc(zone, size), size);
+}
+
+/* Watch the default malloc zone, from the first mirror on. */
+static void var_watch(void)
+{
+	malloc_zone_t *zone = malloc_default_zone();
+
+	if (var_zone || !zone)
+		return;
+	var_zone_free = zone->free;
+	var_zone_realloc = zone->realloc;
+	var_zone_malloc = zone->malloc;
+	var_zone_calloc = zone->calloc;
+	var_zone_valloc = zone->valloc;
+	var_zone = zone;
+	zone->free = var_hook_free;
+	zone->realloc = var_hook_realloc;
+	zone->malloc = var_hook_malloc;
+	zone->calloc = var_hook_calloc;
+	zone->valloc = var_hook_valloc;
+	rdn_log("vertex array range: watching what malloc zone %p frees and hands out",
+		(void *)zone);
+}
+
+/*
+ * Mirrors of memory in a block malloc has moved since the last look are
+ * of memory that changes (var_drawing).
+ */
+static void var_moved_look(void)
+{
+	static unsigned seen;
+	unsigned count = var_moved_count, k, i;
+
+	if (count - seen > VAR_MOVED)
+		seen = count - VAR_MOVED;
+	for (k = seen; k != count; k++) {
+		vm_address_t start = var_moved[k % VAR_MOVED].start;
+		vm_address_t end = var_moved[k % VAR_MOVED].end;
+
+		for (i = 0; i < var.count; i++) {
+			struct var_mirror *m = var.mirrors[i];
+
+			if ((vm_address_t)m->base < end && (vm_address_t)m->base + m->size > start)
+				m->changed = 1;
+		}
+	}
+	seen = count;
 }
 
 /* Let a mirror go; it is no longer in the list. */
@@ -597,24 +675,7 @@ static GLuint var_pin(const char *base, size_t size, unsigned short *user)
 		;
 	if (slot == VAR_USERS)
 		return 0;
-	if (!var_zone) {
-		malloc_zone_t *zone = malloc_zone_from_ptr(base);
-
-		if (!zone)
-			return 0;
-		var_zone_free = zone->free;
-		var_zone_realloc = zone->realloc;
-		var_zone_malloc = zone->malloc;
-		var_zone_calloc = zone->calloc;
-		var_zone_valloc = zone->valloc;
-		zone->free = var_hook_free;
-		zone->realloc = var_hook_realloc;
-		zone->malloc = var_hook_malloc;
-		zone->calloc = var_hook_calloc;
-		zone->valloc = var_hook_valloc;
-		var_zone = zone;
-		rdn_log("vertex array range: watching what malloc zone %p frees", (void *)zone);
-	} else if (malloc_zone_from_ptr(base) != var_zone)
+	if (malloc_zone_from_ptr(base) != var_zone)
 		return 0;
 	for (i = 0; i < 8 && m_get_error(); i++)
 		;
@@ -687,6 +748,7 @@ static struct var_mirror *var_create(void *ctx, const char *ptr, size_t len)
 
 	var_settle(ctx);
 	var_sweep();
+	var_watch();
 	if (var.count == var.room) {
 		unsigned room = var.room ? var.room * 2 : 64;
 		struct var_mirror **more = realloc(var.mirrors, room * sizeof(*more));
@@ -891,8 +953,13 @@ static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
 static void var_drawing(void *ctx)
 {
 	struct var_vao *v = var.ctx == ctx && var.vao < var.vao_room ? &var.vaos[var.vao] : NULL;
+	static unsigned moved;
 	unsigned i;
 
+	if (__builtin_expect(moved != var_moved_count, 0)) {
+		moved = var_moved_count;
+		var_moved_look();
+	}
 	if (v && v->in && v->at != var_draws) {
 		for (i = 0; i < VAR_VAO_MIRRORS && v->mirror[i] != v->in; i++)
 			;
