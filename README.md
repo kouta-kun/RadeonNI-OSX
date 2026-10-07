@@ -19,8 +19,10 @@ This project is vibecoded, meatproxied and any other AI slur you can think of. I
    ```
    sudo sh ./install.sh --accel --hwcursor
    ```
-  It should say `Found the Radeon HD 7570 (1002:675d); its ROM has an address.` If it instead refuses because Open Firmware gave the ROM no address, you need a VBIOS image of your own card: `sudo sh ./install.sh --accel --hwcursor /path/to/vbios.rom`. (TBA: how to extract)
+   It should say `Found the Radeon HD 7570 (1002:675d); its ROM has an address.` If it instead refuses because Open Firmware gave the ROM no address, you need a VBIOS image of your own card: `sudo sh ./install.sh --accel --hwcursor /path/to/vbios.rom`. (TBA: how to extract)
+
 3. Restart the Mac.
+
 4. Check what the driver did:
    ```
    grep RadeonNI /var/log/system.log
