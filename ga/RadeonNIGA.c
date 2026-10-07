@@ -11,7 +11,10 @@
  * The routines work on the screen's surface in video memory, which the
  * kext's accelerator user client maps (hw/rdn_user.h), with the CPU. That
  * is no faster than what the system does without a plug-in; it is here
- * because it has to exist.
+ * because it has to exist. With a file /tmp/rdnga.gpu there when the
+ * window server starts, fills and copies on a 32-bit screen are the GPU's
+ * instead (RDN_UC_SCREEN_FILL, RDN_UC_SCREEN_COPY), and the CPU's again
+ * for good after the first call that fails.
  *
  * The shape of a CFPlugIn for this interface was learned from VMsvga2's
  * (MIT, Zenith432); the code is this project's.
@@ -23,6 +26,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <mach/mach.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreFoundation/CFPlugInCOM.h>
@@ -46,6 +50,15 @@ struct ga {
 	/* The screen now; read again on Reset, which follows a mode change. */
 	struct rdn_user_info info;
 	int usable;
+	/*
+	 * Fill and copy with the GPU (a file /tmp/rdnga.gpu, looked for at
+	 * Start and Reset, on a 32-bit screen), until a call fails; and the
+	 * fence of the last one, to wait for before the CPU touches the
+	 * screen.
+	 */
+	int gpu;
+	int gpu_pending;
+	UInt32 gpu_fence;
 };
 
 static IOGraphicsAcceleratorInterface interface;
@@ -55,6 +68,7 @@ static void ga_read_screen(struct ga *ga)
 	IOByteCount size = sizeof(ga->info);
 
 	ga->usable = 0;
+	ga->gpu = 0;
 	if (!ga->conn || !ga->aperture)
 		return;
 	if (IOConnectMethodScalarIStructureO(ga->conn, RDN_UC_GET_INFO, 0, &size,
@@ -64,6 +78,63 @@ static void ga_read_screen(struct ga *ga)
 		     (ga->info.fb_bits_per_pixel == 8 ||
 		      ga->info.fb_bits_per_pixel == 16 ||
 		      ga->info.fb_bits_per_pixel == 32);
+	ga->gpu = ga->usable && ga->info.fb_bits_per_pixel == 32 &&
+		  access("/tmp/rdnga.gpu", F_OK) == 0;
+}
+
+/*
+ * The GPU's fills and copies are queued, not waited for. Before the CPU
+ * reads or writes the screen, and when the system asks, wait for the last.
+ */
+static void ga_gpu_wait(struct ga *ga)
+{
+	UInt32 reached = 0;
+	int tries;
+
+	if (!ga->gpu_pending)
+		return;
+	for (tries = 0; tries < 20 && !reached; tries++)
+		if (IOConnectMethodScalarIScalarO(ga->conn, RDN_UC_FENCE_WAIT, 2, 1,
+						  ga->gpu_fence, 100, &reached))
+			break;
+	ga->gpu_pending = 0;
+}
+
+/* True if the GPU took the fill; otherwise it is the CPU's from now on. */
+static int ga_gpu_fill(struct ga *ga, SInt32 x, SInt32 y, SInt32 w, SInt32 h,
+		       UInt32 color)
+{
+	UInt32 fence = 0;
+
+	if (!ga->gpu)
+		return 0;
+	if (IOConnectMethodScalarIScalarO(ga->conn, RDN_UC_SCREEN_FILL, 5, 1,
+					  x, y, w, h, color, &fence)) {
+		ga->gpu = 0;
+		return 0;
+	}
+	ga->gpu_fence = fence;
+	ga->gpu_pending = 1;
+	return 1;
+}
+
+static int ga_gpu_copy(struct ga *ga, SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
+		       SInt32 w, SInt32 h)
+{
+	UInt32 fence = 0;
+
+	/* Width and height share an argument, 16 bits each. */
+	if (!ga->gpu || w < 0 || h < 0 || w > 0xffff || h > 0xffff)
+		return 0;
+	if (IOConnectMethodScalarIScalarO(ga->conn, RDN_UC_SCREEN_COPY, 5, 1,
+					  sx, sy, dx, dy,
+					  ((UInt32)h << 16) | (UInt32)w, &fence)) {
+		ga->gpu = 0;
+		return 0;
+	}
+	ga->gpu_fence = fence;
+	ga->gpu_pending = 1;
+	return 1;
 }
 
 /* Address of a pixel of the screen. */
@@ -94,6 +165,9 @@ static void ga_fill(struct ga *ga, SInt32 x, SInt32 y, SInt32 w, SInt32 h,
 
 	if (!ga_clip(ga, &x, &y, &w, &h))
 		return;
+	if (ga_gpu_fill(ga, x, y, w, h, color))
+		return;
+	ga_gpu_wait(ga);
 	for (row = 0; row < h; row++) {
 		uint8_t *p = ga_pixel(ga, x, y + row);
 
@@ -130,6 +204,10 @@ static void ga_copy(struct ga *ga, SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
 		return;
 	dx += cx - sx; dy += cy - sy; sx = cx; sy = cy; w = cw; h = ch;
 
+	if (ga_gpu_copy(ga, sx, sy, dx, dy, w, h))
+		return;
+	ga_gpu_wait(ga);
+
 	if (dy < sy) {
 		for (row = 0; row < h; row++)
 			memmove(ga_pixel(ga, dx, dy + row), ga_pixel(ga, sx, sy + row),
@@ -139,6 +217,97 @@ static void ga_copy(struct ga *ga, SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
 			memmove(ga_pixel(ga, dx, dy + row), ga_pixel(ga, sx, sy + row),
 				(size_t)w * bytes);
 	}
+}
+
+/*
+ * Call counters: does the window server use the blitters at all, and for
+ * how much? Off, at the cost of testing a flag, unless /tmp/rdnga.on exists
+ * when the plug-in starts or is reset. On, every call of a blitter is
+ * counted with the rectangles and pixels it asks for (as asked: before
+ * clipping, and also when the call is refused), and the counts are written
+ * to /tmp/rdnga.stats, one line of text per blitter.
+ *
+ * The file is written when the switch is read (so a file of zeros says:
+ * counting, never called) and from a counted call, the first of every
+ * second. Nothing here runs without a call, so after a burst the file can
+ * lack up to a second's calls until the next one.
+ *
+ * The plug-in runs inside the window server, as its user, with no output
+ * of its own; the counts are not guarded against two threads, which could
+ * at worst lose one.
+ */
+#include <stdio.h>
+#include <fcntl.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#define GA_STATS_SWITCH	"/tmp/rdnga.on"
+#define GA_STATS_FILE	"/tmp/rdnga.stats"
+#define GA_STATS_TEMP	"/tmp/rdnga.stats.new"
+
+enum { GA_STAT_FILL, GA_STAT_COPY, GA_STAT_COPY_REGION, GA_STAT_COUNT };
+
+static int ga_stats_on;
+static time_t ga_stats_time;
+static struct {
+	unsigned long long calls, rects, pixels;
+} ga_stats[GA_STAT_COUNT];
+
+/* A whole new file under another name, then renamed: no reader sees half. */
+static void ga_stats_write(void)
+{
+	static const char *const names[GA_STAT_COUNT] = {
+		"fill", "copy", "copy_region"
+	};
+	char text[320];
+	int i, fd, len = 0;
+
+	for (i = 0; i < GA_STAT_COUNT; i++)
+		len += snprintf(text + len, sizeof(text) - (size_t)len,
+				"%s calls %llu rects %llu pixels %llu\n", names[i],
+				ga_stats[i].calls, ga_stats[i].rects,
+				ga_stats[i].pixels);
+	fd = open(GA_STATS_TEMP, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0644);
+	if (fd < 0)
+		return;
+	if (write(fd, text, (size_t)len) == len) {
+		/* The window server's umask need not leave it readable. */
+		fchmod(fd, 0644);
+		close(fd);
+		rename(GA_STATS_TEMP, GA_STATS_FILE);
+	} else {
+		close(fd);
+		unlink(GA_STATS_TEMP);
+	}
+}
+
+/* Read the switch: at Start and at Reset. The counts go on from where they were. */
+static void ga_stats_switch(void)
+{
+	ga_stats_on = access(GA_STATS_SWITCH, F_OK) == 0;
+	if (ga_stats_on) {
+		ga_stats_time = time(NULL);
+		ga_stats_write();
+	}
+}
+
+static void ga_stats_add(int which, UInt32 rects, unsigned long long pixels)
+{
+	time_t now = time(NULL);
+
+	ga_stats[which].calls++;
+	ga_stats[which].rects += rects;
+	ga_stats[which].pixels += pixels;
+	if (now != ga_stats_time) {
+		ga_stats_time = now;
+		ga_stats_write();
+	}
+}
+
+static unsigned long long ga_stats_area(SInt32 w, SInt32 h)
+{
+	return w > 0 && h > 0 ? (unsigned long long)w * (unsigned long long)h : 0;
 }
 
 /*
@@ -153,6 +322,14 @@ static IOReturn blit_fill(void *self, IOOptionBits options, IOBlitType type,
 	IOBlitRectangles *rects = (IOBlitRectangles *)operation;
 	IOItemCount i;
 
+	if (ga_stats_on) {
+		unsigned long long pixels = 0;
+
+		for (i = 0; rects && i < rects->count; i++)
+			pixels += ga_stats_area(rects->rects[i].width,
+						rects->rects[i].height);
+		ga_stats_add(GA_STAT_FILL, rects ? rects->count : 0, pixels);
+	}
 	if (!ga || !ga->usable || !rects)
 		return kIOReturnNotReady;
 	for (i = 0; i < rects->count; i++)
@@ -170,6 +347,14 @@ static IOReturn blit_copy(void *self, IOOptionBits options, IOBlitType type,
 	IOBlitCopyRectangles *rects = (IOBlitCopyRectangles *)operation;
 	IOItemCount i;
 
+	if (ga_stats_on) {
+		unsigned long long pixels = 0;
+
+		for (i = 0; rects && i < rects->count; i++)
+			pixels += ga_stats_area(rects->rects[i].width,
+						rects->rects[i].height);
+		ga_stats_add(GA_STAT_COPY, rects ? rects->count : 0, pixels);
+	}
 	if (!ga || !ga->usable || !rects)
 		return kIOReturnNotReady;
 	for (i = 0; i < rects->count; i++)
@@ -193,6 +378,18 @@ static IOReturn blit_copy_region(void *self, IOOptionBits options,
 	SInt32 dx, dy;
 	UInt32 i, n;
 
+	if (ga_stats_on) {
+		unsigned long long pixels = 0;
+
+		/* No rectangles: the region is its bounds, counted as one. */
+		rgn = copy ? copy->region : NULL;
+		n = rgn ? rgn->num_rects : 0;
+		for (i = 0; i < n; i++)
+			pixels += ga_stats_area(rgn->rect[i].w, rgn->rect[i].h);
+		if (rgn && !n)
+			pixels = ga_stats_area(rgn->bounds.w, rgn->bounds.h);
+		ga_stats_add(GA_STAT_COPY_REGION, rgn && !n ? 1 : n, pixels);
+	}
 	if (!ga || !ga->usable || !copy || !copy->region)
 		return kIOReturnNotReady;
 	rgn = copy->region;
@@ -278,6 +475,7 @@ static IOReturn ga_start(void *self, CFDictionaryRef properties,
 	vm_size_t len = 0;
 	kern_return_t kr;
 
+	ga_stats_switch();
 	if (!accel)
 		return kIOReturnNoDevice;
 	kr = IOServiceOpen(accel, mach_task_self(), RDN_UC_TYPE, &ga->conn);
@@ -313,6 +511,7 @@ static IOReturn ga_stop(void *self)
 
 static IOReturn ga_reset(void *self, IOOptionBits options)
 {
+	ga_stats_switch();
 	ga_read_screen(self);
 	return kIOReturnSuccess;
 }
@@ -325,12 +524,14 @@ static IOReturn ga_copy_capabilities(void *self, FourCharCode select,
 
 static IOReturn ga_flush(void *self, IOOptionBits options)
 {
+	ga_gpu_wait(self);
 	return kIOReturnSuccess;
 }
 
 static IOReturn ga_synchronize(void *self, UInt32 options, UInt32 x, UInt32 y,
 			       UInt32 w, UInt32 h)
 {
+	ga_gpu_wait(self);
 	return kIOReturnSuccess;
 }
 
@@ -405,6 +606,7 @@ static IOReturn ga_get_blitter(void *self, IOOptionBits options, IOBlitType type
 
 static IOReturn ga_wait_complete(void *self, IOOptionBits options)
 {
+	ga_gpu_wait(self);
 	return kIOReturnSuccess;
 }
 

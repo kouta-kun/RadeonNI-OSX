@@ -49,14 +49,27 @@ librdngl = shared_library(
 # The test program with everything linked in, so that it can be built
 # static for a foreign architecture and run under qemu-user
 # (-Dc_link_args=-static -Dcpp_link_args=-static).
+#
+# On Linux it can also run without the card (RDN_SOFT=1), on Mesa's
+# software rasteriser with ordinary memory for video memory: enough to
+# check what the frontend does with share lists and stores (rdn_gltest -P).
+rdn_gltest_sources = [rdn_sources, files('tests/rdn_gltest.c')]
+rdn_gltest_args = []
+rdn_gltest_deps = rdn_deps
+if host_machine.system() != 'darwin' and with_gallium_softpipe
+  rdn_gltest_sources += files('tests/rdn_soft.c')
+  rdn_gltest_args += '-DRDN_TARGET_SOFT'
+  rdn_gltest_deps += driver_softpipe
+endif
 executable(
   'rdn_gltest',
-  rdn_sources, files('tests/rdn_gltest.c'),
+  rdn_gltest_sources,
+  c_args : rdn_gltest_args,
   include_directories : rdn_inc,
   link_args : rdn_device_link_args,
   link_whole : rdn_link_whole,
   link_with : rdn_link_with,
-  dependencies : rdn_deps,
+  dependencies : rdn_gltest_deps,
   install : false,
 )
 

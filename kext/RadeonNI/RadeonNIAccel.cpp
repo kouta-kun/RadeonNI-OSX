@@ -45,13 +45,17 @@ OSDefineMetaClassAndStructors(RadeonNIAccel, IOAccelerator)
 /*
  * Video memory: the screen's surfaces at the bottom (the framebuffer
  * driver's), the ring at 32 MB, a megabyte of scratch space after it (the
- * self-test's, then flushSurface()'s), and from 34 MB to the end of the
- * aperture the heap user clients allocate from.
+ * self-test's, then flushSurface()'s; after that, up to the heap, the work
+ * areas of screenFill() and screenCopy()), and from 34 MB to the end of
+ * the aperture the heap user clients allocate from.
  */
 #define RING_OFFSET		(32u << 20)
 #define RING_BYTES		(1u << 20)
 #define SELFTEST_OFFSET		(33u << 20)
 #define BLIT_OFFSET		(SELFTEST_OFFSET + (512u << 10))
+/* RadeonNIAccel::kScreenSlots of these end 64 KB below the heap. */
+#define SCREEN_OFFSET		(BLIT_OFFSET + (64u << 10))
+#define SCREEN_SLOT_BYTES	(128u << 10)
 #define HEAP_OFFSET		(34u << 20)
 
 RadeonNIAccel *RadeonNIAccel::withFramebuffer(RadeonNI *fb, IOService *provider)
@@ -453,6 +457,7 @@ void RadeonNIAccel::retire(IOService *provider)
 			rdn_mem_fini(&fHidden);
 			fHiddenSize = 0;
 		}
+		fMoveBytes = 0;
 		fEngineUp = false;
 		IOLockUnlock(fLock);
 	}
@@ -942,6 +947,250 @@ void RadeonNIAccel::forgetSurface(UInt32 wid)
 	IOLockUnlock(fLock);
 }
 
+/*
+ * The 2D accelerator plug-in's fill and copy on the screen (ga/,
+ * RDN_UC_SCREEN_FILL and RDN_UC_SCREEN_COPY): queued like flushSurface()'s
+ * copy and not waited for. The caller gets the fence to wait for.
+ *
+ * The GPU reads a draw's work area until the draw's fence is reached, and
+ * fills and copies come many in a row. So there are kScreenSlots work
+ * areas, used in turn, and a call waits only when the GPU still has the
+ * one that was used kScreenSlots calls ago.
+ */
+
+/* What a coordinate or a size on a screen can be; sums of two cannot overflow. */
+static bool screenRange(SInt32 v)
+{
+	return v >= -32768 && v <= 32767;
+}
+
+/* Cut a rectangle to the screen; false if nothing is left of it. */
+static bool screenClip(const struct rdn_selftest_target *screen, SInt32 *x,
+		       SInt32 *y, SInt32 *w, SInt32 *h)
+{
+	if (*x < 0) {
+		*w += *x;
+		*x = 0;
+	}
+	if (*y < 0) {
+		*h += *y;
+		*y = 0;
+	}
+	if (*x + *w > (SInt32)screen->width)
+		*w = (SInt32)screen->width - *x;
+	if (*y + *h > (SInt32)screen->height)
+		*h = (SInt32)screen->height - *y;
+	return *w > 0 && *h > 0;
+}
+
+/*
+ * The next work area, once the GPU is done with it, and the screen as it
+ * is then. Called with the lock held and returns with it held, but lets go
+ * of it while it sleeps, so that programs go on submitting. Refuses unless
+ * the screen has 32 bits a pixel.
+ */
+IOReturn RadeonNIAccel::screenBegin(struct rdn_selftest_target *screen,
+				    UInt32 *slot)
+{
+	UInt32 waited = 0, s;
+
+	if (rdn_blit_move_work_bytes() > SCREEN_SLOT_BYTES)
+		return kIOReturnUnsupported;
+	for (;;) {
+		if (!fEngineUp || !fFramebuffer)
+			return kIOReturnNotReady;
+		/* Another caller may have taken a turn meanwhile: look again. */
+		s = fScreenNext;
+		if (fScreenSlot[s].pending &&
+		    rdn_fence_done(&fAccel, fScreenSlot[s].fence))
+			fScreenSlot[s].pending = false;
+		if (!fScreenSlot[s].pending)
+			break;
+		/* The GPU is stuck or far behind. */
+		if (waited++ >= 500)
+			return kIOReturnBusy;
+		IOLockUnlock(fLock);
+		IOSleep(1);
+		IOLockLock(fLock);
+	}
+	if (!fFramebuffer->selftestTarget(&fAccel, screen))
+		return kIOReturnUnsupported;
+	*slot = s;
+	return kIOReturnSuccess;
+}
+
+/*
+ * After a draw with a work area, whether it succeeded or not: nothing the
+ * GPU has been given reads the area once the newest fence is reached.
+ */
+void RadeonNIAccel::screenEnd(UInt32 slot)
+{
+	fScreenSlot[slot].fence = fAccel.fence_emitted;
+	fScreenSlot[slot].pending = true;
+	fScreenNext = (slot + 1) % kScreenSlots;
+	fScreenFence = fAccel.fence_emitted;
+	fScreenPending = true;
+}
+
+IOReturn RadeonNIAccel::screenFill(SInt32 x, SInt32 y, SInt32 w, SInt32 h,
+				   UInt32 colour, UInt32 *fence)
+{
+	struct rdn_selftest_target screen;
+	struct rdn_draw_surface dst;
+	struct rdn_fill_rect rect;
+	UInt32 slot = 0;
+	uint32_t seq = 0;
+	IOReturn ret;
+	int r;
+
+	if (!screenRange(x) || !screenRange(y) || !screenRange(w) || !screenRange(h))
+		return kIOReturnBadArgument;
+	if (!fEngineUp || !fFramebuffer)
+		return kIOReturnUnsupported;
+	IOLockLock(fLock);
+	ret = screenBegin(&screen, &slot);
+	if (ret != kIOReturnSuccess) {
+		IOLockUnlock(fLock);
+		return ret;
+	}
+	if (!screenClip(&screen, &x, &y, &w, &h)) {
+		/* Nothing to draw. What is queued already is all there is to wait for. */
+		*fence = fAccel.fence_emitted;
+		IOLockUnlock(fLock);
+		return kIOReturnSuccess;
+	}
+	dst.gpu_addr = screen.gpu_addr;
+	dst.width = screen.width;
+	dst.height = screen.height;
+	dst.pitch_pixels = screen.pitch_pixels;
+	rect.x = x;
+	rect.y = y;
+	rect.width = w;
+	rect.height = h;
+	/* The colour's bytes as this machine's programs store a pixel. */
+	r = rdn_blit_fill(&fAccel, &dst, &rect, 1, colour, RDN_BIG_ENDIAN != 0,
+			  SCREEN_OFFSET + slot * SCREEN_SLOT_BYTES, &seq);
+	screenEnd(slot);
+	*fence = fAccel.fence_emitted;
+	IOLockUnlock(fLock);
+	return r ? kIOReturnIOError : kIOReturnSuccess;
+}
+
+/*
+ * screenCopy()'s scratch surface (rdn_blit_move()): video memory as large
+ * as the screen, which only the GPU reads and writes, so it comes from
+ * beyond the aperture when the card has memory there. Allocated at the
+ * first copy and again when the screen has become larger. Called with the
+ * lock held.
+ */
+IOReturn RadeonNIAccel::moveScratch(const struct rdn_selftest_target *screen,
+				    struct rdn_draw_surface *scratch)
+{
+	UInt32 need = screen->pitch_pixels * 4 * ((screen->height + 7) & ~7u);
+	uint64_t at = 0;
+	UInt32 waited;
+
+	if (fMoveBytes < need) {
+		if (fMoveBytes) {
+			/* Copies still queued use the old memory. */
+			for (waited = 0; fScreenPending && waited < 500; waited++) {
+				if (rdn_fence_done(&fAccel, fScreenFence))
+					fScreenPending = false;
+				else
+					IOSleep(1);
+			}
+			if (fScreenPending)
+				return kIOReturnBusy;
+			rdn_mem_free(fMoveHidden ? &fHidden : &fMem, fMoveOffset);
+			fMoveBytes = 0;
+		}
+		fMoveHidden = fHiddenSize && !rdn_mem_alloc(&fHidden, need, 4096, &at);
+		if (!fMoveHidden && rdn_mem_alloc(&fMem, need, 4096, &at))
+			return kIOReturnNoMemory;
+		fMoveOffset = (UInt32)at;
+		fMoveBytes = need;
+		IOLog("RadeonNI: screen copies go through %lu KB of video memory at 0x%lx\n",
+		      (unsigned long)(need >> 10), (unsigned long)fMoveOffset);
+	}
+	scratch->gpu_addr = rdn_vram_addr(&fAccel, fMoveOffset);
+	scratch->width = screen->width;
+	scratch->height = screen->height;
+	scratch->pitch_pixels = screen->pitch_pixels;
+	return kIOReturnSuccess;
+}
+
+IOReturn RadeonNIAccel::screenCopy(SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
+				   SInt32 w, SInt32 h, UInt32 *fence)
+{
+	struct rdn_selftest_target screen;
+	struct rdn_draw_surface surface, scratch;
+	struct rdn_blit_rect rect;
+	UInt32 slot = 0;
+	uint32_t seq = 0;
+	SInt32 cx, cy;
+	IOReturn ret;
+	bool some;
+	int r;
+
+	if (!screenRange(sx) || !screenRange(sy) || !screenRange(dx) ||
+	    !screenRange(dy) || !screenRange(w) || !screenRange(h))
+		return kIOReturnBadArgument;
+	if (!fEngineUp || !fFramebuffer)
+		return kIOReturnUnsupported;
+	IOLockLock(fLock);
+	ret = screenBegin(&screen, &slot);
+	if (ret != kIOReturnSuccess) {
+		IOLockUnlock(fLock);
+		return ret;
+	}
+	/* Cut the destination and carry the source along, then the source. */
+	cx = dx;
+	cy = dy;
+	some = screenClip(&screen, &cx, &cy, &w, &h);
+	if (some) {
+		sx += cx - dx;
+		sy += cy - dy;
+		dx = cx;
+		dy = cy;
+		cx = sx;
+		cy = sy;
+		some = screenClip(&screen, &cx, &cy, &w, &h);
+	}
+	if (some) {
+		dx += cx - sx;
+		dy += cy - sy;
+		sx = cx;
+		sy = cy;
+	}
+	if (!some || (sx == dx && sy == dy)) {
+		/* Nothing to draw. What is queued already is all there is to wait for. */
+		*fence = fAccel.fence_emitted;
+		IOLockUnlock(fLock);
+		return kIOReturnSuccess;
+	}
+	ret = moveScratch(&screen, &scratch);
+	if (ret != kIOReturnSuccess) {
+		IOLockUnlock(fLock);
+		return ret;
+	}
+	surface.gpu_addr = screen.gpu_addr;
+	surface.width = screen.width;
+	surface.height = screen.height;
+	surface.pitch_pixels = screen.pitch_pixels;
+	rect.src_x = sx;
+	rect.src_y = sy;
+	rect.dst_x = dx;
+	rect.dst_y = dy;
+	rect.width = w;
+	rect.height = h;
+	r = rdn_blit_move(&fAccel, &surface, &scratch, &rect, 1,
+			  SCREEN_OFFSET + slot * SCREEN_SLOT_BYTES, &seq);
+	screenEnd(slot);
+	*fence = fAccel.fence_emitted;
+	IOLockUnlock(fLock);
+	return r ? kIOReturnIOError : kIOReturnSuccess;
+}
+
 UInt32 RadeonNIAccel::apertureBytes(void)
 {
 	return fFramebuffer ? fFramebuffer->apertureSize() : 0;
@@ -1053,6 +1302,10 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIScalarO, 2, 1 },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodGartUnbind,
 		  kIOUCScalarIScalarO, 1, 0 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodScreenFill,
+		  kIOUCScalarIScalarO, 5, 1 },
+		{ 0, (IOMethod)&RadeonNIUserClient::methodScreenCopy,
+		  kIOUCScalarIScalarO, 5, 1 },
 	};
 
 	if (index >= RDN_UC_METHOD_COUNT)
@@ -1140,6 +1393,26 @@ IOReturn RadeonNIUserClient::methodGartUnbind(UInt32 offset)
 	 * it has not, the GPU reads the dummy page from here on: harmless.
 	 */
 	return fAccel->gartUnbind(offset, this);
+}
+
+IOReturn RadeonNIUserClient::methodScreenFill(UInt32 x, UInt32 y, UInt32 width,
+					      UInt32 height, UInt32 colour,
+					      UInt32 *fence)
+{
+	*fence = 0;
+	return fAccel->screenFill((SInt32)x, (SInt32)y, (SInt32)width,
+				  (SInt32)height, colour, fence);
+}
+
+/* Width and height share an argument: a method has six in all. */
+IOReturn RadeonNIUserClient::methodScreenCopy(UInt32 sx, UInt32 sy, UInt32 dx,
+					      UInt32 dy, UInt32 size,
+					      UInt32 *fence)
+{
+	*fence = 0;
+	return fAccel->screenCopy((SInt32)sx, (SInt32)sy, (SInt32)dx, (SInt32)dy,
+				  (SInt32)(size & 0xffff), (SInt32)(size >> 16),
+				  fence);
 }
 
 IOReturn RadeonNIUserClient::methodFree(UInt32 offset)

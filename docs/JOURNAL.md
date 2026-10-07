@@ -3529,3 +3529,215 @@ about correct".
   the picture and the watermarks look right, nothing was measured.
 - The link's state cannot be read from user space; the log line at mode
   set is all there is.
+
+## 2026-10-07 — Is Quartz Extreme a stub? An audit, and a profile of the window server
+
+**The user** remembered reading that Quartz Extreme was only a stub and
+accelerated nothing, and asked for a check and a plan for real Quartz
+Extreme and Core Image.
+
+**Where the statement is:** `README.md`, "A 2D accelerator plugin that
+enables Quartz Extreme. Currently a CPU-only stub." It is about
+`ga/RadeonNIGA.plugin`, whose fill and copy use the CPU and which exists
+to pass the window server's first gate. Nothing says it of the
+compositing.
+
+**On the G5** (kext and bundle as installed, DisplayPort, 1920x1080):
+- Idle desktop, fence counter read every 5 s for 65 s: no command buffer
+  except 2 at 08:58:00, when the menu bar clock changed (the kext logged
+  `setShape` with bounds 1772,0 98x22 for it).
+- A 700x500 Finder window dragged back and forth for 10 s (`drag`, 40 ms
+  a step) with `sample WindowServer 12 1`: 259 command buffers in 10 s.
+  Of the window server's main thread, 92.4 % is waiting for messages in
+  its server loop, 4.7 % `CGXUpdateDisplay`, of which 3.1 % is the
+  compositing through GL (`CGGLAccelComposite`: Mesa's immediate mode
+  path, binding textures, texture environment). `glTexSubImage2D` 0.25 %,
+  `glFlush` with the copy to the screen 0.15 %. No `glFinish` and no fence
+  wait anywhere: the window server calls `glFlush` (from
+  `CGXGLAccelFinish`) and never comes through `rdn_mesa_present()`.
+  2.3 % was `CGXSetDisplayTransferByFormula`, taken to be the fade after
+  the screen saver was killed for the test.
+- The surface client's methods in the logs since 2026-10-05: `setShape`
+  22687, `control` 1820, `flush` 512, read locks 214, `setIDMode` 170;
+  `setScale`, `setShapeBacking`, write locks and `read` never; no
+  private method asked for. `windowserver.log`: "Accel caps: 00000003".
+
+**So:** the compositing is done by the card and costs the window server
+little. What uses the CPU around it: window contents (Quartz 2D, as on
+any Tiger Mac), the copy of changed window tiles into textures (small
+in this test), the 2D plug-in if it is called at all (not known).
+
+**Wrong in my first reading:** that every update waits for the GPU. The
+code that waits is not reached by the window server. A switch for it
+(`/tmp/rdngld.wsflush`) was written and reverted unused.
+
+**Core Image** has not been run. By reading: a pbuffer, or any drawable
+that is not off-screen, a window, a surface or the whole screen, leaves
+the Mesa context bound to a 16x16 dummy; Mesa contexts are never shared;
+one context is current per process; 63 Apple-only entries stay with
+Apple's engine.
+
+**Not measured:** Quartz Extreme off for comparison; Exposé; larger
+windows; what "a bit slow" (the user, 2026-10-05) was.
+
+## 2026-10-07 — Round 1 for Quartz Extreme and Core Image: written and built, not yet run on the card
+
+**How it was made.** Four subagents in worktrees, in parallel (the user's
+wish), each with one package; all four stopped at the session's usage
+limit with their work part done, and I finished the packages one after
+the other. Branch `qe-ci-round1`.
+
+**What there is now, all off or silent by default:**
+- `tools/guest/qebench.sh`: window moves, drags, Exposé and idle, ten
+  seconds each, with the window server's CPU time, GPU command buffers,
+  a `sample` profile and the 2D plug-in's call counts. `fences now`.
+- The 2D plug-in counts its blitter calls with `/tmp/rdnga.on`
+  (`/tmp/rdnga.stats`); the surface client counts its calls per `control`
+  selector and `flush` options.
+- `tools/guest/ciprobe.m`: CGL pbuffers directly, Core Image on a CGL
+  context of a given renderer, Core Image's software renderer, and a
+  comparison of two pictures.
+- The bundle's log has the thread in every line, dumps for shared
+  contexts and unknown drawables, and, while logging, counts every call
+  of the GL entries Mesa lacks and Apple's engine keeps.
+- Front end: `OSMesaMakeCurrentStore` (a context draws into video memory
+  the caller names: a pbuffer) and `OSMesaTexStoreImage` (that memory as a
+  2D or rectangle texture, with alpha if asked, no copy); share lists
+  checked. `rdn_gltest -P` tests them, and with `RDN_SOFT=1` on Linux runs
+  without the card on softpipe (`mesa/tests/rdn_soft.c`).
+- `rdn_blit_fill()` and `rdn_blit_move()` in `hw/`, the user client
+  methods `RDN_UC_SCREEN_FILL` and `RDN_UC_SCREEN_COPY`, and with
+  `/tmp/rdnga.gpu` the 2D plug-in fills and copies with the GPU.
+  `tools/guest/gablit.c` calls the two methods directly.
+
+**Checked:** `make test` passes, with the new `blit_ops` (54 cases, same
+digest on x86 and PowerPC). `rdn_gltest -P` on softpipe: all five checks
+pass on x86 with glthread on and off, direct and copying, and big-endian
+under `qemu-ppc`. The Tiger bundle builds and `nm -u` names nothing of
+ours. Kext, plug-in, `ciprobe`, `gablit` and `fences` build in the guest
+with Apple's gcc; `ciprobe soft` runs there (Core Image's software
+renderer: 2.5 s the first picture, 347 ms each after, under emulation).
+
+**Not done:** nothing of this has run on the card or been installed on
+the G5. The Tiger build of `rdn_gltest` does not link at -O2 ("bl PPC
+branch out of range", the program is over 16 MB); not looked into, so
+`-P` on r600 waits for that. The bundle side of pbuffers and shared
+contexts is round 2 and needs what `ciprobe` shows first.
+
+## 2026-10-07 — Core Image on the card, first run: a black picture; pbuffers refused before the driver
+
+**On the G5**, with the driver as installed before round 1 (bundle
+f4d22db0), `ciprobe` built in the guest:
+- `ciprobe soft` (Core Image's software renderer, `CIGaussianBlur` on a
+  512x384 generated picture): 125 ms the first render, 8.3 ms each after.
+  The picture is right (blurred checker over a gradient).
+- `ciprobe gl 0x21a00` (a `CIContext` on a CGL context of our renderer,
+  off-screen drawable): CGL gives our renderer (accelerated, off-screen,
+  pbuffer capable by its own account), `GL_RENDERER` is Mesa's AMD TURKS,
+  no error, 101 ms then 10.6 ms a render. The picture is black except
+  for a 16x16 square in the bottom left corner: 196352 of 196608 pixels
+  differ from the software picture. Sixteen pixels a side is the dummy
+  drawable `rdn_make_current()` binds a context to when it has none it
+  knows.
+- `ciprobe pbuffer 0x21a00`: `CGLCreatePBuffer` succeeds,
+  `CGLSetPBuffer` fails with `kCGLBadEnumeration` (10010). No
+  `gldAttachDrawable` reaches the bundle for it: CGL or the engine
+  refuses first.
+
+**So** Core Image does choose the card and gets nothing usable from it:
+it is not falling back to software, it is drawing wrong. What reading
+the code said (journal, audit entry above) holds.
+
+**Not done:** the round 1 driver is not installed. Copied to the G5
+(`~/RadeonNI-g5.r1`, tools in `~/gl`, the installed set saved as
+`~/RadeonNI-g5.before-round1`); running `install.sh` and restarting was
+refused by the session's permission rules. So the fuller log (which
+context Core Image draws in, shared contexts, the engine-kept entries),
+`gablit`, `qebench` and the Quartz Extreme off comparison have not run.
+Why `CGLSetPBuffer` is refused is not known.
+
+## 2026-10-07 — Round 1 on the G5: GPU fill and copy right; what Core Image really does; one crash of ours fixed
+
+**Installed** on the G5 with the user's go-ahead: the round 1 package
+(`~/RadeonNI-g5.r1`, `install.sh --accel --hwcursor`), restart; Quartz
+Extreme in use. The set from before is `~/RadeonNI-g5.before-round1`.
+
+**GPU fill and copy** (`~/gl/gablit 100 300`, by readback): the ground
+and the four squares have their colours, the red and green pair copied 30
+pixels right and down over itself is right. `RDN_UC_SCREEN_FILL` and
+`RDN_UC_SCREEN_COPY` work on the card. The plug-in's own use of them
+(`/tmp/rdnga.gpu`) has not run.
+
+**A crash of ours.** With the bundle's log on, `CGLCreateContext` crashed
+in `cglAssignDispatch` at an address that is a PowerPC instruction: the
+new counting wrappers were put into the program's table while the context
+was still being made (the early takeover), and the engine then followed
+one as data. Fixed: wrappers only go into the table of a context that has
+a drawable (`rdn_kept_now`). Without the log nothing was wrong. Bundle
+39a16a74 on the G5 (`~/RadeonNIGLDriver.r1b`, copied over the installed
+one).
+
+**What Core Image does in `ciprobe gl`** (every GL call traced):
+- One context, one thread. No second context, no pbuffer, no framebuffer
+  object, no fragment program, no `glGetProgram*`.
+- It asks `glGetString` for vendor, renderer, version and extensions,
+  then filters on the CPU and gives GL the finished picture: a 512x384
+  `GL_TEXTURE_RECTANGLE` (`GL_BGRA`, `GL_UNSIGNED_INT_8_8_8_8_REV`, row
+  length 528, client storage on, `glTextureRangeAPPLE` on the same
+  memory, storage hint 0x85bf), drawn as one quad under
+  `glOrtho(0, 512, 0, 384)`; `glFinishObjectAPPLE(GL_TEXTURE, id)`
+  around it.
+- So on this card Core Image decides against hardware filtering from
+  the strings or the renderer, before trying anything. Which of them is
+  not known.
+- The quad comes out black but for 16x16 pixels at the bottom left, which
+  hold the right corner of the picture: the off-screen context still
+  clips to the dummy drawable it was bound to before its own existed.
+  `glprobe draw 0x21a00` on the same bundle leaves its buffer all zero.
+  Not looked into further; whether it is new with this bundle is not
+  known (the bundle before drew the same black picture for `ciprobe`).
+- Apple-only entries used: `glTextureRangeAPPLE`, `glFinishObjectAPPLE`.
+
+**Still open from this run:** `ciprobe gl` crashes in `CGLDestroyContext`
+with the log on (address 0x39290001; not looked into). The Tiger build
+of `rdn_gltest` does not link.
+
+**Not run:** `qebench`, the plug-in's counters, the window server's log,
+Quartz Extreme off. Restarting the window server and running the
+benchmark as root were refused by the session's permission rules.
+
+## 2026-10-07 — Quartz Extreme on against off, measured on the G5
+
+`~/gl/qebench.sh` (results in `~/qebench` on the G5), 1920x1080, a
+600x400 Finder window, ten seconds a phase, `sample` every 10 ms in both
+runs. On: the round 1 driver with `--accel --hwcursor`, the window
+server logging its `gld*` calls. Off: the same package installed without
+`--accel` (a restart each way).
+
+| Phase | | Quartz Extreme on | off |
+|---|---|---|---|
+| AppleScript moves in 10 s | moves done | 4763 | 1335 |
+| | window server CPU | 5.87 s | 10.04 s |
+| | GPU command buffers | 5224 | - |
+| 8 drags of 300,120 pixels | window server CPU | 1.38 s | 5.29 s |
+| | GPU command buffers | 640 | - |
+| Exposé in and out, 4 times | window server CPU | 1.61 s | 3.49 s |
+| | GPU command buffers | 670 | - |
+| Idle | window server CPU | 0.02 s | 0.02 s |
+
+So with the card compositing, the window server moves a window 3.6
+times as often with 0.6 of the CPU time, and a paced drag costs a
+quarter.
+
+**Also seen with Quartz Extreme on:**
+- The 2D plug-in's blitters were not called once (fill, copy, copy
+  region: 0). The plug-in is only the gate; its GPU path
+  (`/tmp/rdnga.gpu`) has nothing to speed up while Quartz Extreme is on.
+- The window server's surface client: `setIDMode` once and `setShape`
+  6666 times, nothing else, with no program's GL window open.
+- Of the entries Mesa lacks, the window server calls
+  `glTextureRangeAPPLE` and `glTestObjectAPPLE` (55 wrapped).
+- It never comes through `rdn_mesa_present()`.
+
+The accelerated driver is installed again (bundle 39a16a74), Quartz
+Extreme in use, no switch files.

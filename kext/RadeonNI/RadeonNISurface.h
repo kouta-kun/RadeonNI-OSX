@@ -30,6 +30,8 @@ public:
 	virtual IOReturn clientDied(void);
 	virtual IOExternalMethod *getTargetAndMethodForIndex(IOService **target,
 							     UInt32 index);
+	/* Brings the count properties up to date for whoever reads them. */
+	virtual bool serializeProperties(OSSerialize *s) const;
 
 	/* The public methods, in the order of eIOAccelSurfaceMethods. */
 	IOReturn readLockOptions(UInt32 options, IOAccelSurfaceInformation *info,
@@ -73,8 +75,38 @@ private:
 	void unlockRead(void);
 	UInt32 fCalls;
 
-	void note(const char *what, UInt32 a, UInt32 b, UInt32 c, UInt32 d);
-	void noteRegion(const char *what, IOAccelDeviceRegion *rgn, IOByteCount size);
+	/* method: one of eIOAccelSurfaceMethods. */
+	void note(UInt32 method, UInt32 a, UInt32 b, UInt32 c, UInt32 d);
+	void noteRegion(UInt32 method, IOAccelDeviceRegion *rgn, IOByteCount size);
+
+	/*
+	 * What is asked of this client, counted for its whole life: every
+	 * method, and for control and flush each distinct set of arguments,
+	 * as far as the tables go (what does not fit is counted as "other").
+	 * Shown as the properties RadeonNICalls, RadeonNIControl and
+	 * RadeonNIFlush of this object (ioreg -c RadeonNISurfaceClient -l -w0)
+	 * and logged when the client closes.
+	 */
+	enum { kControlSelectors = 8, kControlArgs = 4, kFlushKinds = 8 };
+	UInt32 fMethodCalls[kIOAccelNumSurfaceMethods];
+	UInt32 fPrivateAsked;
+	struct {
+		UInt32 selector, calls, argCount, otherArgs;
+		struct {
+			UInt32 arg, calls;
+		} args[kControlArgs];
+	} fControl[kControlSelectors];
+	UInt32 fControlCount, fControlOther;
+	struct {
+		UInt32 mask, options, calls;
+	} fFlush[kFlushKinds];
+	UInt32 fFlushCount, fFlushOther;
+	/* fCalls + fPrivateAsked when the properties were last written. */
+	UInt32 fPublished;
+
+	void countControl(UInt32 selector, UInt32 arg);
+	void countFlush(UInt32 mask, UInt32 options);
+	void publishCounts(bool log);
 };
 
 #endif /* RADEONNISURFACE_H */

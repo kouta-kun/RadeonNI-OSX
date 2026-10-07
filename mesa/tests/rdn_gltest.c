@@ -2,7 +2,7 @@
  * First OpenGL through Mesa on the osx-gpu winsys (Linux host).
  *
  *   rdn_gltest [-n frames] [-a angle] [-b rrggbb] [-D] [-o file.ppm]
- *              [-s] [-L mode]
+ *              [-s] [-L mode] [-P]
  *
  * Renders with fixed-function OpenGL into an off-screen buffer: a clear to
  * dark grey, a depth-tested pair of triangles (the red-green-blue one in
@@ -12,7 +12,9 @@
  * picture is still in video memory. Prints the GL strings and a few
  * pixels of the first frame, saves the last frame with -o, and with -s
  * copies every frame to the screen, 400 pixels from its left edge and 128
- * from its top.
+ * from its top. -P instead checks a store as a drawable and as a texture,
+ * and a share list (store_test()); with RDN_SOFT=1 on Linux that runs
+ * without the card, on Mesa's software rasteriser (rdn_soft.c).
  *
  * The library exports only the OSMesa calls; GL functions are looked up
  * with OSMesaGetProcAddress and called here as rglClear and so on.
@@ -211,19 +213,154 @@ static uint32_t pixel(const uint8_t *buf, int x, int y)
 	return v & 0xffffff;
 }
 
+/*
+ * -P: a store as a drawable and as a texture, and a share list. Context a
+ * draws four colours into a store (video memory of ours, bottom row
+ * first); b, which shares with a, has the store as a texture's image and
+ * draws it on the left half of its own drawable, and on the right half a
+ * texture a made. Reads b's picture back and says PASS or FAIL per check.
+ */
+#define STORE_SIDE 256
+
+static int check(const char *what, int x, int y, uint32_t want)
+{
+	uint32_t got = gl_pixel(x, y);
+
+	printf("%s: %s (%d,%d is %06x, want %06x)\n", got == want ? "PASS" : "FAIL",
+	       what, x, y, (unsigned)got, (unsigned)want);
+	return got != want;
+}
+
+static void quad(float x0, float x1)
+{
+	rglBegin(GL_QUADS);
+	rglTexCoord2f(0, 0); rglVertex3f(x0, -1, 0);
+	rglTexCoord2f(1, 0); rglVertex3f(x1, -1, 0);
+	rglTexCoord2f(1, 1); rglVertex3f(x1, 1, 0);
+	rglTexCoord2f(0, 1); rglVertex3f(x0, 1, 0);
+	rglEnd();
+}
+
+static int store_test(OSMesaContext a, uint8_t *buf, const char *out)
+{
+	static const float quarter[4][3] = {
+		{ 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 1, 1 }
+	};
+	uint8_t solid[8 * 8 * 4];
+	OSMesaContext b;
+	GLuint shared, image;
+	uint32_t offset;
+	int i, bad = 0;
+
+	b = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, a);
+	if (!b || !rdn_target_vram_alloc(STORE_SIDE * STORE_SIDE * 4, &offset)) {
+		fprintf(stderr, "no second context or no memory for the store\n");
+		return 1;
+	}
+
+	/* a: a texture of its own, magenta, for b to use. */
+	for (i = 0; i < 8 * 8; i++) {
+		solid[i * 4] = 255; solid[i * 4 + 1] = 0;
+		solid[i * 4 + 2] = 255; solid[i * 4 + 3] = 255;
+	}
+	rglGenTextures(1, &shared);
+	rglBindTexture(GL_TEXTURE_2D, shared);
+	rglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	rglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	rglTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 8, 8, 0, GL_RGBA,
+		      GL_UNSIGNED_BYTE, solid);
+
+	/* a: the store, a colour in each quarter, red at the bottom left. */
+	if (!OSMesaMakeCurrentStore(a, RDN_TARGET_VRAM_HANDLE, STORE_SIDE * 4,
+				    offset, STORE_SIDE, STORE_SIDE,
+				    OSMESA_STORE_BOTTOM_UP)) {
+		printf("FAIL: OSMesaMakeCurrentStore\n");
+		return 1;
+	}
+	rglViewport(0, 0, STORE_SIDE, STORE_SIDE);
+	rglEnable(GL_SCISSOR_TEST);
+	for (i = 0; i < 4; i++) {
+		rglScissor((i & 1) * STORE_SIDE / 2, (i >> 1) * STORE_SIDE / 2,
+			   STORE_SIDE / 2, STORE_SIDE / 2);
+		rglClearColor(quarter[i][0], quarter[i][1], quarter[i][2], 1);
+		rglClear(GL_COLOR_BUFFER_BIT);
+	}
+	rglDisable(GL_SCISSOR_TEST);
+	rglFinish();
+
+	/* b: its own drawable, the store on the left, a's texture on the right. */
+	if (!OSMesaMakeCurrent(b, buf, GL_UNSIGNED_BYTE, W, H)) {
+		printf("FAIL: the second context has no drawable\n");
+		return 1;
+	}
+	rglViewport(0, 0, W, H);
+	rglClearColor(0.2f, 0.2f, 0.2f, 1);
+	rglClear(GL_COLOR_BUFFER_BIT);
+	rglGenTextures(1, &image);
+	rglBindTexture(GL_TEXTURE_2D, image);
+	rglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	rglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	if (!OSMesaTexStoreImage(b, GL_TEXTURE_2D, RDN_TARGET_VRAM_HANDLE,
+				 STORE_SIDE * 4, offset, STORE_SIDE, STORE_SIDE, 0)) {
+		printf("FAIL: OSMesaTexStoreImage\n");
+		bad++;
+	}
+	rglEnable(GL_TEXTURE_2D);
+	rglColor3f(1, 1, 1);
+	quad(-1, 0);
+	rglBindTexture(GL_TEXTURE_2D, shared);
+	quad(0, 1);
+	rglFinish();
+
+	bad += check("store, bottom left", 64, 384, 0xff0000);
+	bad += check("store, bottom right", 192, 384, 0x00ff00);
+	bad += check("store, top left", 64, 128, 0x0000ff);
+	bad += check("store, top right", 192, 128, 0xffffff);
+	bad += check("the other context's texture", 384, 256, 0xff00ff);
+
+	if (out) {
+		FILE *f = fopen(out, "wb");
+		int x, y;
+
+		if (f) {
+			fprintf(f, "P6\n%d %d\n255\n", W, H);
+			for (y = 0; y < H; y++)
+				for (x = 0; x < W; x++) {
+					uint32_t v = pixel(buf, x, y);
+
+					fputc((int)(v >> 16) & 255, f);
+					fputc((int)(v >> 8) & 255, f);
+					fputc((int)v & 255, f);
+				}
+			fclose(f);
+		}
+	}
+
+	/* The store goes back only when nothing uses it any more. */
+	rglBindTexture(GL_TEXTURE_2D, image);
+	OSMesaTexStoreImage(b, GL_TEXTURE_2D, 0, 0, 0, 0, 0, 0);
+	OSMesaDestroyContext(b);
+	OSMesaDestroyContext(a);
+	rdn_target_vram_free(offset);
+	printf("%s\n", bad ? "FAILED" : "all passed");
+	return bad != 0;
+}
+
 int main(int argc, char **argv)
 {
 	const char *out = NULL;
 	int frames = 1, to_screen = 0, spitch = 0, opt, f, x, y, list_mode = 0;
+	int store_mode = 0;
 	float start_angle = 0.0f;
 	volatile uint32_t *scan = NULL;
 	uint8_t *buf, tex_data[8 * 8 * 4];
 	OSMesaContext ctx;
 	GLuint tex;
 
-	while ((opt = getopt(argc, argv, "n:o:sa:b:DL:")) != -1) {
+	while ((opt = getopt(argc, argv, "n:o:sa:b:DL:P")) != -1) {
 		switch (opt) {
 		case 'L': list_mode = atoi(optarg); break;
+		case 'P': store_mode = 1; break;
 		case 'n': frames = atoi(optarg); break;
 		case 'o': out = optarg; break;
 		case 'D': no_depth = 1; break;
@@ -245,6 +382,9 @@ int main(int argc, char **argv)
 	printf("GL_VENDOR:   %s\n", rglGetString(GL_VENDOR));
 	printf("GL_RENDERER: %s\n", rglGetString(GL_RENDERER));
 	printf("GL_VERSION:  %s\n", rglGetString(GL_VERSION));
+
+	if (store_mode)
+		return store_test(ctx, buf, out);
 
 	if (list_mode) {
 		draw_list(list_mode);

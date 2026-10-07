@@ -130,13 +130,9 @@ evdev)
     exec $sudo "$root/scripts/guest-ctl.py" evdev "$node"
     ;;
 ssh)
-    # Tiger ships an old OpenSSH; re-enable the algorithms it speaks.
-    exec ssh -p 2222 -i "$root/private/ssh/tiger_rsa" -o IdentitiesOnly=yes \
-        -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1 \
-        -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-        -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
-        "$user@127.0.0.1" "$@"
+    # One place knows how to reach the Macs (old algorithms, the key, also
+    # from a git worktree): scripts/mac.sh.
+    exec "$root/scripts/mac.sh" guest ssh "$@"
     ;;
 *)
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'

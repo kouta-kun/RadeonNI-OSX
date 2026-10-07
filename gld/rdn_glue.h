@@ -21,6 +21,13 @@ unsigned rdn_dispatch_resolve(void *(*lookup)(const char *name),
  */
 unsigned rdn_dispatch_install(void *table, unsigned entries);
 extern const unsigned rdn_dispatch_entries;
+/*
+ * While the bundle logs (rdn_logging), install also wraps the entries Mesa
+ * has no function for, which stay the engine's, to count their calls and
+ * log the first few of each. This logs the counts, with `when` to tell the
+ * reports apart.
+ */
+void rdn_dispatch_kept_report(const char *when);
 
 /* rdn_mesa.c: the engine context whose Mesa context is current. */
 extern void *rdn_current_rend;
@@ -67,6 +74,15 @@ extern long rdn_async_limit, rdn_async_piece;
  */
 extern int rdn_flush_waits;
 
+/* The bundle's log has a file (RDN_GLD_LOG, or /tmp/rdngld.on exists). */
+extern int rdn_logging;
+/*
+ * The table being installed into is a finished context's (rdn_mesa.c).
+ * While a context is still being made the engine keeps other things in
+ * the slots Mesa has no function for, and a wrapper there crashes
+ * cglAssignDispatch.
+ */
+extern int rdn_kept_now;
 /* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
 extern int rdn_trace;
 

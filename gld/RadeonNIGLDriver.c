@@ -29,10 +29,12 @@
  */
 
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <mach/mach.h>
 #include <OpenGL/gl.h>
 #include <OpenGL/gliContext.h>
 #include <OpenGL/gliDispatch.h>
@@ -120,10 +122,30 @@ static int patch = 7;
 static int patch = 1;
 #endif
 
+/*
+ * Every log line starts with the process and the calling thread: the name
+ * of the thread's Mach port in this process, a short number that is the
+ * thread's for as long as it lives.
+ */
+#define TAG		"[%d:%x]"
+#define TAG_ARGS	(int)getpid(), thread_tag()
+
+static unsigned thread_tag(void)
+{
+	return (unsigned)pthread_mach_thread_np(pthread_self());
+}
+
+/*
+ * More of everything in the log: set when /tmp/rdngld.trace exists (and
+ * always in the pass-through build, which is only ever run to read its log).
+ */
+static int log_all;
+
 #ifdef RDN_MESA
 #include <stdarg.h>
 #include "rdn_glue.h"
 
+int rdn_logging;
 int rdn_trace;
 
 void rdn_log(const char *fmt, ...)
@@ -132,12 +154,20 @@ void rdn_log(const char *fmt, ...)
 
 	if (!logf)
 		return;
-	fprintf(logf, "[%d] ", (int)getpid());
+	/* One line, also when another thread logs at the same time. */
+	flockfile(logf);
+	fprintf(logf, TAG " ", TAG_ARGS);
 	va_start(ap, fmt);
 	vfprintf(logf, fmt, ap);
 	va_end(ap);
 	fprintf(logf, "\n");
 	fflush(logf);
+	funlockfile(logf);
+}
+
+static void kept_at_exit(void)
+{
+	rdn_dispatch_kept_report("exit");
 }
 #endif
 
@@ -188,17 +218,23 @@ static void setup(void)
 		logf = fopen(name, "a");
 	}
 	rdn_trace = logf && access("/tmp/rdngld.trace", F_OK) == 0;
+	log_all = rdn_trace;
+	/* The entries Mesa lacks are counted while there is a log. */
+	rdn_logging = logf != NULL;
+	if (logf)
+		atexit(kept_at_exit);
 #else
 	logf = fopen(path ? path : DEFAULT_LOG, "a");
+	log_all = 1;
 #endif
 	handle = dlopen(REAL_BUNDLE, RTLD_NOW | RTLD_LOCAL);
 	if (logf)
-		fprintf(logf, "[%d] RadeonNIGLDriver loaded, software renderer %s\n",
-			(int)getpid(), handle ? "opened" : dlerror());
+		fprintf(logf, TAG " RadeonNIGLDriver loaded in %s, software renderer %s\n",
+			TAG_ARGS, getprogname(), handle ? "opened" : dlerror());
 	for (i = 0; handle && i < GLD_COUNT; i++) {
 		real[i] = (gld_fn)dlsym(handle, names[i]);
 		if (!real[i] && logf)
-			fprintf(logf, "[%d] missing %s\n", (int)getpid(), names[i]);
+			fprintf(logf, TAG " missing %s\n", TAG_ARGS, names[i]);
 	}
 	if (logf)
 		fflush(logf);
@@ -209,26 +245,260 @@ static void setup(void)
 #endif
 }
 
-static void dump(const char *what, long addr, int bytes)
+/*
+ * Read memory that may not be there, for the log: through the kernel, which
+ * refuses where reading it here would end the process. All of it or, if
+ * that fails, as far as the end of the page it starts in. Returns how many
+ * bytes were read.
+ */
+#define DUMP_MAX	0x100
+
+static int peek(long addr, void *to, int bytes)
 {
-	const unsigned long *p = (const unsigned long *)addr;
-	int i;
+	int in_page = (int)(vm_page_size - ((unsigned long)addr & (vm_page_size - 1)));
+	vm_size_t got = 0;
+
+	if (vm_read_overwrite(mach_task_self(), (vm_address_t)addr,
+			      (vm_size_t)bytes, (vm_address_t)to, &got) == KERN_SUCCESS)
+		return (int)got;
+	if (in_page < bytes &&
+	    vm_read_overwrite(mach_task_self(), (vm_address_t)addr,
+			      (vm_size_t)in_page, (vm_address_t)to, &got) == KERN_SUCCESS)
+		return (int)got;
+	return 0;
+}
+
+/* An argument that may be the address of something: aligned, not small. */
+static int pointer_like(long value)
+{
+	return (value & 3) == 0 && (unsigned long)value >= 0x1000;
+}
+
+/* `quiet`: say nothing if there is nothing to read at the address. */
+static void dump_from(const char *what, long addr, int bytes, int quiet)
+{
+	unsigned long words[DUMP_MAX / 4];
+	int i, got;
 
 	if (!logf || !addr)
 		return;
-	for (i = 0; i < bytes / 4; i++) {
+	if (bytes > DUMP_MAX)
+		bytes = DUMP_MAX;
+	got = peek(addr, words, bytes);
+	if (got < 4) {
+		if (!quiet)
+			fprintf(logf, TAG "   %s: nothing to read at %lx\n",
+				TAG_ARGS, what, addr);
+		return;
+	}
+	flockfile(logf);
+	for (i = 0; i < got / 4; i++) {
 		if (i % 8 == 0)
-			fprintf(logf, "%s[%d]   %s+%03x:", i ? "\n" : "",
-				(int)getpid(), what, i * 4);
-		fprintf(logf, " %08lx", p[i]);
+			fprintf(logf, "%s" TAG "   %s+%03x:", i ? "\n" : "",
+				TAG_ARGS, what, i * 4);
+		fprintf(logf, " %08lx", words[i]);
 	}
 	fprintf(logf, "\n");
 	fflush(logf);
+	funlockfile(logf);
 }
 
-/* What is known about each call's arguments, shown after the call. */
-static void describe(int idx, long a, long b, long c, long d, long ret)
+static void dump(const char *what, long addr, int bytes)
 {
+	dump_from(what, addr, bytes, 0);
+}
+
+/*
+ * The objects the driver made, remembered while there is a log so that the
+ * arguments of later calls can be recognised: which of gldCreateContext's
+ * is the shared object, what a texture call is given first.
+ */
+#define MAX_KNOWN	64
+static struct {
+	long value;
+	const char *what;
+	unsigned number;
+} known[MAX_KNOWN];
+
+static void known_add(const char *what, long value)
+{
+	static unsigned made;
+	int i, at = -1;
+
+	if (!logf || !value)
+		return;
+	for (i = 0; i < MAX_KNOWN; i++) {
+		if (known[i].value == value)
+			at = i;
+		else if (at < 0 && !known[i].value)
+			at = i;
+	}
+	if (at < 0)
+		at = made % MAX_KNOWN;
+	known[at].value = value;
+	known[at].what = what;
+	known[at].number = ++made;
+	fprintf(logf, TAG "   %lx is %s %u from here on\n", TAG_ARGS, value, what,
+		known[at].number);
+}
+
+static int known_find(long value)
+{
+	int i;
+
+	for (i = 0; value && i < MAX_KNOWN; i++)
+		if (known[i].value == value)
+			return i;
+	return -1;
+}
+
+static void known_remove(long value)
+{
+	int i = known_find(value);
+
+	if (i >= 0)
+		known[i].value = 0;
+}
+
+/* " [0 context 3, 2 shared 1]": the arguments that are known objects. */
+static void known_args(char *text, size_t size, const long *args)
+{
+	size_t used = 0;
+	int i, k;
+
+	text[0] = 0;
+	for (i = 0; i < 8; i++) {
+		k = known_find(args[i]);
+		if (k < 0 || used + 40 > size)
+			continue;
+		used += snprintf(text + used, size - used, "%s%d %s %u",
+				 used ? ", " : " [", i, known[k].what, known[k].number);
+	}
+	if (used)
+		snprintf(text + used, size - used, "]");
+}
+
+/*
+ * What an argument points at: the first `bytes` of it, and any known object
+ * whose address is among them.
+ */
+static void dump_arg(int arg, long value, int bytes)
+{
+	unsigned long words[DUMP_MAX / 4];
+	char what[16];
+	int i, k, got;
+
+	if (!logf || !pointer_like(value) || known_find(value) >= 0)
+		return;
+	if (bytes > DUMP_MAX)
+		bytes = DUMP_MAX;
+	snprintf(what, sizeof(what), "arg%d", arg);
+	dump_from(what, value, bytes, 1);
+	got = peek(value, words, bytes);
+	for (i = 0; i < got / 4; i++) {
+		k = known_find((long)words[i]);
+		if (k >= 0)
+			fprintf(logf, TAG "   arg%d+%03x is %s %u\n", TAG_ARGS, arg,
+				i * 4, known[k].what, known[k].number);
+	}
+}
+
+/* gldAttachDrawable's type is the CGL pixel format attribute of the kind. */
+static const char *drawable_name(long type)
+{
+	switch (type) {
+	case 0:    return "none";
+	case 0x35: return "off-screen, kCGLPFAOffScreen";
+	case 0x36: return "full screen, kCGLPFAFullScreen";
+	case 0x50: return "window, kCGLPFAWindow";
+	case 0x5a: return "pbuffer, kCGLPFAPBuffer";
+	case 0x5b: return "remote pbuffer, kCGLPFARemotePBuffer";
+	}
+	return "not seen before";
+}
+
+static int drawable_understood(long type)
+{
+	return type == 0x35 || type == 0x36 || type == 0x50;
+}
+
+/*
+ * A drawable of a kind the bundle does nothing with yet: the whole record,
+ * and what its first words point at, where they point at anything.
+ */
+static void dump_drawable(const char *when, long type, long record)
+{
+	unsigned long words[16];
+	char what[24];
+	int i, got;
+
+	if (!logf)
+		return;
+	fprintf(logf, TAG "   drawable type 0x%lx (%s), record %lx %s\n", TAG_ARGS,
+		type, drawable_name(type), record, when);
+	if (!pointer_like(record))
+		return;
+	dump("drawable", record, 0x100);
+	got = peek(record, words, sizeof(words));
+	for (i = 0; i < got / 4; i++) {
+		if (!pointer_like((long)words[i]) || known_find((long)words[i]) >= 0)
+			continue;
+		snprintf(what, sizeof(what), "drawable[%d]", i);
+		dump_from(what, (long)words[i], 0x40, 1);
+	}
+}
+
+/*
+ * gldGetInteger and gldSetInteger: the parameter's number, with CGL's name
+ * for it if CGL has a context parameter of that number (not known to be
+ * the same numbers), and the first words of the values.
+ */
+static void dump_parameter(const char *call, long parameter, long values)
+{
+	static const struct { long number; const char *name; } cgl[] = {
+		{ 200, "kCGLCPSwapRectangle" }, { 222, "kCGLCPSwapInterval" },
+		{ 224, "kCGLCPDispatchTableSize" }, { 226, "kCGLCPClientStorage" },
+		{ 228, "kCGLCPSurfaceTexture" }, { 235, "kCGLCPSurfaceOrder" },
+		{ 236, "kCGLCPSurfaceOpacity" }, { 304, "kCGLCPSurfaceBackingSize" },
+		{ 306, "kCGLCPSurfaceSurfaceVolatile" },
+		{ 308, "kCGLCPReclaimResources" }, { 309, "kCGLCPCurrentRendererID" },
+		{ 310, "kCGLCPGPUVertexProcessing" },
+		{ 311, "kCGLCPGPUFragmentProcessing" },
+	};
+	const char *name = "";
+	unsigned i;
+
+	if (!logf)
+		return;
+	for (i = 0; i < sizeof(cgl) / sizeof(cgl[0]); i++)
+		if (cgl[i].number == parameter)
+			name = cgl[i].name;
+	fprintf(logf, TAG "   %s parameter %ld (0x%lx) %s\n", TAG_ARGS, call,
+		parameter, parameter, name);
+	if (pointer_like(values))
+		dump_from("values", values, 0x20, 1);
+}
+
+/* gldCreateContext's sixth argument, less this, is the engine's context. */
+#define ENGINE_CTX_CREATE_ARG	0x360
+
+/* Not more than this many detailed descriptions of a call that is frequent. */
+#define DETAILS_LOGGED	64
+
+/*
+ * What is known about each call's arguments, shown after the call. `args`
+ * are the eight register arguments; a call that takes fewer leaves whatever
+ * was in the registers in the rest.
+ */
+static void describe(int idx, const long *args, long ret)
+{
+	static unsigned details[GLD_COUNT];
+	long a = args[0], b = args[1], c = args[2], d = args[3];
+	long made = 0;
+	int i;
+
+	if (!logf)
+		return;
 	switch (idx) {
 	case IDX_gldGetVersion:
 		dump("version", a, 4); dump("version", b, 4);
@@ -245,12 +515,61 @@ static void describe(int idx, long a, long b, long c, long d, long ret)
 		}
 		break;
 	case IDX_gldAttachDrawable:
-		dump("drawable", c, 0x80);
+		if (drawable_understood(b))
+			dump("drawable", c, 0x80);
+		else
+			dump_drawable("after the call", b, c);
 		dump("ctx", a, 0x60);
 		break;
 	case IDX_gldCreateShared:
-	case IDX_gldCreateContext:
+		/*
+		 * The first argument is where the new object goes; what the
+		 * next three are is not known.
+		 */
 		dump("out", a, 4);
+		if (ret == 0 && peek(a, &made, sizeof(made)) == sizeof(made) && made) {
+			known_add("shared", made);
+			dump_from("shared", made, 0x80, 1);
+		}
+		for (i = 1; i < 4; i++)
+			dump_arg(i, args[i], 0x40);
+		break;
+	case IDX_gldDestroyShared:
+		dump_from("shared", a, 0x80, 1);
+		break;
+	case IDX_gldCreateContext:
+		/*
+		 * Where the new context goes, the pixel format's renderer ID
+		 * word, and pointers into the engine's context (the sixth
+		 * for certain). One of them should lead to the shared object.
+		 */
+		dump("out", a, 4);
+		if (ret == 0 && peek(a, &made, sizeof(made)) == sizeof(made) && made) {
+			known_add("context", made);
+			dump_from("context", made, 0x40, 1);
+		}
+		if (pointer_like(args[5]))
+			fprintf(logf, TAG "   engine context %lx, if arg5 is what it was\n",
+				TAG_ARGS, args[5] - ENGINE_CTX_CREATE_ARG);
+		for (i = 1; i < 8; i++)
+			dump_arg(i, args[i], 0x40);
+		break;
+	case IDX_gldGetInteger:
+		dump_parameter("gldGetInteger got", b, c);
+		break;
+	case IDX_gldCreateTexture:
+	case IDX_gldModifyTexture:
+	case IDX_gldModifyTextureLevel:
+	case IDX_gldGetTextureLevel:
+		/*
+		 * Which argument is the texture's record is not known: what
+		 * each of the first four points at, unless it is an object
+		 * named above.
+		 */
+		if (!log_all && details[idx]++ >= DETAILS_LOGGED)
+			break;
+		for (i = 0; i < 4; i++)
+			dump_arg(i, args[i], 0x80);
 		break;
 	case IDX_gldInitDispatch:
 	case IDX_gldUpdateDispatch:
@@ -259,8 +578,8 @@ static void describe(int idx, long a, long b, long c, long d, long ret)
 		dump("arg2", c, 0x40);
 		break;
 	case IDX_gldGetString:
-		if (logf && ret)
-			fprintf(logf, "[%d]   string \"%s\"\n", (int)getpid(),
+		if (ret)
+			fprintf(logf, TAG "   string \"%s\"\n", TAG_ARGS,
 				(const char *)ret);
 		break;
 	}
@@ -288,8 +607,8 @@ static void take_over(GLIFunctionDispatch *disp)
 	engine_clear_color = disp->clear_color;
 	disp->clear = rdn_clear;
 	if (logf)
-		fprintf(logf, "[%d]   dispatch table %p: clear replaced\n",
-			(int)getpid(), (void *)disp);
+		fprintf(logf, TAG "   dispatch table %p: clear replaced\n",
+			TAG_ARGS, (void *)disp);
 }
 
 /*
@@ -312,8 +631,8 @@ static void scan(long table)
 	base = (unsigned long *)(table - ENGINE_CTX_TABLE_OFFSET);
 	for (i = 0; i < ENGINE_CTX_SCAN_BYTES / 4; i++)
 		if (base[i] >= value - 4 && base[i] <= value + 0xab8)
-			fprintf(logf, "[%d]   engine context %p +%05x: %08lx\n",
-				(int)getpid(), (void *)base, i * 4, base[i]);
+			fprintf(logf, TAG "   engine context %p +%05x: %08lx\n",
+				TAG_ARGS, (void *)base, i * 4, base[i]);
 	fflush(logf);
 }
 
@@ -352,7 +671,7 @@ static void table_report(void)
 
 	if (!logf)
 		return;
-	fprintf(logf, "[%d] driver table calls:", (int)getpid());
+	fprintf(logf, TAG " driver table calls:", TAG_ARGS);
 	for (i = 0; i < DRIVER_TABLE_ENTRIES; i++)
 		if (table_calls[i])
 			fprintf(logf, " [%d]=%lu", i, table_calls[i]);
@@ -420,11 +739,15 @@ static void present_hook(void *gld_ctx, long table)
  */
 static unsigned stub_calls[33];
 
+/* How many calls of each entry are logged; more with the GL trace on. */
+#define STUB_LOGGED		6
+#define STUB_LOGGED_TRACE	1000
+
 static long table_stub(int entry, long a, long b, long c, long d)
 {
-	if (logf && stub_calls[entry]++ < 6) {
-		fprintf(logf, "[%d] driver table entry %d called (%lx, %lx, %lx, %lx)\n",
-			(int)getpid(), entry, a, b, c, d);
+	if (logf && stub_calls[entry]++ < (rdn_trace ? STUB_LOGGED_TRACE : STUB_LOGGED)) {
+		fprintf(logf, TAG " driver table entry %d called (%lx, %lx, %lx, %lx)\n",
+			TAG_ARGS, entry, a, b, c, d);
 		fflush(logf);
 	}
 	return 0;
@@ -495,9 +818,6 @@ static int early_takeover(void)
 	return app_surfaces() || getenv("RDN_GLD_EARLY") != NULL ||
 	       access("/tmp/rdngld.early", F_OK) == 0;
 }
-
-/* gldCreateContext's sixth argument, less this, is the engine's context. */
-#define ENGINE_CTX_CREATE_ARG	0x360
 
 /*
  * Tell the window server that a surface has a new picture
@@ -687,14 +1007,29 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		    long g, long h)
 {
+	long args[8] = { a, b, c, d, e, f, g, h };
 	long ret = -1;
 	int restore_id = 0;
 
 	setup();
 	if (logf) {
-		fprintf(logf, "[%d] %s(%lx, %lx, %lx, %lx, %lx, %lx, %lx, %lx)\n",
-			(int)getpid(), names[idx], a, b, c, d, e, f, g, h);
+		char objects[160];
+
+		known_args(objects, sizeof(objects), args);
+		fprintf(logf, TAG " %s(%lx, %lx, %lx, %lx, %lx, %lx, %lx, %lx)%s\n",
+			TAG_ARGS, names[idx], a, b, c, d, e, f, g, h, objects);
 		fflush(logf);
+		if (idx == IDX_gldSetInteger)
+			dump_parameter("gldSetInteger sets", b, c);
+		/*
+		 * A drawable the bundle does nothing with yet, in whatever
+		 * way the call is answered below, and before the call as
+		 * well: the engine fills some records only afterwards.
+		 */
+		if (idx == IDX_gldAttachDrawable && !drawable_understood(b))
+			dump_drawable("before the call", b, c);
+		if (idx == IDX_gldDestroyShared || idx == IDX_gldDestroyContext)
+			known_remove(a);
 	}
 	/*
 	 * gldCreateContext gets a pointer to the pixel format's renderer ID
@@ -706,10 +1041,9 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		restore_id = 1;
 	}
 #ifdef RDN_MESA
-	if (idx == IDX_gldSetInteger && logf && c) {
-		fprintf(logf, "[%d] gldSetInteger parameter %ld:", (int)getpid(), b);
-		dump("values", c, 0x20);
-	}
+	/* What the context's program called of the entries Mesa lacks. */
+	if (idx == IDX_gldDestroyContext && logf)
+		rdn_dispatch_kept_report("a context is destroyed");
 	/* Mesa's context goes before the software renderer's own. */
 	if (idx == IDX_gldDestroyContext)
 		rdn_mesa_context_destroyed((void *)a);
@@ -740,8 +1074,8 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 						display_words[0]);
 
 			if (logf)
-				fprintf(logf, "[%d]   surface 0x%lx of window 0x%lx bound -> %lx\n",
-					(int)getpid(), r[2], r[1], err);
+				fprintf(logf, TAG "   surface 0x%lx of window 0x%lx bound -> %lx\n",
+					TAG_ARGS, r[2], r[1], err);
 			if (!err && rdn_mesa_attach_surface((void *)a, r[0], r[1], r[2]))
 				return 2;
 		} else if (idx == IDX_gldAttachDrawable && b == 0x36) {
@@ -751,7 +1085,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			 * copies the whole picture to the screen.
 			 */
 			if (logf) {
-				fprintf(logf, "[%d]   the whole screen is attached\n", (int)getpid());
+				fprintf(logf, TAG "   the whole screen is attached\n", TAG_ARGS);
 				if (c)
 					dump("drawable", c, 0x40);
 			}
@@ -759,6 +1093,9 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 				return 2;
 		} else if (idx == IDX_gldAttachDrawable &&
 			   rdn_mesa_is_surface((void *)a)) {
+			if (logf)
+				fprintf(logf, TAG "   the context's surface is let go, nothing attached\n",
+					TAG_ARGS);
 			rdn_mesa_detach((void *)a);
 			return 0;
 		}
@@ -780,7 +1117,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 				c ? ((const unsigned long *)c)[2] : 0) ? 2 : -1;
 			screen_ctx = ret == 2 ? (void *)a : NULL;
 			if (logf) {
-				fprintf(logf, "[%d]   attached by us -> %lx\n", (int)getpid(), ret);
+				fprintf(logf, TAG "   attached by us -> %lx\n", TAG_ARGS, ret);
 				dump("drawable", c, 0x80);
 			}
 			return ret;
@@ -792,7 +1129,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			if (b && rdn_mesa_dispatch((void *)a, (void *)b))
 				present_hook((void *)a, b);
 			if (logf) {
-				fprintf(logf, "[%d]   dispatch set up by us\n", (int)getpid());
+				fprintf(logf, TAG "   dispatch set up by us\n", TAG_ARGS);
 				fflush(logf);
 			}
 			return idx == IDX_gldInitDispatch ? 4 : 0;
@@ -916,17 +1253,19 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			own_format = fmt;
 		}
 		if (logf) {
-			fprintf(logf, "[%d]   made a format of our own -> %lx, %lx\n",
-				(int)getpid(), ret, *(long *)a);
+			fprintf(logf, TAG "   made a format of our own -> %lx, %lx\n",
+				TAG_ARGS, ret, *(long *)a);
 			if (ret == 0 && *(long *)a)
 				dump("pixfmt", *(long *)a, 0x80);
 		}
 	}
 	if (logf) {
-		fprintf(logf, "[%d]   %s -> %lx\n", (int)getpid(), names[idx], ret);
+		fprintf(logf, TAG "   %s -> %lx\n", TAG_ARGS, names[idx], ret);
 		fflush(logf);
 	}
-	describe(idx, a, b, c, d, ret);
+	/* The attribute list as the software renderer was given it. */
+	args[1] = b;
+	describe(idx, args, ret);
 	ret = adjust(idx, a, b, c, d, ret);
 #ifdef RDN_MESA
 	/*
