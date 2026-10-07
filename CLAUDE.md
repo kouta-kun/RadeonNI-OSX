@@ -102,20 +102,18 @@ been planned in detail.
   (`mesa/patches/0002`, Quake 3's black floors, journal 2026-10-06).
   Found twice so far; the second time it was the list of extensions
   (below). Suspect it first when something works on Linux and not here.
-- The extension list (2026-10-06, journal): Mesa makes the string
+- The extension list (2026-10-06, journal): Mesa made the list
   `glGetString(GL_EXTENSIONS)` returns by reading its one-byte flags
   through a `bool` pointer, so on Tiger programs got a list of 220 with
   14 the context lacks and without 87 it has (`GL_ARB_vertex_program`,
   `GL_EXT_stencil_two_side`, S3TC, texture rectangles). Doom 3 drew with
-  its fixed-function path because of it. Our front end now makes the
-  true list (293) itself, Mesa untouched; with it Doom 3 uses its ARB2
-  path, at twice the frames. `RDN_EXTENSIONS=mesa` in a program's
-  environment gives Mesa's list. The window server keeps Mesa's list
-  until `/Library/Application Support/RadeonNI/true-extensions` exists:
-  what it does with the true one is not known. `glGetStringi` and
-  `GL_NUM_EXTENSIONS` still go Mesa's way. The one-line fix in Mesa
-  (`_mesa_extension_supported()`) would replace all of this; the user has
-  not been asked. `~/gl/glext` on the G5 prints the list.
+  its fixed-function path because of it; with the true list (293) it
+  uses its ARB2 path, at twice the frames, and the user saw it look
+  better. Fixed in Mesa by `mesa/patches/0005` (the user's choice, with
+  the rule that Mesa is only ever changed through `mesa/patches/`).
+  `~/gl/glext` on the G5 prints the list. An audit of the rest of the
+  Mesa we build found no other case that matters to programs here
+  (journal).
   `RDN_SYNC=1|2|3` (wait for every command buffer, one per draw) and
   `RDN_GLD_TRACE_ONLY=glName,...` (trace only those calls) in a
   program's environment are for telling races from such bugs.
@@ -157,14 +155,16 @@ been planned in detail.
   (user's request, password `tiger`); it can hang in a log loop
   (`kickstart -restart -agent`).
 - glthread (2026-10-06, journal): Mesa's second-thread mode, with a small
-  r600 patch (`mesa/patches/0003`, the user's exception to "do not touch
-  Mesa"). On for a program when `RDN_GLTHREAD=1` is in its environment
-  or its process name is a line of `/Library/Application
-  Support/RadeonNI/glthread` (on the G5: Quake3, Doom 3 Demo). Quake 3
-  144 fps against 115, Doom 3's slow scenes 21 against 16; the user saw
-  both games look right. Not tried with the window server or windowed
-  programs. `tools/guest/d3save.sh <save>` times 300 frames of a Doom 3
-  save game on any card (the user's saves: `bench`, `bench2`).
+  r600 patch (`mesa/patches/0003`). On for every program except the
+  window server (user's decision, 2026-10-06). `RDN_GLTHREAD=0` or `=1`
+  in a program's environment decides for it; otherwise a line of
+  `/Library/Application Support/RadeonNI/glthread` may: the program's
+  name turns it on, `-name` off, `*` and `-*` for all not named. Worth
+  70 to 90 % in Doom 3 on its ARB2 path, 25 % in Quake 3. Seen right by
+  readback in the two games, Chess, TuxRacer and the test programs;
+  never run in the window server. `tools/guest/d3save.sh
+  <save>` times 300 frames of a Doom 3 save game on any card (the user's
+  saves: `bench`, `bench2`).
   glthread makes the program's thread wait for the other one at every
   call it cannot record: any `glGet*`, `glGetError`, texture uploads,
   and buffer data larger than a batch. The entry points split large
@@ -197,7 +197,9 @@ been planned in detail.
   Doom 3 demo 48 and 51 fps on the saves `bench` and `bench2` (ARB2
   path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.
   In Doom 3 Mesa's thread is the limit. The screen saver shows black
-  and draws nothing with the card; not looked into.
+  and draws nothing with the card; not looked into. The window server
+  has not yet run the bundle with the true extension list: the first
+  restart after 2026-10-06 is that test.
 - A6 has not started; A7 has (GART).
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the

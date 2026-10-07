@@ -3145,3 +3145,75 @@ level).
   `_mesa_extension_supported()`) and would also put `glGetStringi()`
   right. Not made: the user's rule for this work was no change to Mesa.
 - The user has seen none of this.
+
+## 2026-10-06 — The extension list fixed in Mesa; glthread for every program; an audit for more of the kind
+
+**The user** saw Doom 3 on its ARB2 path: "looks even better, some
+lightning that was funky before is correct now." Their decisions: make
+it the default; the optimisations, glthread included, for all
+applications; the proper fix in Mesa, through a patch; and a quick check
+for other places where `bool` having four bytes, or anything like it,
+could cause problems.
+
+**The fix in Mesa:** `mesa/patches/0005-extension-flags-bool-size.patch`,
+one line in `_mesa_extension_supported()` (`const GLboolean *`). The
+front end's own list, `RDN_EXTENSIONS` and the `true-extensions` file of
+the last entry are gone. On the G5 `glext` gets 293 extensions from Mesa
+itself; `glGetStringi()` and `GL_NUM_EXTENSIONS` are right with it. The
+window server will get the true list too when it next starts.
+
+**glthread by default** (`osmesa_want_glthread()`): every program except
+the window server, which finishes every update before it goes on and
+has the desktop to lose. `RDN_GLTHREAD` in the environment as before;
+the list file now takes `name` (on), `-name` (off), `*` and `-*`. What
+went with it:
+- A context that stops being a thread's current one is finished first
+  (`osmesa_sync_switch()`).
+- Where a context's picture is copied to memory the program or the
+  engine reads (an off-screen drawable, a window that is no surface),
+  `glFlush` is `glFinish` (`rdn_flush_waits`): with glthread the copy
+  would otherwise be made some time after the call returned.
+
+**The audit** (the Mesa that goes into the bundle: `src/mesa`,
+`src/compiler/{glsl,nir}`, `src/util`, gallium's auxiliary code, r600).
+Looked for, by pattern and where possible by having the Tiger compiler
+check sizes:
+- Casts to `bool *`: seven, and only the one in `extensions.c` reads
+  something that is not a `bool`.
+- Fields `glGet*` reads by offset with a fixed size (`get.c`): 480
+  checked with `_Static_assert` under the Tiger compiler. Four context
+  fields are `bool` and are read as one byte, so their queries always
+  answer false here: `GL_BLEND_ADVANCED_COHERENT_KHR`,
+  `GL_PRIMITIVE_RESTART_FOR_PATCHES_SUPPORTED`,
+  `GL_SUBGROUP_QUAD_ALL_STAGES_KHR`,
+  `GL_SPARSE_TEXTURE_FULL_ARRAY_CUBE_MIPMAPS_ARB` (and four mesh shader
+  capabilities this card lacks). OpenGL 4 questions that no program for
+  Tiger asks; not patched. One more that is wrong on any big-endian
+  machine, not only here: `GL_CONTEXT_ROBUST_ACCESS` reads a one-byte
+  field as two.
+- Unions that lay a `bool` over other fields: the vertex format in
+  `glthread.h` (patch 0002) is the only one that reads the fields as one
+  integer. `nir_const_value`, `ir_constant_data` and
+  `pipe_query_result` are read by the member that was written.
+- Structs of small fields under one integer (the pattern of 0002): all
+  others are made of `unsigned` bit-fields.
+- `bool` arrays allocated, cleared or copied by a byte count: none.
+- The other tables of extension flags (`st_extensions.c`, the overrides,
+  `check_extra()`) use `GLboolean`.
+- Not checked: code we do not build (other drivers, Vulkan, the video
+  state), and layouts that differ here without anything reading across
+  them (`bool` bit-fields make some structures larger).
+
+**On the G5** with the bundle f4d22db0 (the one before as
+`~/RadeonNIGLDriver.prev10`), by readback: Doom 3 48.6 and 50.6 fps,
+ARB2; Quake 3 149.7; frames of both right. `glwin` gets glthread without
+being named anywhere (607 frames a second in its window against 543
+without). Chess, TuxRacer's first screen and `listwin`'s pixels are
+right. A window copied through memory (`RDN_GLD_NOSURFACE=1`) is right
+with glthread; a grab of it shows the turning triangle bent, with
+glthread or without, because the grab takes longer than a frame.
+Dashboard opens and shows its widgets; no crash log.
+
+**Not done:** the window server has not started with any of this; the
+user has to be there for that. The screen saver's black screen is as it
+was.
