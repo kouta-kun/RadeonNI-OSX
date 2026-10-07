@@ -6,46 +6,31 @@ This project is vibecoded, meatproxied and any other AI slur you can think of. I
 
 # Usage
 
-This is for the release zip (`RadeonNI-<date>-<commit>.zip`). It has only ever run on one machine: a Power Mac G5 Late 2005 (PowerMac11,2) with one Radeon HD 7570 (PCI ID `1002:675d`) and one monitor on the card's DVI connector. The driver does not load for any other card.
-
 ## What you need
 
-- A PowerPC Mac with a PCI Express slot, running Mac OS X 10.4.11. Nothing else has to be installed: no Xcode, no VBIOS file (the driver reads the card's own ROM).
-- A Radeon HD 7570 with PCI ID `1002:675d`, and a monitor on its DVI connector.
-- A way back in if the screen stays dark: turn on Remote Login (System Preferences > Sharing) before you start, so you can reach the Mac over ssh.
+- A PowerPC Mac with a PCI Express slot and Mac OS X 10.4.11.
+- A Radeon HD 7570. Currently hardcoded to PCI ID `1002:675d` and the DVI-I output.
+- Recommended: enable ssh (Remote Login) in case installation fails..
 
 ## Install
 
-1. Copy the zip to the Mac and double-click it. You get a folder named like the zip.
-2. Open Terminal and go into that folder:
-
-       cd ~/Desktop/RadeonNI-*
-
-3. Run the installer, with your password when asked:
-
-       sudo sh ./install.sh --accel --hwcursor
-
-   It should say `Found the Radeon HD 7570 (1002:675d); its ROM has an address.` If it instead refuses because Open Firmware gave the ROM no address, you need a VBIOS image of your own card: `sudo sh ./install.sh --accel --hwcursor /path/to/vbios.rom`.
-4. Restart the Mac.
-5. Check what the driver did:
-
-       grep RadeonNI /var/log/system.log
-
+1. Download and extract the zip on your mac, then enter the folder
+2. Run the installer, with your password when asked:
+   ```
+   sudo sh ./install.sh --accel --hwcursor
+   ```
+  It should say `Found the Radeon HD 7570 (1002:675d); its ROM has an address.` If it instead refuses because Open Firmware gave the ROM no address, you need a VBIOS image of your own card: `sudo sh ./install.sh --accel --hwcursor /path/to/vbios.rom`. (TBA: how to extract)
+3. Restart the Mac.
+4. Check what the driver did:
+   ```
+   grep RadeonNI /var/log/system.log
+   ```
    A good start has `VBIOS, 65536 bytes from the card's ROM`, a mode line for your monitor, `framebuffer started` and `3D engine up`.
-
-`sudo sh ./install.sh` without options installs the framebuffer alone: a desktop, but no OpenGL, no Quartz Extreme and no hardware cursor. Run it again with the options to switch back, and restart.
-
-## Uninstall
-
-    sudo sh ./uninstall.sh
-
-and restart.
 
 ## If the Mac does not come up
 
 - Over ssh: `cd` into the folder, `sudo sh ./uninstall.sh`, `sudo reboot`.
 - Hold Shift while it starts (Safe Boot does not load third-party drivers), then uninstall.
-- Take the card out: without it the driver is never loaded.
 - `INSTALL.txt` in the zip lists the boot arguments that switch single features off (`rdn_gart=0`, `rdn_bootclocks=1`, `rdn_rom=0`, ...).
 
 ## Building the zip yourself
@@ -88,7 +73,7 @@ Claude took the r600 driver from Mesa, patched it for Tiger compatibility, and d
 | Tux Racer   | Broken (window only updates when moved, has no full-screen mode) |
 | Doom 3      | Working in full screen, performance about 2x 6600LE |
 
-It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-1 output of specificially the HD 7570.
+It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-I output of specificially the HD 7570.
 
 ## Stage 2.5 (Optimization)
 
