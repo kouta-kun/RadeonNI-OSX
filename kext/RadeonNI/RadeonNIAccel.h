@@ -105,6 +105,14 @@ public:
 	void listSurfaces(struct rdn_user_surfaces *list);
 	/* Put a surface's picture on the screen, inside its shape. */
 	IOReturn flushSurface(UInt32 wid);
+	/*
+	 * Fill a rectangle of the screen, and copy one to another place on
+	 * it, with the GPU (rdn_user.h). Queued; `fence` is what to wait for.
+	 */
+	IOReturn screenFill(SInt32 x, SInt32 y, SInt32 w, SInt32 h, UInt32 colour,
+			    UInt32 *fence);
+	IOReturn screenCopy(SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
+			    SInt32 w, SInt32 h, UInt32 *fence);
 	/* The surface that is read-locked now (0: none). */
 	void setReadLocked(UInt32 wid) { fReadLocked = wid; }
 	UInt32 readLocked(void) { return fReadLocked; }
@@ -137,6 +145,25 @@ private:
 	bool fBlitPending;
 	UInt32 fBlitFence;
 	struct rdn_blit_rect fBlitRects[RDN_BLIT_MAX_RECTS];
+	/*
+	 * screenFill() and screenCopy(): work areas used in turn, each with
+	 * the fence that frees it, and the newest of those fences.
+	 */
+	enum { kScreenSlots = 3 };
+	struct {
+		bool pending;
+		UInt32 fence;
+	} fScreenSlot[kScreenSlots];
+	UInt32 fScreenNext;
+	bool fScreenPending;
+	UInt32 fScreenFence;
+	/* screenCopy()'s scratch surface; fMoveBytes 0 before the first copy. */
+	UInt32 fMoveOffset, fMoveBytes;
+	bool fMoveHidden;
+	IOReturn screenBegin(struct rdn_selftest_target *screen, UInt32 *slot);
+	void screenEnd(UInt32 slot);
+	IOReturn moveScratch(const struct rdn_selftest_target *screen,
+			     struct rdn_draw_surface *scratch);
 	/* See RadeonNIAGPShim. */
 	IOAGPDevice *fAncestor;
 	RadeonNIAGPShim *fShim;
@@ -197,6 +224,10 @@ public:
 	IOReturn methodGartUnbind(UInt32 offset);
 	IOReturn methodPower(UInt32 state, UInt32 what, UInt32 *sclk,
 			     UInt32 *mclk, UInt32 *temperature);
+	IOReturn methodScreenFill(UInt32 x, UInt32 y, UInt32 width, UInt32 height,
+				  UInt32 colour, UInt32 *fence);
+	IOReturn methodScreenCopy(UInt32 sx, UInt32 sy, UInt32 dx, UInt32 dy,
+				  UInt32 size, UInt32 *fence);
 
 private:
 	RadeonNIAccel *fAccel;

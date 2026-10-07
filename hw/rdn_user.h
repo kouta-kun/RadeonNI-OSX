@@ -97,6 +97,28 @@ enum {
 	RDN_UC_GART_BIND,
 	/* scalar in: the offset RDN_UC_GART_BIND gave. The GPU must be done with it. */
 	RDN_UC_GART_UNBIND,
+	/*
+	 * scalars in: x, y, width, height, colour; out: fence. The GPU fills
+	 * that rectangle of the screen, cut to the screen's size. The colour
+	 * is a pixel as the caller would store it in the screen's memory with
+	 * one 32-bit store. Queued behind what the GPU still has to do and
+	 * not waited for: before touching the screen through the aperture,
+	 * wait for the fence (RDN_UC_FENCE_WAIT). A rectangle with nothing
+	 * left of it draws nothing and gives a fence all the same. Fails,
+	 * having drawn nothing, when the screen does not have 32 bits a
+	 * pixel or the GPU does not keep up; a kext from before this method
+	 * fails the call too. The caller then draws by itself.
+	 */
+	RDN_UC_SCREEN_FILL,
+	/*
+	 * scalars in: source x, source y, destination x, destination y, size
+	 * (the width in its low 16 bits, the height in its high 16: a method
+	 * has room for six values in all); out: fence. The GPU copies that
+	 * rectangle of the screen to another place on it; the two may
+	 * overlap. Cut so that both lie on the screen. Otherwise as
+	 * RDN_UC_SCREEN_FILL.
+	 */
+	RDN_UC_SCREEN_COPY,
 	RDN_UC_METHOD_COUNT
 };
 
