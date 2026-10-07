@@ -181,9 +181,12 @@ been planned in detail.
   aperture too, for what the CPU never maps, and the winsys keeps
   released memory in a cache instead of calling the kext for every
   buffer.
-- GART (2026-10-06, journal), only with the boot argument `rdn_gart=1`
-  (set on the G5): `hw/rdn_gart.c`, a self-test at start, and programs'
-  own memory bound into it (`RDN_UC_GART_BIND`). The winsys puts upload
+- GART (2026-10-06, journal), on unless the boot argument `rdn_gart=0`
+  is given (user's decision; the G5 runs with no boot arguments):
+  `hw/rdn_gart.c`, a self-test at start, and programs' own memory bound
+  into it (`RDN_UC_GART_BIND`). If the self-test fails the kext logs it
+  and goes on without; that path has never run. Under QEMU the GART has
+  never run at all: `TIGER_BOOTARGS=rdn_gart=0` leaves it off there. The winsys puts upload
   and staging buffers there and, when video memory is full, new buffers
   of any kind. Nothing is ever moved out of video memory (no eviction).
   After changing the device layer check the Tiger bundle with `nm -u`
@@ -201,6 +204,10 @@ been planned in detail.
   runs with the true extension list since the evening of 2026-10-06
   (desktop, windows, Chess right by readback; the user has not said).
 - A6 has not started; A7 has (GART).
+- What is on by default since 2026-10-06, all decided by the user: the
+  performance clocks and the memory controller's microcode, the GART,
+  glthread for every program but the window server, the true extension
+  list. The G5 has no boot arguments and no switch files that matter.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
   snapshots do not. They are inert unless the kext is loaded with

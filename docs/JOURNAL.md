@@ -3237,3 +3237,28 @@ selected its icons; nothing was moved.
 
 **Not seen by the user yet;** Exposé, Dashboard's effects and anything
 moving are not covered by a grab.
+
+## 2026-10-06 — The GART is on by default
+
+**The user** looked at the desktop with the true extension list (dragging
+windows, Exposé, Dashboard): "it all looks good." Then: enable GART by
+default.
+
+The kext starts the GART unless `rdn_gart=0` is a boot argument (it was
+the other way round); the package's README says how to leave it off and
+what to do if a Mac does not come up with it. Nothing else changed: the
+self-test, and switching it off again if that fails, are as they were.
+That failure path has never run on any machine.
+
+**On the G5**, with the user's go-ahead for the restart: package
+`working-quartz-extreme-84-g293a6b0` installed as before (`--accel
+--hwcursor`; the kext before it kept as `~/RadeonNI.kext.prev`),
+`boot-args` deleted (it held `rdn_gart=1`), restarted. Back in 70
+seconds. Kernel log: "GART of 1024 MB enabled at GPU address
+0x40000000", "the GPU ran a command buffer from system memory". Clocks
+649.96 / 800.00 MHz by themselves. Desktop right by readback, Quartz
+Extreme in use. Doom 3 48.8 and 51.1 fps with 9 MB of its buffers in
+system memory, Quake 3 149.7.
+
+**Not done:** the QEMU guest has never run the GART (no card there now);
+`TIGER_BOOTARGS=rdn_gart=0` would leave it off.
