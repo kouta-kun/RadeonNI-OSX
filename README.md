@@ -4,7 +4,12 @@ RadeonNI-OSX is a project aiming to enable the usage of modern(-ish) cards on OS
 
 This project is vibecoded, meatproxied and any other AI slur you can think of. I am not responsible if your G5 explores, your HD 7570 breaks your display, or any other property or bodily harm arising from the usage of this project.
 
+# Usage
+
+WIP, check g5/README.txt. Compilation requires an OS X 10.4.11 installation with XCode 2.5. I will provide a build at some point.
+
 # Development stages
+
 The project has been developed in a staged manner:
 
 ## Stage 1 (Research and display bringup)
@@ -28,7 +33,7 @@ Claude took the r600 driver from Mesa, vendored it into the project, and develop
 | Quake 3     | Working in full screen, non-responsive input in windowed mode |
 | Sauerbraten | Working in full screen, glitchy lower half in windowed mode |
 | Tux Racer   | Broken (window only updates when moved, has no full-screen mode) |
-| Doom 3      | Working in full screen, performance about equivalent to 6600LE due to CPU bottleneck |
+| Doom 3      | Working in full screen, performance about 2x 6600LE |
 
 It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-1 output of specificially the HD 7570.
 
@@ -36,14 +41,11 @@ It is also now being tested on the G5 with no major issues. A test on a new moni
 
 Testing games like Quake 3 and Doom 3, performance seemed to be equivalent or sometimes worse than the original NVidia 6600LE which is ~10x worse in terms of raw power. After a bit of investigation, the firmware blob was initializing the card at very low core and memory clocks (100MHz/100MHz). Increasing this to expected levels (600MHz/850MHz) provided a small but noticeable improvement, however the big improvement of about 100% came when GART size was reported correctly (GART=0 made Mesa stop flushing after every draw command), and by flushing asynchronously on swapping buffers instead of waiting.
 
-At this point performance was slightly below 6600LE on Doom 3, and about equivalent on Quake 3. Profiling by Claude revealed that most of the time was CPU bound within the driver. A couple of optimizations were developed (replacing Tiger's subpar emulation of Thread-local storage, force-enabling glthread to utilize both cores of the G5) which allowed us to reach and sometimes surpass the 6600LE. Currently, it seems like the bottleneck for high-end games like Doom 3 is the CPU. This is supported by benchmarks run with graphic settings maxxed out, which have almost no effect on either GPU except for anti-aliasing, which drops the 6600LE to 5FPS while the Radeon (as expected) remains at 22FPS.
+At this point performance was slightly below 6600LE on Doom 3, and about equivalent on Quake 3. Profiling by Claude revealed that most of the time was CPU bound within the driver. A couple of optimizations were developed (replacing Tiger's subpar emulation of Thread-local storage, force-enabling glthread to utilize both cores of the G5) which allowed us to reach and sometimes surpass the 6600LE.
+
+After some investigation, it turned out the issue (specifically in Doom 3) was that a type-size mismatch between Mesa's expectations and OS X Tiger (bool is 4 bytes on OS X Tiger, Mesa expects 1 byte) caused the OpenGL Extension list to be wrong. As Doom 3 found none of the extensions it expected (ARB2 rendering path) it fell back to a nearly fixed-path rendering mode where the CPU took up more responsability. Once this was fixed, some shadowing and lighting issues were resolved but more importantly framerate rose from ~22FPS to 48-50FPS. This has no effect on Quake 3 which was already using all of the extensions it supported, but newer games (id Tech 4, etc) should see performance closer to a true CPU bottleneck.
 
 ## Future steps
 
-- Optimize glthread parameters to reduce cross-thread waiting
 - G5 testing worked, so the next step is to try to read the VBIOS from the ROM and get a compatibility list working.
 - At some point, I should try with other cards of the same family/model to see if anything works or if this is too HD 7570 specific.
-
-# Usage
-
-WIP, check g5/README.txt. Compilation requires an OS X 10.4.11 installation with XCode 2.5. I will provide a build at some point.
