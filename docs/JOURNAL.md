@@ -4042,3 +4042,30 @@ Changed: a flush only marks the mirror; touching flushes are joined, and
 the mirror is brought up to date when a pointer is set, a draw comes, a
 range is named or a vertex array object is bound. Installed on the G5, not
 yet run.
+
+## 2026-10-07: Call of Duty 2 in its map: 45 to 70 frames a second
+
+Started from ssh with `RDN_FPS=1`, the user clicking through and playing
+the map (1920x1080): 45 to 73 frames a second, mostly around 50. It was 13
+to 16 before the block lookup at any size and the joined flushes. No out
+of video memory.
+
+`sample`, 8 s, the game's thread: 37 % the game's own frame, 60 % its
+renderer. Ours: bringing mirrors up to date (`var_update`) 22 %
+inclusive, all of it for skinned models (`RB_TessXModelSkinned`, the
+game's generic vertex array object): `glBufferSubData` 14 % (6 % the copy
+into glthread's batch, 7 % waiting for room in its queue), 5 % copying
+into the shadow, 2 % comparing with it. Mesa's thread waits 60 % of the
+time and spends 8 % copying the same data out of the batches.
+
+Changed, installed, not yet run:
+- A mirror whose flushes differ from the shadow nearly every time (more
+  than three quarters of a megabyte flushed) drops its shadow: computed
+  vertices only pay for it.
+- `allow_glthread_buffer_subdata_opt` for the programs in the vertex range
+  list (`mesa/target/rdn_target.c`, on the screen's caps after r600 made
+  it; `RDN_SUBDATA_COPY=1|0` for any program): glthread copies
+  `glBufferSubData`'s data into an upload buffer in the program's thread
+  and the GPU copies it from there, so it goes through no queue. Only
+  built for Tiger so far; the Linux builds of the target have not been
+  rebuilt with it.

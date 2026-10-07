@@ -218,6 +218,7 @@ struct var_mirror {
 	unsigned refs;		/* vertex array objects that point into it */
 	char *shadow;		/* what the buffer object has, if memory allowed */
 	const char *dirty, *dirty_end;	/* flushed, not yet brought up to date */
+	unsigned long seen, sent;	/* bytes compared with the shadow, and sent */
 	unsigned used;		/* var_swaps when last flushed or pointed into */
 };
 
@@ -428,6 +429,20 @@ static void var_update(void *ctx, struct var_mirror *m, const char *from, const 
 		var.copied += to - from;
 		return;
 	}
+	/*
+	 * Memory that is different every time it is flushed (vertices the
+	 * program computes each frame) only pays for the shadow.
+	 */
+	m->seen += to - from;
+	if (m->seen > (1u << 20)) {
+		if (m->sent > m->seen / 4 * 3) {
+			free(m->shadow);
+			m->shadow = NULL;
+			var_update(ctx, m, from, to);
+			return;
+		}
+		m->seen = m->sent = 0;
+	}
 	for (p = from; p <= to; p = end) {
 		int differs;
 
@@ -443,6 +458,7 @@ static void var_update(void *ctx, struct var_mirror *m, const char *from, const 
 			t_buffer_sub_data(ctx, 0x8892, start - m->base, stop - start, start);
 			memcpy(m->shadow + (start - m->base), start, stop - start);
 			var.copied += stop - start;
+			m->sent += stop - start;
 			start = NULL;
 		}
 		if (p == to)

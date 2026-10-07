@@ -126,6 +126,41 @@ rdn_target_surface_locked(void)
 
 struct pipe_screen *osmesa_create_screen(void);
 
+/*
+ * glBufferSubData under glthread: the program's thread copies the data
+ * into an upload buffer and the GPU copies from there, instead of the data
+ * going through glthread's queue (two copies, and the program waits when
+ * the queue is full). radeonsi's default; r600 leaves it off. For the
+ * programs the GL bundle mirrors vertex memory for (the same list, or
+ * RDN_VAR=1), whose every flush is a glBufferSubData: 14 % of Call of
+ * Duty 2's thread. RDN_SUBDATA_COPY=1 or 0 decides for any program.
+ */
+static bool
+rdn_subdata_copy(void)
+{
+   const char *env = getenv("RDN_SUBDATA_COPY"), *name = NULL;
+   char line[256];
+   bool on = false;
+   FILE *f;
+
+   if (env)
+      return atoi(env) != 0;
+   if ((env = getenv("RDN_VAR")) != NULL)
+      return atoi(env) != 0;
+#ifdef __APPLE__
+   name = getprogname();
+#endif
+   if (!name || !(f = fopen("/Library/Application Support/RadeonNI/vertexrange", "r")))
+      return false;
+   while (fgets(line, sizeof(line), f)) {
+      line[strcspn(line, "\r\n")] = 0;
+      if (!strcmp(line, name))
+         on = true;
+   }
+   fclose(f);
+   return on;
+}
+
 struct pipe_screen *
 osmesa_create_screen(void)
 {
@@ -148,5 +183,7 @@ osmesa_create_screen(void)
    if (!ws)
       return NULL;
    the_device = dev;
+   if (rdn_subdata_copy())
+      ((struct pipe_caps *)&ws->screen->caps)->allow_glthread_buffer_subdata_opt = true;
    return ws->screen;
 }
