@@ -87,6 +87,86 @@ WATCHED = ('ortho', 'begin', 'end', 'vertex2f', 'tex_coord2f', 'color4ub',
 #   0x85B2 GL_UNPACK_CLIENT_STORAGE_APPLE: Mesa copies texture data anyway.
 #   0x85BC GL_TEXTURE_STORAGE_HINT_APPLE, 0x85B1 GL_TRANSFORM_HINT_APPLE:
 #   hints.
+# GL_ARB_vertex_blend, the part of it that programs with vertex programs
+# use. Mesa has none of the extension; every Mac renderer of Tiger's time
+# has it, and World of Warcraft 1.12 uses it without asking: it gives the
+# bone weights of its models with glWeightPointerARB and reads them in its
+# vertex programs as vertex.weight (all of its models were missing).
+# GL_ARB_vertex_program defines vertex.weight as generic attribute 1, so:
+#   - vertex.weight and vertex.weight[0] in a vertex program's text become
+#     vertex.attrib[1] before Mesa compiles it (weight_as_attrib),
+#   - glWeightPointerARB is glVertexAttribPointerARB for attribute 1,
+#     integers normalized as the extension says (OWN),
+#   - GL_WEIGHT_ARRAY_ARB in glEnableClientState and glDisableClientState
+#     is attribute array 1 (CLIENT_STATE).
+# Not done: glWeight*vARB, glVertexBlendARB and the blending of several
+# modelview matrices without a vertex program. Those stay the engine's.
+WEIGHT = """\
+static char *weight_as_attrib(GLenum target, const char *text, GLsizei *len)
+{
+	static const char from[] = "vertex.weight", to[] = "vertex.attrib[1]";
+	const GLsizei flen = sizeof(from) - 1, tlen = sizeof(to) - 1;
+	GLsizei i, n = 0, o = 0;
+	char *out;
+
+	if (target != 0x8620 || !text)	/* GL_VERTEX_PROGRAM_ARB */
+		return NULL;
+	for (i = 0; i + flen <= *len; i++)
+		if (text[i] == 'v' && !memcmp(text + i, from, flen))
+			n++;
+	if (!n)
+		return NULL;
+	out = malloc(*len + n * (tlen - flen) + 1);
+	if (!out)
+		return NULL;
+	for (i = 0; i < *len; ) {
+		if (i + flen <= *len && text[i] == 'v' && !memcmp(text + i, from, flen)) {
+			memcpy(out + o, to, tlen);
+			o += tlen;
+			i += flen;
+			if (i + 3 <= *len && !memcmp(text + i, "[0]", 3))
+				i += 3;
+		} else
+			out[o++] = text[i++];
+	}
+	out[o] = 0;
+	*len = o;
+	return out;
+}
+"""
+
+# Entries Mesa has no function for that are ours instead of the engine's:
+# the body, after the context is made current.
+OWN = {
+    'weight_pointer_ARB':
+        '\tm_vertex_attrib_pointer_ARB(1, size, type, type != 0x1406 && type != 0x140A,\n'
+        '\t\t\t\t    stride, pointer);',
+}
+
+# glEnableClientState and glDisableClientState: the Mesa function that
+# takes GL_WEIGHT_ARRAY_ARB (0x86AD) as attribute array 1.
+CLIENT_STATE = {
+    'enable_client_state': 'm_enable_vertex_attrib_array_ARB',
+    'disable_client_state': 'm_disable_vertex_attrib_array_ARB',
+}
+
+# With the log on, the text of every ARB program and what Mesa said to it.
+PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len);
+
+\tif (own)
+\t\tstring = own;
+\tm_program_string_ARB(target, format, len, string);
+\tif (__builtin_expect(rdn_logging, 0)) {
+\t\tGLint at = -1;
+
+\t\tm_get_integerv(0x864B, &at);	/* GL_PROGRAM_ERROR_POSITION_ARB */
+\t\trdn_log("program: target 0x%x, %d bytes, error position %d%s%s\\n%.*s",
+\t\t\t(unsigned)target, (int)len, (int)at, at >= 0 ? ": " : "",
+\t\t\tat >= 0 ? (const char *)m_get_string(0x8874) : "",
+\t\t\t(int)len, (const char *)string);
+\t}
+\tfree(own);"""
+
 APPLE_ONLY = {
     'pixel_storei': ('pname', (0x85B2,)),
     'pixel_storef': ('pname', (0x85B2,)),
@@ -235,12 +315,20 @@ def main():
     for ret, name, params, names in entries:
         out.append('static %s (*m_%s)(%s);' % (ret, name, params if params else 'void'))
     out.append('')
+    out.append(WEIGHT)
     for ret, name, params, names in entries:
         full = 'GLIContext ctx' + (', ' + params if params else '')
         call = 'm_%s(%s)' % (name, ', '.join(names))
         out.append('static %s t_%s(%s)' % (ret, name, full))
         out.append('{')
         out.append('\tRDN_ENTER(ctx);')
+        if name in OWN:
+            out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
+            out.append('\t\t%s;' % trace_call(name, params, names))
+            out.append(OWN[name])
+            out.append('}')
+            out.append('')
+            continue
         out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
         out.append('\t\t%s;' % trace_call(name, params, names))
         if name in APPLE_ONLY:
@@ -249,6 +337,11 @@ def main():
                 sys.exit('%s has no %s' % (name, arg))
             out.append('\tif (%s)' % ' || '.join('%s == 0x%X' % (arg, v) for v in values))
             out.append('\t\treturn;')
+        if name in CLIENT_STATE:
+            out.append('\tif (array == 0x86AD) {')
+            out.append('\t\t%s(1);' % CLIENT_STATE[name])
+            out.append('\t\treturn;')
+            out.append('\t}')
         if name in WINDOW_XY:
             if 'x' not in names or 'y' not in names:
                 sys.exit('%s has no x and y' % name)
@@ -258,6 +351,11 @@ def main():
             out.append(SPLIT[name])
         if name == 'flush':
             out.append(FLUSH)
+        if name == 'program_string_ARB':
+            out.append(PROGRAM_STRING)
+            out.append('}')
+            out.append('')
+            continue
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
         if name in WATCHED:
             out.append('\tif (__builtin_expect(rdn_watch, 0))')
@@ -355,7 +453,7 @@ def main():
     # follows it (aglSetFullScreen and aglSetInteger crashed at the
     # address of our wrapper's first instruction). And pad, no function.
     for ret, name, params, names in entries:
-        if name not in ('swap_APPLE', 'buffer_parameteri_APPLE', 'pad'):
+        if name not in ('swap_APPLE', 'buffer_parameteri_APPLE', 'pad') and name not in OWN:
             out.append('\tKEEP(%s, %d)' % (name, index[name]))
     out.append('\tif (n)')
     out.append('\t\trdn_log("kept: %u entries Mesa lacks wrapped in table %p of engine context %p (time %u for that address)",')
@@ -380,6 +478,9 @@ def main():
     out.append('\tunsigned n = 0;')
     out.append('')
     for ret, name, params, names in entries:
+        if name in OWN:
+            out.append('\tif (FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name))
+            continue
         out.append('\tif (m_%s && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name, name))
     out.append('\tif (FITS(swap_APPLE) && disp->swap_APPLE != rdn_swap_entry) {')
     out.append('\t\tengine_swap = disp->swap_APPLE;')

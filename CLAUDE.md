@@ -213,6 +213,18 @@ been planned in detail.
   and draws nothing with the card; not looked into. The window server
   runs with the true extension list since the evening of 2026-10-06
   (desktop, windows, Chess right by readback; the user has not said).
+- Call of Duty 2 Demo and World of Warcraft 1.12 (2026-10-07, journal,
+  by readback): the first needed the 24-bit depth mode in the renderer
+  info and the aux depth stencil flag in our full-screen format, and now
+  reaches its menu. The second needed the vertex program half of
+  `GL_ARB_vertex_blend`, which Mesa lacks and Mac programs use without
+  asking; the bundle maps it to generic attribute 1
+  (`gld/gen_dispatch.py`, `WEIGHT`). Its login screen is right; the world
+  has not been seen. With `RDN_GLD_LOG` the bundle logs every ARB
+  program's text and Mesa's error, and which entries Mesa lacks a program
+  calls ("kept:"): look there first when a game misses draws.
+  `RDN_GLD_KEPT=first-last` wraps only some of those entries.
+  `~/gl/aglfull` asks AGL for a full-screen context step by step.
 - A6 has not started; A7 has (GART).
 - What is on by default since 2026-10-06, all decided by the user: the
   performance clocks and the memory controller's microcode, the GART,

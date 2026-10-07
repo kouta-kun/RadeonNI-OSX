@@ -3741,3 +3741,53 @@ quarter.
 
 The accelerated driver is installed again (bundle 39a16a74), Quartz
 Extreme in use, no switch files.
+
+## 2026-10-07 — Call of Duty 2 starts; World of Warcraft's models; the log no longer crashes programs
+
+All on the G5, by readback. Bundle 49733cbc installed (the one before is
+`~/RadeonNIGLDriver.before-cod2`). A power cut restarted the host and the
+G5 in the middle; the window server there now runs this bundle too, Quartz
+Extreme in use.
+
+**Call of Duty 2 Demo** quit by itself with status 0, after
+`gldGetRendererInfo` and nothing else. Read from its display detection
+(`CDisplayInfo`): it takes a display only if a renderer is accelerated,
+full screen, has more than 64 MB, 8-bit stencil and the 24-bit depth mode
+(0x800). Ours had the software renderer's depth modes, 0x1000 only. With
+the mode added it went on to `aglChoosePixelFormat` with
+`AGL_AUX_BUFFERS 2` and `AGL_AUX_DEPTH_STENCIL`, got nothing, and crashed
+on its own null device. `tools/guest/aglfull.c` reproduces the request;
+flipping bits of our own format's word 2 (`RDN_GLD_PF`) found bit 11 to be
+that attribute. Both are in the bundle now: the game reaches its main menu
+from a plain launch, 5246 command buffers in 5 s. Not seen: anything past
+the menu (its pointer takes relative motion and `~/gl/drag` could not
+click "Play Demo"). Mesa has no auxiliary buffers (`GL_AUX_BUFFERS` 0)
+though the format says 4; whether the game draws into them is not known.
+
+**The log crashed programs** in `aglSetFullScreen` and `aglSetInteger`, at
+an address that is a wrapper's first instruction (also this morning's
+`ciprobe` crash in `CGLDestroyContext`). Bisected with the new
+`RDN_GLD_KEPT=first-last`: the one wrapper that does it is the table's
+last entry, `buffer_parameteri_APPLE`. The engine keeps data in that
+word. Not wrapped any more, nor `pad`.
+
+**World of Warcraft 1.12.1** (5875) showed its login screen without the
+portal and, the user says, the world without characters, creatures and
+trees. With the log on: it calls `glWeightPointerARB(4, GL_UNSIGNED_BYTE,
+48, 12)`, which Mesa does not have (no `GL_ARB_vertex_blend` at all; the
+extension is not in our list either, the game does not ask), and 4 of its
+29 ARB programs failed to compile at `ATTRIB v17 = vertex.weight;`
+("unexpected MASK1": Mesa's grammar has no `vertex.weight`). Those are
+the programs for models. The bundle now logs every program's text and
+Mesa's answer.
+
+Fixed in the bundle (`gld/gen_dispatch.py`), Mesa untouched: the vertex
+program extension defines `vertex.weight` as generic attribute 1, so the
+text is rewritten to `vertex.attrib[1]`, `glWeightPointerARB` is
+`glVertexAttribPointerARB(1, ...)` with integers normalized, and
+`GL_WEIGHT_ARRAY_ARB` in the client state calls is attribute array 1. All
+29 programs compile and the login screen has its portal, statues and sky.
+Not done: `glWeight*vARB`, `glVertexBlendARB`, blending without a vertex
+program; the game called none of them up to the login screen. Not seen:
+the world (it needs the user's login). The four programs seen declare
+`vertex.weight` and never read it.

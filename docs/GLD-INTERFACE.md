@@ -107,6 +107,14 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
   half) and sample buffers (low half), word 10 samples (high half); word
   12 is video memory and word 13 texture memory, in bytes.
 - Pixel format word 2 has the accelerated flag at bit 8 too.
+- Pixel format word 2, bit 11, is `kCGLPFAAuxDepthStencil` (57). The
+  software renderer has no format for a request with it; CGL and AGL refuse
+  a returned record without the bit (2026-10-07, `tools/guest/aglfull.c`).
+- The software renderer's depth modes are 0x1000 (32 bits) only. Ours adds
+  0x800 (24 bits), which is what Mesa's buffer has.
+- The last entry of the SDK's dispatch table, `buffer_parameteri_APPLE`, is
+  not a function in 10.4.11's engine: it keeps data there and follows it.
+  Never write that word.
 - CGL removes `kCGLPFAAccelerated` and the renderer ID from the attribute
   list before the plug-in sees it, and decides acceptance from the flags in
   the returned pixel format.
