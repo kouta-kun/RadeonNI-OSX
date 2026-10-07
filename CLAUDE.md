@@ -34,7 +34,8 @@ System Preferences and a software cursor.
   the G5 package installed, to be written to a disk for the real G5
   (`docs/PLAN.md`, "First run on the real G5"). Never booted there. The
   guest's own disk has the snapshot `before-g5-image` from the same moment.
-- The G5 (`PowerMac11,2`, 192.168.1.128) runs with the card and the
+- The G5 (`PowerMac11,2`, 192.168.1.127 since 2026-10-07, before that
+  .128) runs with the card and the
   installed phase 1 kext at 1920x1080 (2026-10-05, kernel log read over
   ssh). The card is in the G5, not in the host, so nothing on the host can
   use it. Reach the G5 like the guest but on port 22: user `tiger`, key
@@ -43,6 +44,11 @@ System Preferences and a software cursor.
   Open Firmware assigns the card's ROM BAR there (journal). Since the
   same day it boots with `install.sh --accel` and `~/gl/qe` reports
   Quartz Extreme in use; the user has not yet said what they see.
+- Since 2026-10-07 the G5's monitor is on the card's DisplayPort
+  connector, which the driver does not drive: the kext stops at "no EDID
+  on the DVI connector" and the Mac has no framebuffer from us (ssh
+  works). What the connector needs is researched, not written
+  (`docs/HARDWARE.md`, "DisplayPort connector"; journal 2026-10-07).
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including

@@ -3394,3 +3394,52 @@ VBIOS from the card's ROM, Quartz Extreme in use.
 that rebuilds Mesa is `make-g5-package.sh`'s old one, unchanged. No other
 Mac, no other card, no system without Xcode. The compatibility list the
 README mentions does not exist: the kext matches `1002:675d` only.
+
+## 2026-10-07 — DisplayPort: what bringing it up needs (research, no code)
+
+**The user** moved the G5's monitor from the DVI-I connector to the
+DisplayPort one and asked how to bring that up. The G5 is now
+192.168.1.127.
+
+**On the G5** (read over ssh, nothing changed there): booted 08:24, VBIOS
+from the ROM, POST, then "no EDID on the DVI connector (-6)" and the kext
+stops. No accelerator service, so `rdnuc reg` cannot read the hot-plug
+registers; `qe` reports one 1024x768 display without Quartz Extreme.
+
+**From the VBIOS** (`docs/HARDWARE.md`, "DisplayPort connector"):
+UNIPHY2 link A, AUX instance 2 behind I2C id 0x92, HPD4, no external DP
+clock (DCPLL is the reference), `DIGxEncoderControl` and the transmitter
+table at 1.4.
+
+**From Linux** (`atombios_dp.c`, `radeon_dp_auxch.c`, `atombios_encoders.c`,
+`atombios_crtc.c`, all MIT-headed), what a DisplayPort monitor needs beyond
+what `hw/rdn_modeset.c` does for DVI:
+1. Topology from the connector in use instead of constants: transmitter
+   UNIPHY2 (`ucTransmitterSel` 2), digital encoder 4, HPD4, connector id
+   0x13 in the transmitter's INIT.
+2. Detection: `DPEncoderService` GET_SINK_TYPE with 0x92 tells a
+   DisplayPort sink from a passive DVI/HDMI adapter; HPD4 sense.
+3. AUX: on DCE5 Linux uses the registers directly (0x62a0 block, at most
+   16 bytes a transaction, pad switched to AUX with bit 16 of 0x6450),
+   not the VBIOS table. DPCD read of 15 bytes at 0; EDID as I2C over AUX
+   (address 0x50, with defer and retry handling, which Linux has in
+   `drm_dp_helper.c`, not in radeon).
+4. Link choice: lowest rate, then fewest lanes, that carries the mode at
+   24 bpp. 1920x1080 at 148.5 MHz: 4 lanes at 1.62 Gbit/s.
+5. Clock: PLL id DCPLL instead of PPLL1; `AdjustDisplayPll` gets the link
+   clock and coherent mode; encoder mode DP (0), lane count and link rate
+   in `DIGxEncoderControl`, DCPLL as the transmitter's reference clock,
+   link clock as its "pixel clock".
+6. After the transmitter's ENABLE: link training (sink power D0,
+   downspread, lane count, rate; pattern 1 with voltage swing loop,
+   pattern 2 or 3 with equalisation loop; each step is a
+   `DIGxEncoderControl` action plus a DPCD write, voltage and
+   pre-emphasis through the transmitter's SETUP_VSEMPH), then
+   `DP_VIDEO_ON`. No HDMI infoframe.
+
+With a passive DisplayPort to DVI/HDMI adapter instead, only 1 and 2
+apply, with DDC as plain I2C on the 0x6450 pads.
+
+**Not possible as before:** validating against the reference trace. It has
+no AUX traffic and no training, and the card is in the G5. A new trace
+needs the card in the host with the monitor on DisplayPort.

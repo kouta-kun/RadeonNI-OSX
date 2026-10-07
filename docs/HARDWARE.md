@@ -101,6 +101,33 @@ Eight entries, ids 0x90-0x97, mask registers 0x6430, 0x6440, 0x6450, 0x6460,
 0x6460, enable 0x6468, read-back 0x646c; clock is bit 0, data bit 8). The
 DisplayPort connector uses id 0x92 with the AUX channel.
 
+## DisplayPort connector (VBIOS, read 2026-10-07)
+
+From the object table, FirmwareInfo and the command table list of
+`private/vbios.rom`. Nothing here has run on the card.
+
+| Fact | Value |
+|---|---|
+| Connector object | `0x3113`, `CONNECTOR_OBJECT_ID_DISPLAYPORT` (0x13) |
+| Encoder object | `0x2121`, `INTERNAL_UNIPHY2`, enum 1: link A |
+| Encoder capability record | `0x0003`: HBR2 (5.4 Gbit/s) capable and enabled |
+| Digital encoder Linux would pick | 4 (`DIG5`): DCE5 maps UNIPHY2 link A to index 4, not to the CRTC's number |
+| DDC / AUX | I2C id `0x92`: pad registers `0x6450`-`0x645c`, AUX instance 2 (`AUX_CONTROL` at `0x62a0`) |
+| Hot-plug | HPD4: `DC_HPD4_INT_STATUS` `0x6040`, bit 1 is sense |
+| `usUniphyDPModeExtClkFreq` | 0: no external DP clock, so the link's reference is the DCPLL |
+| Default display engine clock | 540 MHz |
+| Spread spectrum for DP | `ASIC_InternalSS_Info` 3.1, id 7: 0.38 %, 31.48 kHz |
+| `DIGxEncoderControl` | 1.4 |
+| `DIG1TransmitterControl` (UNIPHY) | 1.4 |
+| `SetPixelClock` / `AdjustDisplayPll` | 1.6 / 1.3 |
+| `ProcessAuxChannelTransaction` | 1.2 |
+| `DPEncoderService` | 1.2 (sink type only; training goes through `DIGxEncoderControl`) |
+
+The reference trace (`ref-radeon-3`) has only Linux's detection of this
+connector with nothing plugged in: `DPEncoderService` with `0x92`, reads of
+`0x6040`, an I2C probe on `0x6450`. It has no AUX transaction and no link
+training.
+
 ## Still unknown
 
 - Whether the panel is physically 1366x768 or 1920x1080.
