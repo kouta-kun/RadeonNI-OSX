@@ -128,7 +128,10 @@ Driver:
 - **Topology is hard-coded** in `hw/rdn_modeset.c`: CRTC 0, pixel PLL 1,
   digital encoder 0, UNIPHY link A, hot-plug line 1, DDC line 0x93. It must
   come from the VBIOS object table before any other connector or card works.
-  The DisplayPort connector is not driven at all.
+  Since 2026-10-07 it is a table of this card's two outputs in
+  `hw/rdn_modeset.c`, still not read from the VBIOS. The DisplayPort
+  connector is written (`hw/rdn_dp.c`) and untested on the card; a passive
+  DisplayPort to DVI/HDMI adapter is not supported.
 - **Modes** are only the EDID's detailed timings (two on the test monitor).
   No standard or established timings, no CEA modes, no scaling.
 - **HDMI** signalling is used when the EDID asks for it, with the AVI

@@ -3443,3 +3443,49 @@ apply, with DDC as plain I2C on the 0x6450 pads.
 **Not possible as before:** validating against the reference trace. It has
 no AUX traffic and no training, and the card is in the G5. A new trace
 needs the card in the host with the monitor on DisplayPort.
+
+## 2026-10-07 — DisplayPort written in `hw/`, not yet run on the card
+
+**The user** asked for DisplayPort without a new Linux trace; the monitor
+is on a real DisplayPort cable.
+
+**Written** (commit b2128aa):
+- `hw/rdn_dp.c`: the AUX transaction through the card's registers, DPCD
+  read and write with retries, the sink's capabilities, the EDID as I2C
+  over AUX, lane count and rate, link training. Ported from Linux's
+  `radeon_dp_auxch.c` and `atombios_dp.c`.
+- `hw/rdn_modeset.c`: the topology constants became a table of two
+  outputs (DVI-I, DisplayPort) and `card->output`. With a DisplayPort sink:
+  encoder mode DP, the DCPLL as PLL id and as the transmitter's reference
+  clock, the link clock in `AdjustDisplayPll` and the transmitter calls,
+  digital encoder 4, `DP_VIDEO_OFF` before the transmitter is disabled,
+  training and `DP_VIDEO_ON` after it is enabled. `rdn_display_init()`
+  now initialises both transmitters, DisplayPort's first, as Linux does:
+  its parameters (`13 00 82 07 04`) are in the reference trace's list of
+  AtomBIOS calls and ours are the same.
+- `rdn_output_detect()`: DVI-I first, then DisplayPort; the kext and
+  `rdn_tool modeset` use it. On DisplayPort it logs what `DPEncoderService`
+  says the sink is and tries AUX whatever the answer.
+
+**Differences from Linux, chosen:** no spread spectrum on the link clock
+(the VBIOS lists 0.38 % for DisplayPort; the sink is told there is none);
+5.4 Gbit/s never chosen; the sink is not sent to D3 before a mode set;
+8 bits a colour whatever the EDID says.
+
+**Checked without the card:** `make test` passes as before for DVI (same
+digests; the display init phase still matches with the second transmitter
+INIT). New `tests/dp_link`: a model of the AUX registers with a sink
+behind it (lost first transaction, every third deferred, short I2C reads,
+training that needs one adjustment per phase); same output on x86 and
+under `qemu-ppc`. The model is my reading of Linux's code, so it proves
+the logic and the byte order, not the registers.
+
+**Not run:** anything on the card. The kext builds in the guest
+(`build/RadeonNI-dp.kext.tar` on the host, built from b2128aa). Copying
+it to the G5 and installing it was refused by the session's permission
+rules and is left to the user.
+
+**What I expect can go wrong on the first run**, in order: the AUX
+channel not answering (pad or hot-plug setup), `SetPixelClock` with the
+DCPLL doing something to the display engine clock, training failing at
+4 lanes of 1.62 Gbit/s. The kernel log has a line for each.

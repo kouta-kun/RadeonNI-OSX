@@ -47,8 +47,12 @@ System Preferences and a software cursor.
 - Since 2026-10-07 the G5's monitor is on the card's DisplayPort
   connector, which the driver does not drive: the kext stops at "no EDID
   on the DVI connector" and the Mac has no framebuffer from us (ssh
-  works). What the connector needs is researched, not written
-  (`docs/HARDWARE.md`, "DisplayPort connector"; journal 2026-10-07).
+  works). DisplayPort is written (`hw/rdn_dp.c`, outputs table in
+  `hw/rdn_modeset.c`, detection DVI-I first) and passes `tests/dp_link`
+  against a simulated sink, but has never run on the card: the kext built
+  from it is `build/RadeonNI-dp.kext.tar` on the host, not installed on
+  the G5 (journal 2026-10-07; `docs/HARDWARE.md`, "DisplayPort
+  connector"). There is no Linux trace of DisplayPort to compare with.
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including
@@ -444,6 +448,10 @@ Keep these current as part of the work, and commit small and often.
   client; `hw/rdn_user.h` is the interface user space sees.
   `mesa/target/rdn_device_darwin.c` is Mesa's side of it. `mesa/darwin8/`
   supplies what Tiger's C library lacks.
+- `hw/rdn_dp.c` is DisplayPort: AUX through the card's registers, DPCD,
+  EDID over AUX, link training. `struct rdn_output` (`hw/rdn_card.h`)
+  describes a connector's encoder path; `rdn_output_detect()` picks the
+  one with a display and `rdn_modeset()` drives `card->output`.
 - `tests/` replays our code against the reference trace: every register
   access must be the next one Linux made. This is how code is validated
   before it runs on the card, and how big-endian correctness is checked.
