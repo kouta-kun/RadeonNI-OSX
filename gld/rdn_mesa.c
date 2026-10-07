@@ -1040,12 +1040,15 @@ int rdn_swap(void *rend)
 					contexts[i].bound);
 			/*
 			 * The picture goes to the surface's buffer, and the
-			 * window server is told: it draws the window's area
-			 * again and the picture goes into its frame
-			 * (rdn_watch_end). Slower than putting it on the
-			 * screen from here, which RDN_GLD_DIRECT_SWAP=1
-			 * does as well, but right when the window is
-			 * moving or partly covered.
+			 * window server is told. It decides how the picture
+			 * gets to the screen: if nothing else changed and
+			 * nothing translucent lies over the window, it has
+			 * the kext copy the buffer there
+			 * (RadeonNIAccel::flushSurface); otherwise it draws
+			 * the window's area again with the buffer as a
+			 * texture. RDN_GLD_DIRECT_SWAP=1 also puts it on
+			 * the screen from here, which is wrong when the
+			 * window is moving or partly covered.
 			 */
 			if (surface_direct()) {
 				for (tries = 0; tries < 50; tries++) {

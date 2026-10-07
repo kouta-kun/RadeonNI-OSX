@@ -44,13 +44,14 @@ OSDefineMetaClassAndStructors(RadeonNIAccel, IOAccelerator)
 
 /*
  * Video memory: the screen's surfaces at the bottom (the framebuffer
- * driver's), the ring at 32 MB, a megabyte of scratch space for the
- * self-test after it, and from 34 MB to the end of the aperture the heap
- * user clients allocate from.
+ * driver's), the ring at 32 MB, a megabyte of scratch space after it (the
+ * self-test's, then flushSurface()'s), and from 34 MB to the end of the
+ * aperture the heap user clients allocate from.
  */
 #define RING_OFFSET		(32u << 20)
 #define RING_BYTES		(1u << 20)
 #define SELFTEST_OFFSET		(33u << 20)
+#define BLIT_OFFSET		(SELFTEST_OFFSET + (512u << 10))
 #define HEAP_OFFSET		(34u << 20)
 
 RadeonNIAccel *RadeonNIAccel::withFramebuffer(RadeonNI *fb, IOService *provider)
@@ -827,6 +828,107 @@ void RadeonNIAccel::listSurfaces(struct rdn_user_surfaces *list)
 		list->count++;
 	}
 	IOLockUnlock(fLock);
+}
+
+/*
+ * The window server flushes a surface when its owner has drawn a new
+ * picture and nothing else on the screen changed: it does not draw the
+ * window again itself, the driver is to show the picture. The GPU copies
+ * the surface's buffer to the screen, inside the shape the window server
+ * gave the surface (what other windows cover is not in it). When the
+ * window server does draw the window itself (it moves, something
+ * translucent lies over it) it takes the picture from the same buffer.
+ *
+ * Not waited for: the copy is queued behind whatever the GPU still has to
+ * do. Only the copy before it must be done, because both are written to
+ * the same place.
+ */
+IOReturn RadeonNIAccel::flushSurface(UInt32 wid)
+{
+	struct rdn_selftest_target screen;
+	struct rdn_draw_surface dst, src;
+	struct rdn_user_region *region = 0;
+	UInt32 width = 0, height = 0, n = 0, waited, r;
+	uint32_t seq = 0;
+	int i, ret;
+
+	if (!fEngineUp || !fFramebuffer ||
+	    !fFramebuffer->selftestTarget(&fAccel, &screen))
+		return kIOReturnSuccess;
+	bzero(&src, sizeof(src));
+	IOLockLock(fLock);
+	for (i = 0; i < kMaxSurfaces; i++) {
+		if (!fShapes[i].used || fShapes[i].wid != wid ||
+		    !fShapes[i].bufWidth)
+			continue;
+		region = &fShapes[i].region;
+		width = fShapes[i].bufWidth;
+		height = fShapes[i].bufHeight;
+		src.gpu_addr = rdn_vram_addr(&fAccel, fShapes[i].bufOffset);
+		src.width = width;
+		src.height = height;
+		src.pitch_pixels = fShapes[i].bufRowBytes / 4;
+		break;
+	}
+	/* The surface's top left corner is that of the shape's box. */
+	for (r = 0; region && r < region->count && r < RDN_USER_REGION_RECTS &&
+		    n < RDN_BLIT_MAX_RECTS; r++) {
+		SInt32 bx = region->bounds[0], by = region->bounds[1];
+		SInt32 x0 = region->rects[r][0], y0 = region->rects[r][1];
+		SInt32 x1 = x0 + region->rects[r][2], y1 = y0 + region->rects[r][3];
+
+		if (x0 < bx)
+			x0 = bx;
+		if (y0 < by)
+			y0 = by;
+		if (x0 < 0)
+			x0 = 0;
+		if (y0 < 0)
+			y0 = 0;
+		if (x1 > bx + (SInt32)width)
+			x1 = bx + (SInt32)width;
+		if (y1 > by + (SInt32)height)
+			y1 = by + (SInt32)height;
+		if (x1 > (SInt32)screen.width)
+			x1 = (SInt32)screen.width;
+		if (y1 > (SInt32)screen.height)
+			y1 = (SInt32)screen.height;
+		if (x1 <= x0 || y1 <= y0)
+			continue;
+		fBlitRects[n].src_x = x0 - bx;
+		fBlitRects[n].src_y = y0 - by;
+		fBlitRects[n].dst_x = x0;
+		fBlitRects[n].dst_y = y0;
+		fBlitRects[n].width = x1 - x0;
+		fBlitRects[n].height = y1 - y0;
+		n++;
+	}
+	if (!n) {
+		IOLockUnlock(fLock);
+		return kIOReturnSuccess;
+	}
+	for (waited = 0; fBlitPending && waited < 500; waited++) {
+		if (rdn_fence_done(&fAccel, fBlitFence))
+			fBlitPending = false;
+		else
+			IOSleep(1);
+	}
+	if (fBlitPending) {
+		/* The GPU is stuck or far behind; this picture is skipped. */
+		IOLockUnlock(fLock);
+		return kIOReturnBusy;
+	}
+	dst.gpu_addr = screen.gpu_addr;
+	dst.width = screen.width;
+	dst.height = screen.height;
+	dst.pitch_pixels = screen.pitch_pixels;
+	ret = rdn_blit(&fAccel, &dst, &src, fBlitRects, n, BLIT_OFFSET, &seq);
+	if (!ret) {
+		fBlitFence = seq;
+		fBlitPending = true;
+	}
+	IOLockUnlock(fLock);
+	return ret ? kIOReturnIOError : kIOReturnSuccess;
 }
 
 void RadeonNIAccel::forgetSurface(UInt32 wid)

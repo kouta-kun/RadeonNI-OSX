@@ -133,8 +133,33 @@ call with its arguments; that is where the list above comes from.
   Mesa draws a bounding box off-screen and the CPU copies the region's
   rectangles to the screen when the context is flushed
   (`OSMesaReadbackRects`).
-- The other 16 surface methods succeed without doing anything; the locks
-  and `read` are refused. The window server has not called them.
+- The other surface methods succeed without doing anything, except the
+  read lock (a program's surface as a texture, below) and `flush`.
+
+## A program's surface: two ways to the screen [V, 2026-10-06]
+
+A program's OpenGL window is a surface with a buffer of its own in video
+memory. When the program swaps it calls `CGSFlushSurface`, a message to
+the window server, which then picks one of two ways (seen with `sample`
+on both processes and in the kext's log of surface calls):
+
+1. It draws that part of the screen again, with the surface's buffer as a
+   texture (read lock, parameter 997). It does this when the window
+   appears, moves, is covered or uncovered, or when a program comes to
+   the front.
+2. Otherwise, for a plain new picture, `CGXUpdateDisplay` draws nothing.
+   It calls `IOAccelSurfaceControl(1, 0)`, `(1, 1)` and
+   `IOAccelFlushSurfaceOnFramebuffers(mask 1, options 0x18)` on its own
+   client of that surface, and the driver is to show the picture.
+
+The kext's `flush` was an empty method until 2026-10-06, so a window
+showed its first frames and then stood still until something made the
+window server take the first way. Now `RadeonNIAccel::flushSurface()` has
+the GPU copy the buffer to the screen inside the surface's shape
+(`rdn_blit()` in `hw/rdn_blit.c`), queued, not waited for.
+`tools/guest/blit.c` does the same copy from user space, for trying the
+library on a card without loading a kext. What `control` selector 1 and
+the option bits 0x18 mean is not known; both are ignored.
 
 Checked by reading the screen back in the guest (`rdnuc grab`), both
 ways: desktop picture, Finder windows with shadows, a window moved in

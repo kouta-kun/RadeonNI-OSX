@@ -154,6 +154,35 @@ int rdn_ib_submit(struct rdn_accel *accel, uint64_t addr, uint32_t words,
 		  uint32_t *seq);
 
 /*
+ * rdn_blit.c: copy rectangles from one surface to another with the 3D
+ * engine. Both are linear, 32 bits a pixel, top row first, in video memory
+ * or wherever else the GPU can address; pixels are copied as they are
+ * stored. `pitch_pixels` is a multiple of 8.
+ *
+ * `work_offset` (4 KB aligned) names rdn_blit_work_bytes() of scratch
+ * space in the aperture, which the GPU reads until the fence `*seq` is
+ * reached: wait for that before the next call with the same space. Uses no
+ * floating point. Returns 0 or a negative errno value; -EINVAL if a
+ * rectangle leaves either surface.
+ */
+struct rdn_draw_surface {
+	uint64_t gpu_addr;
+	uint32_t width, height, pitch_pixels;
+};
+
+struct rdn_blit_rect {
+	uint32_t src_x, src_y, dst_x, dst_y, width, height;
+};
+
+#define RDN_BLIT_MAX_RECTS	256
+
+uint32_t rdn_blit_work_bytes(void);
+int rdn_blit(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
+	     const struct rdn_draw_surface *src,
+	     const struct rdn_blit_rect *rects, uint32_t count,
+	     uint32_t work_offset, uint32_t *seq);
+
+/*
  * rdn_selftest.c: draw, with the 3D engine, a square (64,64)-(320,320) and
  * a triangle with corners (768,64), (640,320), (896,320) onto a 32-bit
  * surface. Both carry the same texture: red top left, green top right, blue

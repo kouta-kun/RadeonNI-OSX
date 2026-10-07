@@ -500,9 +500,11 @@ static int early_takeover(void)
 #define ENGINE_CTX_CREATE_ARG	0x360
 
 /*
- * Tell the window server that a surface has a new picture, so that it
- * draws that part of the screen again (CGSFlushSurface with no region:
- * all of it; what OpenGL's own glcDoNonSimpleFlush does).
+ * Tell the window server that a surface has a new picture
+ * (CGSFlushSurface with no region: all of it; what OpenGL's own
+ * glcDoNonSimpleFlush does). It then either draws that part of the screen
+ * again or, more often, flushes the surface through the kext's surface
+ * client and leaves the showing to the driver.
  */
 void rdn_surface_flush(unsigned long cid, unsigned long wid, unsigned long sid)
 {

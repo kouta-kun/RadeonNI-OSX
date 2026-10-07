@@ -103,6 +103,8 @@ public:
 	bool getSurfaceBuffer(UInt32 wid, UInt32 *offset, UInt32 *rowBytes,
 			      UInt32 *width, UInt32 *height);
 	void listSurfaces(struct rdn_user_surfaces *list);
+	/* Put a surface's picture on the screen, inside its shape. */
+	IOReturn flushSurface(UInt32 wid);
 	/* The surface that is read-locked now (0: none). */
 	void setReadLocked(UInt32 wid) { fReadLocked = wid; }
 	UInt32 readLocked(void) { return fReadLocked; }
@@ -131,6 +133,10 @@ private:
 		UInt32 bufOffset, bufRowBytes, bufWidth, bufHeight;
 	} fShapes[kMaxSurfaces];
 	UInt32 fReadLocked;
+	/* flushSurface(): the last copy's fence, and its rectangles. */
+	bool fBlitPending;
+	UInt32 fBlitFence;
+	struct rdn_blit_rect fBlitRects[RDN_BLIT_MAX_RECTS];
 	/* See RadeonNIAGPShim. */
 	IOAGPDevice *fAncestor;
 	RadeonNIAGPShim *fShim;
