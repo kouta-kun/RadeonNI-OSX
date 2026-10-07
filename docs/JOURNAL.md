@@ -3623,3 +3623,35 @@ the G5. The Tiger build of `rdn_gltest` does not link at -O2 ("bl PPC
 branch out of range", the program is over 16 MB); not looked into, so
 `-P` on r600 waits for that. The bundle side of pbuffers and shared
 contexts is round 2 and needs what `ciprobe` shows first.
+
+## 2026-10-07 — Core Image on the card, first run: a black picture; pbuffers refused before the driver
+
+**On the G5**, with the driver as installed before round 1 (bundle
+f4d22db0), `ciprobe` built in the guest:
+- `ciprobe soft` (Core Image's software renderer, `CIGaussianBlur` on a
+  512x384 generated picture): 125 ms the first render, 8.3 ms each after.
+  The picture is right (blurred checker over a gradient).
+- `ciprobe gl 0x21a00` (a `CIContext` on a CGL context of our renderer,
+  off-screen drawable): CGL gives our renderer (accelerated, off-screen,
+  pbuffer capable by its own account), `GL_RENDERER` is Mesa's AMD TURKS,
+  no error, 101 ms then 10.6 ms a render. The picture is black except
+  for a 16x16 square in the bottom left corner: 196352 of 196608 pixels
+  differ from the software picture. Sixteen pixels a side is the dummy
+  drawable `rdn_make_current()` binds a context to when it has none it
+  knows.
+- `ciprobe pbuffer 0x21a00`: `CGLCreatePBuffer` succeeds,
+  `CGLSetPBuffer` fails with `kCGLBadEnumeration` (10010). No
+  `gldAttachDrawable` reaches the bundle for it: CGL or the engine
+  refuses first.
+
+**So** Core Image does choose the card and gets nothing usable from it:
+it is not falling back to software, it is drawing wrong. What reading
+the code said (journal, audit entry above) holds.
+
+**Not done:** the round 1 driver is not installed. Copied to the G5
+(`~/RadeonNI-g5.r1`, tools in `~/gl`, the installed set saved as
+`~/RadeonNI-g5.before-round1`); running `install.sh` and restarting was
+refused by the session's permission rules. So the fuller log (which
+context Core Image draws in, shared contexts, the engine-kept entries),
+`gablit`, `qebench` and the Quartz Extreme off comparison have not run.
+Why `CGLSetPBuffer` is refused is not known.
