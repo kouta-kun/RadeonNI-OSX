@@ -363,7 +363,7 @@ def main():
     out.append('\t\tengine_swap = disp->swap_APPLE;')
     out.append('\t\tdisp->swap_APPLE = rdn_swap_entry;')
     out.append('\t}')
-    out.append('\tif (__builtin_expect(rdn_logging, 0))')
+    out.append('\tif (__builtin_expect(rdn_logging, 0) && rdn_kept_now)')
     out.append('\t\tkept_wrap(disp, entries);')
     out.append('\treturn n;')
     out.append('}')

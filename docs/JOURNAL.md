@@ -3655,3 +3655,53 @@ refused by the session's permission rules. So the fuller log (which
 context Core Image draws in, shared contexts, the engine-kept entries),
 `gablit`, `qebench` and the Quartz Extreme off comparison have not run.
 Why `CGLSetPBuffer` is refused is not known.
+
+## 2026-10-07 — Round 1 on the G5: GPU fill and copy right; what Core Image really does; one crash of ours fixed
+
+**Installed** on the G5 with the user's go-ahead: the round 1 package
+(`~/RadeonNI-g5.r1`, `install.sh --accel --hwcursor`), restart; Quartz
+Extreme in use. The set from before is `~/RadeonNI-g5.before-round1`.
+
+**GPU fill and copy** (`~/gl/gablit 100 300`, by readback): the ground
+and the four squares have their colours, the red and green pair copied 30
+pixels right and down over itself is right. `RDN_UC_SCREEN_FILL` and
+`RDN_UC_SCREEN_COPY` work on the card. The plug-in's own use of them
+(`/tmp/rdnga.gpu`) has not run.
+
+**A crash of ours.** With the bundle's log on, `CGLCreateContext` crashed
+in `cglAssignDispatch` at an address that is a PowerPC instruction: the
+new counting wrappers were put into the program's table while the context
+was still being made (the early takeover), and the engine then followed
+one as data. Fixed: wrappers only go into the table of a context that has
+a drawable (`rdn_kept_now`). Without the log nothing was wrong. Bundle
+39a16a74 on the G5 (`~/RadeonNIGLDriver.r1b`, copied over the installed
+one).
+
+**What Core Image does in `ciprobe gl`** (every GL call traced):
+- One context, one thread. No second context, no pbuffer, no framebuffer
+  object, no fragment program, no `glGetProgram*`.
+- It asks `glGetString` for vendor, renderer, version and extensions,
+  then filters on the CPU and gives GL the finished picture: a 512x384
+  `GL_TEXTURE_RECTANGLE` (`GL_BGRA`, `GL_UNSIGNED_INT_8_8_8_8_REV`, row
+  length 528, client storage on, `glTextureRangeAPPLE` on the same
+  memory, storage hint 0x85bf), drawn as one quad under
+  `glOrtho(0, 512, 0, 384)`; `glFinishObjectAPPLE(GL_TEXTURE, id)`
+  around it.
+- So on this card Core Image decides against hardware filtering from
+  the strings or the renderer, before trying anything. Which of them is
+  not known.
+- The quad comes out black but for 16x16 pixels at the bottom left, which
+  hold the right corner of the picture: the off-screen context still
+  clips to the dummy drawable it was bound to before its own existed.
+  `glprobe draw 0x21a00` on the same bundle leaves its buffer all zero.
+  Not looked into further; whether it is new with this bundle is not
+  known (the bundle before drew the same black picture for `ciprobe`).
+- Apple-only entries used: `glTextureRangeAPPLE`, `glFinishObjectAPPLE`.
+
+**Still open from this run:** `ciprobe gl` crashes in `CGLDestroyContext`
+with the log on (address 0x39290001; not looked into). The Tiger build
+of `rdn_gltest` does not link.
+
+**Not run:** `qebench`, the plug-in's counters, the window server's log,
+Quartz Extreme off. Restarting the window server and running the
+benchmark as root were refused by the session's permission rules.

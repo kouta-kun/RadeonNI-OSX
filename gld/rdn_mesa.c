@@ -136,6 +136,7 @@ void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
 long rdn_async_limit, rdn_async_piece;
 int rdn_flush_waits;
+int rdn_kept_now;
 /* The context being made current runs with glthread. */
 static int glthread;
 
@@ -535,7 +536,10 @@ static int install(struct context *c, void *engine_table, const char *when)
 			rdn_log("  the engine had taken back %u entries, the first at index %u (%s)",
 				changed, first, when);
 	}
+	/* Not before the context has a drawable: see rdn_glue.h. */
+	rdn_kept_now = c->type != 0;
 	n = rdn_dispatch_install(app_table, APP_DISPATCH_ENTRIES);
+	rdn_kept_now = 0;
 	if (!c->dispatched || rdn_trace)
 		rdn_log("context %p (engine %p): %u entries of table %p are Mesa's (%s)",
 			c->gld_ctx, c->rend, n, app_table, when);

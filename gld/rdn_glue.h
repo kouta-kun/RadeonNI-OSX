@@ -76,6 +76,13 @@ extern int rdn_flush_waits;
 
 /* The bundle's log has a file (RDN_GLD_LOG, or /tmp/rdngld.on exists). */
 extern int rdn_logging;
+/*
+ * The table being installed into is a finished context's (rdn_mesa.c).
+ * While a context is still being made the engine keeps other things in
+ * the slots Mesa has no function for, and a wrapper there crashes
+ * cglAssignDispatch.
+ */
+extern int rdn_kept_now;
 /* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
 extern int rdn_trace;
 
