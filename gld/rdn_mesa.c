@@ -1092,32 +1092,13 @@ void rdn_mesa_samples(int samples)
 	OSMesaSetSamples(samples);
 }
 
-/*
- * Experiment: with a file /tmp/rdngld.wsflush the window server's present
- * does not wait for the GPU either. Its copy to the screen is queued behind
- * its drawing like a program's, and what it uploads Mesa has copied by then.
- */
-static int window_server_flush(void)
-{
-	static int known = -1;
-
-	if (known < 0)
-		known = access("/tmp/rdngld.wsflush", F_OK) == 0;
-	return known;
-}
-
 void rdn_mesa_present(void *gld_ctx)
 {
 	struct context *c = find(gld_ctx);
 	struct drawable d;
-	static unsigned noted;
 
 	if (!c || !c->rend || !mesa_finish || !read_record(c, &d))
 		return;
-	/* Whether the window server comes here at all is not known. */
-	if (rdn_window_server && noted++ < 8)
-		rdn_log("present: the window server's context %p, %s", gld_ctx,
-			window_server_flush() ? "flushed" : "finished");
 	/* A surface may have moved or been covered since the last frame. */
 	if (c->rend != rdn_current_rend || !c->bound || drawable_changed(c) ||
 	    c->type == DRAWABLE_SURFACE)
@@ -1131,8 +1112,8 @@ void rdn_mesa_present(void *gld_ctx)
 	 * surface's picture is read by the window server, so that one is
 	 * waited for. RDN_GLD_SWAP_FINISH=1 waits in both cases.
 	 */
-	if (c->type == DRAWABLE_SCREEN && mesa_flush && !swap_finish() &&
-	    (!rdn_window_server || window_server_flush()))
+	if (c->type == DRAWABLE_SCREEN && !rdn_window_server && mesa_flush &&
+	    !swap_finish())
 		mesa_flush();
 	else
 		mesa_finish();
