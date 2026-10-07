@@ -1,26 +1,33 @@
-RadeonNI: unaccelerated framebuffer driver for the Radeon HD 7570
-(PCI ID 1002:675d) on Mac OS X 10.4 PowerPC.
+RadeonNI: a graphics driver for the AMD Radeon HD 7570 (PCI ID 1002:675d)
+on Mac OS X 10.4.11 PowerPC: a framebuffer, and with --accel OpenGL and
+Quartz Extreme through Mesa's r600 driver.
 
-STATUS: this package has only ever run inside QEMU (Tiger 10.4.11 on an
-emulated G4, with the real card passed through from a PC). It has never run
-on a real Mac. Expect problems on first contact with real Open Firmware.
+STATUS: experimental. It has run on exactly one machine: a Power Mac G5
+Late 2005 (PowerMac11,2) with one HD 7570 (a Dell card, subsystem
+1028:2b20), one monitor on the DVI-I connector at 1920x1080. Any other
+Mac, card or monitor is untested. The kext only loads for 1002:675d.
 
 Contents
   RadeonNI.kext   the driver, built for PowerPC with Apple gcc 4.0.1
   RadeonNIGLDriver.bundle   the OpenGL driver (Mesa 26.2.4's r600 inside)
   RadeonNIGA.plugin         the 2D plug-in the window server asks for
   install.sh      installs them into /System/Library/Extensions
-  uninstall.sh    removes it
+  uninstall.sh    removes them
   vbios.rom       the card's VBIOS image, if the package was built with it
                   (a fallback only, see below)
   TURKS_*.bin     the card's microcode, (C) Advanced Micro Devices, Inc.,
                   distributed unmodified under LICENSE.radeon
-  LICENSE.radeon  the microcode's licence; keep it with the two files
+  LICENSE.radeon  the microcode's licence; keep it with those files
 
 Install
-  1. Keep the Mac's existing graphics card as the main display.
+  It needs Mac OS X 10.4.11 and nothing else: no developer tools.
+  1. Until you know the driver works on your Mac, have another way in:
+     turn on Remote Login (System Preferences, Sharing) so that you can
+     reach the Mac over ssh if the screen stays dark.
   2. Copy this folder to the Mac and open Terminal in it.
-  3. sudo ./install.sh            (or: sudo ./install.sh /path/to/vbios.rom)
+  3. sudo sh ./install.sh --accel --hwcursor
+     (plain "sudo sh ./install.sh" installs the framebuffer alone, without
+     OpenGL, Quartz Extreme or the hardware cursor)
   4. Restart.
 
 The driver takes the VBIOS from the card's own ROM; no file is needed. A
@@ -32,25 +39,25 @@ whether the two are the same:  grep RadeonNI /var/log/system.log
 install.sh refuses to install without a file on a Mac whose Open Firmware
 gave the card's ROM no address.
 
-Acceleration (experimental)
-  sudo ./install.sh --accel       (add --hwcursor for the hardware cursor)
-  Restart. This starts the card's 3D engine at boot, for OpenGL and Quartz
+Acceleration
+  --accel starts the card's 3D engine at boot, for OpenGL and Quartz
   Extreme, and installs RadeonNIGLDriver.bundle and RadeonNIGA.plugin
   from this folder. It needs TURKS_pfp.bin and TURKS_me.bin in this
-  folder. To go back: sudo ./install.sh, and restart.
+  folder. --hwcursor (with --accel) uses the card's hardware cursor. To go
+  back to the framebuffer alone: sudo sh ./install.sh, and restart.
 
 What the driver does
   It initialises the card from cold (no x86 BIOS runs on a Mac), reads the
   monitor's EDID from the DVI-I connector, and offers the EDID's detailed
-  timings at 256 colours, thousands and millions. There is no acceleration.
+  timings at 256 colours, thousands and millions. With --accel, programs'
+  OpenGL and the window server's compositing run on the card.
 
 What it does not do
-  DisplayPort, a second monitor, sleep and wake, display hot-plug, hardware
-  cursor, any card other than 1002:675d.
+  DisplayPort, a second monitor, sleep and wake, display hot-plug, any card
+  other than 1002:675d.
 
 Check after restart
-  sudo dmesg | grep RadeonNI
-  ioreg -p IODeviceTree -n pci1002,675d -w0 | grep -E "assigned-addresses|reg"
+  grep RadeonNI /var/log/system.log
 
 If the Mac does not boot with the driver installed
   Hold Shift at startup (Safe Boot skips third-party drivers) and run

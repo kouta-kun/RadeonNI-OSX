@@ -6,8 +6,10 @@
 # (scripts/build-mesa.sh darwin), plus g5/install.sh, g5/uninstall.sh and
 # g5/README.txt.
 #
-#   scripts/make-g5-package.sh [--with-vbios]
+#   scripts/make-g5-package.sh [--with-vbios] [--keep-gl]
 #
+# --keep-gl packs the OpenGL bundle as it was last built instead of running
+# the Mesa build again.
 # The command processor's microcode (AMD's, redistributable in binary form)
 # is always packed, with its licence LICENSE.radeon;
 # scripts/fetch-firmware.sh gets it if firmware/ does not have it.
@@ -39,7 +41,10 @@ fi
 "$root/scripts/tiger.sh" ssh 'tar -C ~/osx-gpu-ga/ga/build -cf - RadeonNIGA.plugin' | tar -C "$stage" -xf -
 [ -f "$stage/RadeonNIGA.plugin/Contents/MacOS/RadeonNIGA" ] || { echo "no plug-in came back from the guest" >&2; exit 1; }
 
-"$root/scripts/build-mesa.sh" darwin src/gallium/targets/rdn/RadeonNIGLDriver.dylib > /dev/null
+case " $* " in
+*" --keep-gl "*) ;;
+*) "$root/scripts/build-mesa.sh" darwin src/gallium/targets/rdn/RadeonNIGLDriver.dylib > /dev/null ;;
+esac
 gl=$(ls "$root"/third_party/mesa-*/build-darwin/src/gallium/targets/rdn/RadeonNIGLDriver.dylib | tail -n 1)
 [ -s "$gl" ] || { echo "the OpenGL bundle was not built" >&2; exit 1; }
 mkdir -p "$stage/RadeonNIGLDriver.bundle/Contents/MacOS"
@@ -58,6 +63,7 @@ for arg in "$@"; do
     case "$arg" in
     --with-vbios) cp "$root/private/vbios.rom" "$stage/vbios.rom" ;;
     --with-firmware) ;; # always packed now
+    --keep-gl) ;;       # handled above
     *) echo "unknown option $arg" >&2; exit 1 ;;
     esac
 done
