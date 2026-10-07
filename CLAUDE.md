@@ -371,6 +371,13 @@ Keep these current as part of the work, and commit small and often.
   with the Quartz Extreme personality `kext.sh` uses under QEMU, plus the
   bundle and the plug-in; without options, phase 1's. The installer's
   bundle and plug-in step has not run anywhere yet.
+- `scripts/make-dist.sh [--keep-gl]`: the archive for other people,
+  `build/RadeonNI-<date>-<commit>.zip`: what `make-g5-package.sh` builds
+  plus `README.md`, `INSTALL.txt` (`g5/README.txt`) and the licences
+  (ours, the microcode's, Mesa's), never a VBIOS. `--keep-gl` skips the
+  Mesa build and packs the bundle as last built. Unpacked and installed
+  from on the G5 (2026-10-06); needs nothing but Tiger's base install
+  there. Never tried on a Mac without Xcode or on any other Mac.
 - `rdn_rom=0` as a boot argument (`sudo nvram boot-args="rdn_rom=0"`):
   the kext leaves the card's ROM alone and uses the VBIOS image in its
   personality; it does not start if `install.sh` was given none.

@@ -3352,3 +3352,45 @@ installed from (no `vbios.rom`); the one before is `~/RadeonNI-g5.prev5`
 - Other cards and other Macs: a card whose ROM holds an Open Firmware or
   EFI image first, or a Mac that assigns the ROM no address, would take
   the fallback and need a file.
+
+## 2026-10-06 — An archive to hand to other people (`scripts/make-dist.sh`)
+
+**The user** wants to distribute the project so that someone with a
+compatible card can install it on a scratch 10.4.11: a script that builds
+everything and makes a zip with the installer, a copy of `README.md` and
+the licences.
+
+**The script:** `scripts/make-dist.sh` runs `make-g5-package.sh` (kext and
+2D plug-in built in the guest, the OpenGL bundle cross-built on the host:
+Mesa 26 cannot be built with Tiger's gcc 4.0.1, so "in the guest" holds
+for two of the three), then adds `README.md`, renames the package's
+`README.txt` to `INSTALL.txt`, adds Mesa's `docs/license.rst` as
+`LICENSE.mesa` with its `licenses/` directory, checks that every piece is
+there and that no VBIOS is, and writes
+`build/RadeonNI-<date>-<commit>.zip` with Python (the host has no `zip`),
+keeping the executable bits. `make-g5-package.sh` got `--keep-gl` (pack
+the bundle as last built), which `make-dist.sh` passes on.
+
+**What a scratch install has:** checked on the G5 against the installer
+receipts (`lsbom`): every command `install.sh` and `uninstall.sh` call,
+perl's `MIME::Base64` included, belongs to BaseSystem, BSD or Essentials,
+none to the developer tools. The OpenGL bundle links libz, IOKit and
+libSystem, the plug-in CoreFoundation, IOKit and libSystem. Not checked on
+a Mac that really has no Xcode: both Tiger systems here have it.
+
+**The package's text** (`g5/README.txt`) said it had never run on a real
+Mac and had no acceleration; rewritten to what is true now (one G5, one
+card, one monitor), with `--accel --hwcursor` as the install to use and
+Remote Login as the way back in.
+
+**On the G5:** the zip (5.1 MB, about 22 MB unpacked) unpacked with `unzip` and
+with `ditto -x -k` (what a double-click does), identical both ways,
+scripts executable, the three binaries byte-identical to the installed
+ones (the guest rebuilt the kext to the same bytes). Installed from the
+unpacked folder with `sudo sh ./install.sh --accel --hwcursor`, restarted:
+VBIOS from the card's ROM, Quartz Extreme in use.
+
+**Not done:** run from the worktree, so only with `--keep-gl`; the path
+that rebuilds Mesa is `make-g5-package.sh`'s old one, unchanged. No other
+Mac, no other card, no system without Xcode. The compatibility list the
+README mentions does not exist: the kext matches `1002:675d` only.
