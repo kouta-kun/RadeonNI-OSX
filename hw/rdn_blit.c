@@ -1,7 +1,9 @@
 /*
  * Drawing with the 3D engine from inside this library: the pieces of an
- * indirect buffer that draws textured rectangles and triangles, and
- * rdn_blit(), which copies rectangles from one surface to another.
+ * indirect buffer that draws textured rectangles and triangles, and what is
+ * built from them: rdn_blit(), which copies rectangles from one surface to
+ * another, rdn_blit_fill(), which fills rectangles with one colour, and
+ * rdn_blit_move(), which copies rectangles inside one surface.
  *
  * One indirect buffer sets up the whole state, so it depends on nothing a
  * client did before, and clients must not depend on what it leaves (Mesa's
@@ -103,11 +105,15 @@ static const uint32_t draw_ps[] = {
 	0x00000000,
 };
 
+static uint32_t swap32(uint32_t v)
+{
+	return (v << 24) | ((v & 0xff00) << 8) | ((v >> 8) & 0xff00) | (v >> 24);
+}
+
 void rdn_ib_emit(struct rdn_ib *ib, uint32_t value)
 {
 	if (ib->swapped)
-		value = (value << 24) | ((value & 0xff00) << 8) |
-			((value >> 8) & 0xff00) | (value >> 24);
+		value = swap32(value);
 	rdn_vram_write32(ib->accel, ib->base + ib->words * 4, value);
 	ib->words++;
 }
@@ -412,63 +418,89 @@ static uint32_t float_bits_of(uint32_t v)
 	return ((127 + top) << 23) | ((v << (23 - top)) & 0x7fffff);
 }
 
-/* Byte offsets of the pieces inside the work area. */
+/*
+ * Byte offsets of the pieces inside the work area. The vertices of
+ * RDN_BLIT_MAX_RECTS rectangles end at 0xb000.
+ */
 #define WORK_IB			0x0000
 #define WORK_SHADERS		0x4000
 #define WORK_VB			0x8000
+#define WORK_COLOUR		0xc000
 #define RDN_BLIT_WORK_BYTES	0x10000
+
+/*
+ * The texture a fill draws with: every texel the colour. Its row length is
+ * one this library has drawn with before (the self-test's texture, and
+ * every surface the kext has copied, have rows that are multiples of 64).
+ */
+#define COLOUR_PITCH		64
+#define COLOUR_ROWS		8
 
 uint32_t rdn_blit_work_bytes(void)
 {
 	return RDN_BLIT_WORK_BYTES;
 }
 
-int rdn_blit(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
-	     const struct rdn_draw_surface *src,
-	     const struct rdn_blit_rect *rects, uint32_t count,
-	     uint32_t work_offset, uint32_t *seq)
+uint32_t rdn_blit_move_work_bytes(void)
+{
+	return 2 * RDN_BLIT_WORK_BYTES;
+}
+
+static bool work_ok(struct rdn_accel *accel, uint32_t work_offset, uint32_t bytes)
+{
+	return !(work_offset & 0xfff) && work_offset <= accel->aperture_size &&
+	       bytes <= accel->aperture_size - work_offset;
+}
+
+static bool surface_ok(const struct rdn_draw_surface *s)
+{
+	return s->width && s->height && s->width <= s->pitch_pixels &&
+	       !(s->pitch_pixels & 7) && s->pitch_pixels <= 16384 &&
+	       s->height <= 16384;
+}
+
+/* Is the rectangle, which must not be empty, inside the surface? */
+static bool rect_inside(const struct rdn_draw_surface *s, uint32_t x, uint32_t y,
+			uint32_t width, uint32_t height)
+{
+	return width && height &&
+	       x <= s->width && width <= s->width - x &&
+	       y <= s->height && height <= s->height - y;
+}
+
+/*
+ * Rectangle number `index` of the vertex buffer at `vb`: `width` by `height`
+ * pixels at (dx, dy), showing `swidth` by `sheight` texels from (sx, sy).
+ * A rectangle is three corners of (x, y, s, t), in pixels and texels: top
+ * left, bottom left, bottom right.
+ */
+static void put_rect(struct rdn_accel *accel, uint32_t vb, uint32_t index,
+		     uint32_t dx, uint32_t dy, uint32_t width, uint32_t height,
+		     uint32_t sx, uint32_t sy, uint32_t swidth, uint32_t sheight)
+{
+	const uint32_t v[12] = {
+		dx, dy, sx, sy,
+		dx, dy + height, sx, sy + sheight,
+		dx + width, dy + height, sx + swidth, sy + sheight,
+	};
+	uint32_t k;
+
+	for (k = 0; k < 12; k++)
+		rdn_vram_write32(accel, vb + index * 48 + k * 4, float_bits_of(v[k]));
+}
+
+/*
+ * Build and submit the indirect buffer that draws the `count` rectangles
+ * put into the work area's vertex buffer: on `dst`, with `src` as the
+ * texture.
+ */
+static int draw_rects(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
+		      const struct rdn_draw_surface *src, uint32_t count,
+		      uint32_t work_offset, uint32_t *seq)
 {
 	struct rdn_ib ib;
-	uint32_t i, n, vb = work_offset + WORK_VB;
-
-	if (work_offset + RDN_BLIT_WORK_BYTES > accel->aperture_size ||
-	    (work_offset & 0xfff) || !count || count > RDN_BLIT_MAX_RECTS ||
-	    !dst->width || !dst->height || dst->width > dst->pitch_pixels ||
-	    !src->width || !src->height || src->width > src->pitch_pixels ||
-	    (dst->pitch_pixels & 7) || (src->pitch_pixels & 7) ||
-	    dst->pitch_pixels > 16384 || dst->height > 16384 ||
-	    src->pitch_pixels > 16384 || src->height > 16384)
-		return -EINVAL;
-	for (i = 0; i < count; i++) {
-		const struct rdn_blit_rect *r = &rects[i];
-
-		if (!r->width || !r->height ||
-		    r->src_x > src->width || r->width > src->width - r->src_x ||
-		    r->src_y > src->height || r->height > src->height - r->src_y ||
-		    r->dst_x > dst->width || r->width > dst->width - r->dst_x ||
-		    r->dst_y > dst->height || r->height > dst->height - r->dst_y)
-			return -EINVAL;
-	}
 
 	rdn_draw_put_shaders(accel, work_offset + WORK_SHADERS);
-	/*
-	 * A rectangle is three corners of (x, y, s, t), in pixels and
-	 * texels: top left, bottom left, bottom right.
-	 */
-	for (i = 0, n = 0; i < count; i++) {
-		const struct rdn_blit_rect *r = &rects[i];
-		const uint32_t v[12] = {
-			r->dst_x, r->dst_y, r->src_x, r->src_y,
-			r->dst_x, r->dst_y + r->height,
-			r->src_x, r->src_y + r->height,
-			r->dst_x + r->width, r->dst_y + r->height,
-			r->src_x + r->width, r->src_y + r->height,
-		};
-		uint32_t k;
-
-		for (k = 0; k < 12; k++, n++)
-			rdn_vram_write32(accel, vb + n * 4, float_bits_of(v[k]));
-	}
 
 	ib.accel = accel;
 	ib.base = work_offset + WORK_IB;
@@ -481,7 +513,8 @@ int rdn_blit(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
 	rdn_draw_render_target(&ib, dst, false);
 	rdn_draw_texture(&ib, src);
 	rdn_draw_scissors(&ib, 0, 0, dst->width, dst->height);
-	rdn_draw_vertices(&ib, rdn_vram_addr(accel, vb), count * 48);
+	rdn_draw_vertices(&ib, rdn_vram_addr(accel, work_offset + WORK_VB),
+			  count * 48);
 	rdn_draw_auto(&ib, RDN_DI_PT_RECTLIST, count * 3);
 
 	/* Make the render target's caches reach memory. */
@@ -494,4 +527,138 @@ int rdn_blit(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
 		return -ENOMEM;
 
 	return rdn_ib_submit(accel, rdn_vram_addr(accel, ib.base), ib.words, seq);
+}
+
+int rdn_blit(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
+	     const struct rdn_draw_surface *src,
+	     const struct rdn_blit_rect *rects, uint32_t count,
+	     uint32_t work_offset, uint32_t *seq)
+{
+	uint32_t i;
+
+	if (!work_ok(accel, work_offset, RDN_BLIT_WORK_BYTES) ||
+	    !count || count > RDN_BLIT_MAX_RECTS ||
+	    !surface_ok(dst) || !surface_ok(src))
+		return -EINVAL;
+	for (i = 0; i < count; i++) {
+		const struct rdn_blit_rect *r = &rects[i];
+
+		if (!rect_inside(src, r->src_x, r->src_y, r->width, r->height) ||
+		    !rect_inside(dst, r->dst_x, r->dst_y, r->width, r->height))
+			return -EINVAL;
+	}
+	for (i = 0; i < count; i++) {
+		const struct rdn_blit_rect *r = &rects[i];
+
+		put_rect(accel, work_offset + WORK_VB, i,
+			 r->dst_x, r->dst_y, r->width, r->height,
+			 r->src_x, r->src_y, r->width, r->height);
+	}
+	return draw_rects(accel, dst, src, count, work_offset, seq);
+}
+
+/*
+ * A fill is the same textured draw as a copy, from a texture that is the
+ * colour all over, with every corner's texture coordinates at its middle.
+ * The other way would be a pixel shader that writes a constant, and the
+ * state to hand it one: code the card has never run. This way nothing
+ * reaches the GPU that the copy does not send for every picture the kext
+ * shows, except different numbers in the vertex buffer, and the price is
+ * five hundred words written through the aperture.
+ */
+int rdn_blit_fill(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
+		  const struct rdn_fill_rect *rects, uint32_t count,
+		  uint32_t colour, bool big_endian_pixels,
+		  uint32_t work_offset, uint32_t *seq)
+{
+	struct rdn_draw_surface texture;
+	uint32_t i;
+
+	if (!work_ok(accel, work_offset, RDN_BLIT_WORK_BYTES) ||
+	    !count || count > RDN_BLIT_MAX_RECTS || !surface_ok(dst))
+		return -EINVAL;
+	for (i = 0; i < count; i++)
+		if (!rect_inside(dst, rects[i].x, rects[i].y, rects[i].width,
+				 rects[i].height))
+			return -EINVAL;
+
+	/* The draw copies bytes: the texels are what a pixel is to be. */
+	if (big_endian_pixels)
+		colour = swap32(colour);
+	for (i = 0; i < COLOUR_PITCH * COLOUR_ROWS; i++)
+		rdn_vram_write32(accel, work_offset + WORK_COLOUR + i * 4, colour);
+	texture.gpu_addr = rdn_vram_addr(accel, work_offset + WORK_COLOUR);
+	texture.width = texture.pitch_pixels = COLOUR_PITCH;
+	texture.height = COLOUR_ROWS;
+
+	for (i = 0; i < count; i++)
+		put_rect(accel, work_offset + WORK_VB, i,
+			 rects[i].x, rects[i].y, rects[i].width, rects[i].height,
+			 COLOUR_PITCH / 2, COLOUR_ROWS / 2, 0, 0);
+	return draw_rects(accel, dst, &texture, count, work_offset, seq);
+}
+
+/*
+ * The GPU must not take its texture from the surface it is drawing on, and
+ * cutting a move into pieces that do not overlap would not change that:
+ * every piece would still read and write the one surface. So there are two
+ * draws, each a plain copy between two surfaces: every source to `scratch`,
+ * then from there to its destination. In `scratch` a source lies where it
+ * does in the box around all the sources, so sources that share pixels
+ * share them there too, and the second draw finds every pixel as it was
+ * before the first destination was written.
+ *
+ * Each draw has a work area of its own, because the GPU has not read the
+ * first when the second is written.
+ */
+int rdn_blit_move(struct rdn_accel *accel, const struct rdn_draw_surface *surface,
+		  const struct rdn_draw_surface *scratch,
+		  const struct rdn_blit_rect *rects, uint32_t count,
+		  uint32_t work_offset, uint32_t *seq)
+{
+	uint32_t i, x0 = 0xffffffff, y0 = 0xffffffff, x1 = 0, y1 = 0;
+	int ret;
+
+	if (!work_ok(accel, work_offset, 2 * RDN_BLIT_WORK_BYTES) ||
+	    !count || count > RDN_BLIT_MAX_RECTS ||
+	    !surface_ok(surface) || !surface_ok(scratch))
+		return -EINVAL;
+	for (i = 0; i < count; i++) {
+		const struct rdn_blit_rect *r = &rects[i];
+
+		if (!rect_inside(surface, r->src_x, r->src_y, r->width, r->height) ||
+		    !rect_inside(surface, r->dst_x, r->dst_y, r->width, r->height))
+			return -EINVAL;
+		if (r->src_x < x0)
+			x0 = r->src_x;
+		if (r->src_y < y0)
+			y0 = r->src_y;
+		if (r->src_x + r->width > x1)
+			x1 = r->src_x + r->width;
+		if (r->src_y + r->height > y1)
+			y1 = r->src_y + r->height;
+	}
+	if (x1 - x0 > scratch->width || y1 - y0 > scratch->height)
+		return -EINVAL;
+
+	for (i = 0; i < count; i++) {
+		const struct rdn_blit_rect *r = &rects[i];
+
+		put_rect(accel, work_offset + WORK_VB, i,
+			 r->src_x - x0, r->src_y - y0, r->width, r->height,
+			 r->src_x, r->src_y, r->width, r->height);
+	}
+	ret = draw_rects(accel, scratch, surface, count, work_offset, seq);
+	if (ret)
+		return ret;
+
+	work_offset += RDN_BLIT_WORK_BYTES;
+	for (i = 0; i < count; i++) {
+		const struct rdn_blit_rect *r = &rects[i];
+
+		put_rect(accel, work_offset + WORK_VB, i,
+			 r->dst_x, r->dst_y, r->width, r->height,
+			 r->src_x - x0, r->src_y - y0, r->width, r->height);
+	}
+	return draw_rects(accel, surface, scratch, count, work_offset, seq);
 }

@@ -11,7 +11,10 @@
  * The routines work on the screen's surface in video memory, which the
  * kext's accelerator user client maps (hw/rdn_user.h), with the CPU. That
  * is no faster than what the system does without a plug-in; it is here
- * because it has to exist.
+ * because it has to exist. With a file /tmp/rdnga.gpu there when the
+ * window server starts, fills and copies on a 32-bit screen are the GPU's
+ * instead (RDN_UC_SCREEN_FILL, RDN_UC_SCREEN_COPY), and the CPU's again
+ * for good after the first call that fails.
  *
  * The shape of a CFPlugIn for this interface was learned from VMsvga2's
  * (MIT, Zenith432); the code is this project's.
@@ -23,6 +26,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <mach/mach.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreFoundation/CFPlugInCOM.h>
@@ -46,6 +50,15 @@ struct ga {
 	/* The screen now; read again on Reset, which follows a mode change. */
 	struct rdn_user_info info;
 	int usable;
+	/*
+	 * Fill and copy with the GPU (a file /tmp/rdnga.gpu, looked for at
+	 * Start and Reset, on a 32-bit screen), until a call fails; and the
+	 * fence of the last one, to wait for before the CPU touches the
+	 * screen.
+	 */
+	int gpu;
+	int gpu_pending;
+	UInt32 gpu_fence;
 };
 
 static IOGraphicsAcceleratorInterface interface;
@@ -55,6 +68,7 @@ static void ga_read_screen(struct ga *ga)
 	IOByteCount size = sizeof(ga->info);
 
 	ga->usable = 0;
+	ga->gpu = 0;
 	if (!ga->conn || !ga->aperture)
 		return;
 	if (IOConnectMethodScalarIStructureO(ga->conn, RDN_UC_GET_INFO, 0, &size,
@@ -64,6 +78,63 @@ static void ga_read_screen(struct ga *ga)
 		     (ga->info.fb_bits_per_pixel == 8 ||
 		      ga->info.fb_bits_per_pixel == 16 ||
 		      ga->info.fb_bits_per_pixel == 32);
+	ga->gpu = ga->usable && ga->info.fb_bits_per_pixel == 32 &&
+		  access("/tmp/rdnga.gpu", F_OK) == 0;
+}
+
+/*
+ * The GPU's fills and copies are queued, not waited for. Before the CPU
+ * reads or writes the screen, and when the system asks, wait for the last.
+ */
+static void ga_gpu_wait(struct ga *ga)
+{
+	UInt32 reached = 0;
+	int tries;
+
+	if (!ga->gpu_pending)
+		return;
+	for (tries = 0; tries < 20 && !reached; tries++)
+		if (IOConnectMethodScalarIScalarO(ga->conn, RDN_UC_FENCE_WAIT, 2, 1,
+						  ga->gpu_fence, 100, &reached))
+			break;
+	ga->gpu_pending = 0;
+}
+
+/* True if the GPU took the fill; otherwise it is the CPU's from now on. */
+static int ga_gpu_fill(struct ga *ga, SInt32 x, SInt32 y, SInt32 w, SInt32 h,
+		       UInt32 color)
+{
+	UInt32 fence = 0;
+
+	if (!ga->gpu)
+		return 0;
+	if (IOConnectMethodScalarIScalarO(ga->conn, RDN_UC_SCREEN_FILL, 5, 1,
+					  x, y, w, h, color, &fence)) {
+		ga->gpu = 0;
+		return 0;
+	}
+	ga->gpu_fence = fence;
+	ga->gpu_pending = 1;
+	return 1;
+}
+
+static int ga_gpu_copy(struct ga *ga, SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
+		       SInt32 w, SInt32 h)
+{
+	UInt32 fence = 0;
+
+	/* Width and height share an argument, 16 bits each. */
+	if (!ga->gpu || w < 0 || h < 0 || w > 0xffff || h > 0xffff)
+		return 0;
+	if (IOConnectMethodScalarIScalarO(ga->conn, RDN_UC_SCREEN_COPY, 5, 1,
+					  sx, sy, dx, dy,
+					  ((UInt32)h << 16) | (UInt32)w, &fence)) {
+		ga->gpu = 0;
+		return 0;
+	}
+	ga->gpu_fence = fence;
+	ga->gpu_pending = 1;
+	return 1;
 }
 
 /* Address of a pixel of the screen. */
@@ -94,6 +165,9 @@ static void ga_fill(struct ga *ga, SInt32 x, SInt32 y, SInt32 w, SInt32 h,
 
 	if (!ga_clip(ga, &x, &y, &w, &h))
 		return;
+	if (ga_gpu_fill(ga, x, y, w, h, color))
+		return;
+	ga_gpu_wait(ga);
 	for (row = 0; row < h; row++) {
 		uint8_t *p = ga_pixel(ga, x, y + row);
 
@@ -129,6 +203,10 @@ static void ga_copy(struct ga *ga, SInt32 sx, SInt32 sy, SInt32 dx, SInt32 dy,
 	if (!ga_clip(ga, &cx, &cy, &cw, &ch))
 		return;
 	dx += cx - sx; dy += cy - sy; sx = cx; sy = cy; w = cw; h = ch;
+
+	if (ga_gpu_copy(ga, sx, sy, dx, dy, w, h))
+		return;
+	ga_gpu_wait(ga);
 
 	if (dy < sy) {
 		for (row = 0; row < h; row++)
@@ -446,12 +524,14 @@ static IOReturn ga_copy_capabilities(void *self, FourCharCode select,
 
 static IOReturn ga_flush(void *self, IOOptionBits options)
 {
+	ga_gpu_wait(self);
 	return kIOReturnSuccess;
 }
 
 static IOReturn ga_synchronize(void *self, UInt32 options, UInt32 x, UInt32 y,
 			       UInt32 w, UInt32 h)
 {
+	ga_gpu_wait(self);
 	return kIOReturnSuccess;
 }
 
@@ -526,6 +606,7 @@ static IOReturn ga_get_blitter(void *self, IOOptionBits options, IOBlitType type
 
 static IOReturn ga_wait_complete(void *self, IOOptionBits options)
 {
+	ga_gpu_wait(self);
 	return kIOReturnSuccess;
 }
 
