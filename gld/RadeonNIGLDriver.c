@@ -52,6 +52,10 @@
 /* Bit 8 of word 2, in the renderer info and in the pixel format alike. */
 #define RECORD_ACCELERATED	0x100
 #define RECORD_FULLSCREEN	0x2
+/* Bit 11 of the pixel format's word 2: kCGLPFAAuxDepthStencil (57). */
+#define RECORD_AUX_DEPTH_STENCIL	0x800
+/* Depth modes (word 6 of the renderer info): a buffer of 24 bits. */
+#define DEPTH_MODE_24		0x800
 #ifdef RDN_MESA
 #define RDN_CLAIMS_ACCELERATED	1
 #else
@@ -880,6 +884,8 @@ static const long *display_words;
 
 /* Samples of the last pixel format a program asked for; 0: none. */
 static int asked_samples;
+/* The last request had kCGLPFAAuxDepthStencil. */
+static int asked_aux_depth_stencil;
 
 static int in_window_server(void)
 {
@@ -912,6 +918,12 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 			/* Words 12 and 13: video and texture memory, in bytes. */
 			((unsigned long *)a)[12] = RDN_REPORTED_MEMORY;
 			((unsigned long *)a)[13] = RDN_REPORTED_MEMORY;
+			/*
+			 * The software renderer's depth modes are 32 bits
+			 * only. Mesa's depth buffer has 24, and Call of Duty
+			 * 2 takes no display whose renderer lacks that mode.
+			 */
+			((unsigned long *)a)[6] |= DEPTH_MODE_24;
 		}
 		/* Experiment: RDN_GLD_INFO="word:xor[,word:xor]" flips bits. */
 		if (ret == 0 && a && getenv("RDN_GLD_INFO")) {
@@ -1149,6 +1161,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		int n = 0;
 
 		asked_samples = 0;
+		asked_aux_depth_stencil = 0;
 
 		while (*in && n < 62) {
 			/*
@@ -1184,6 +1197,13 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 				in += 2;
 				continue;
 			}
+			/*
+			 * kCGLPFAAuxDepthStencil, no value: the software
+			 * renderer has no format for it, and CGL wants the
+			 * flag in the record that comes back.
+			 */
+			if (*in == 57)
+				asked_aux_depth_stencil = 1;
 			if (*in != 73 && *in != 72)
 				filtered[n++] = *in;
 			in++;
@@ -1246,6 +1266,8 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 				fmt[6] = 0x1000;
 				fmt[7] = 0x80;
 				fmt[8] = 4;
+				if (asked_aux_depth_stencil)
+					fmt[2] |= RECORD_AUX_DEPTH_STENCIL;
 				if (asked_samples > 1)
 					fmt[9] = 0x10000 | (unsigned long)asked_samples;
 			}
