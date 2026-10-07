@@ -68,3 +68,13 @@ off except for those named, one a line, in the text file
 by the name the system has for the program (as in Activity Monitor: for
 example Quake3, or Doom 3 Demo); a line with * means every program.
 RDN_GLTHREAD=1 or =0 in a program's environment overrides the file.
+
+Programs are told which OpenGL extensions the card has by a list the
+driver makes itself (Mesa's own comes out wrong on this system: it left
+out vertex programs, two-sided stencil and compressed textures, and
+Doom 3 drew the slow way for it). The window server alone still gets
+Mesa's list, because the desktop has only been seen with that one. To
+give it the true list too, make the empty file
+  /Library/Application Support/RadeonNI/true-extensions
+and restart; remove the file to go back. RDN_EXTENSIONS=mesa in a
+program's environment gives that program Mesa's list.
