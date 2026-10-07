@@ -996,7 +996,7 @@ int rdn_swap(void *rend)
 {
 	int i, tries;
 
-	for (i = 0; i < MAX_CONTEXTS; i++)
+	for (i = 0; i < MAX_CONTEXTS; i++) {
 		if (contexts[i].gld_ctx && contexts[i].rend == rend &&
 		    contexts[i].type == DRAWABLE_SCREEN && !rdn_window_server) {
 			/* The whole screen: the copy is all there is to do. */
@@ -1035,6 +1035,7 @@ int rdn_swap(void *rend)
 					  contexts[i].surface);
 			return 1;
 		}
+	}
 	return 0;
 }
 
