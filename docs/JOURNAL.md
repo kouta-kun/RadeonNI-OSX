@@ -3262,3 +3262,135 @@ system memory, Quake 3 149.7.
 
 **Not done:** the QEMU guest has never run the GART (no card there now);
 `TIGER_BOOTARGS=rdn_gart=0` would leave it off.
+
+## 2026-10-06 — The VBIOS is read from the card's ROM; the G5 runs without the file
+
+**The user** asked whether the build reads the VBIOS at run time (it did
+not: the image in the personality was the only source, and `rdn_romtest`
+had never run), then to find out on the G5 whether it can be read and to
+make the changes if so.
+
+**What the G5 said without anything being loaded:** the device tree's
+`assigned-addresses` has an entry for register 0x30 (128 KB at
+0x80120000, next to the register BAR at 0x80140000); `BUS_CNTL` (0x5420)
+reads 0 on the running card, so the ROM is not switched off
+(`BIOS_ROM_DIS` is what Linux's `ni_read_disabled_bios()` works around);
+the kernel exports `ml_probe_read()` to kexts linked against the 6.0
+libraries, as it does in the guest. That function reads a word at a
+physical address and returns false where a plain read would be a machine
+check; the header that declares it is not in Kernel.framework for
+PowerPC, so the kext declares it itself.
+
+**A probe instead of `rdn_romtest`** (`kext/RomProbe`, built in the guest
+like the driver, tried there first: with no card it only loads, finds
+nothing and unloads). `rdn_romtest=1` would have needed a restart and
+read the ROM unguarded, on a Mac with no keyboard to recover with. The
+probe is loaded by hand on the running G5, finds the card's
+`IOPCIDevice`, turns on the ROM's decoding, reads the first word with
+`ml_probe_read()`, then the whole BAR through a mapping and again word by
+word, puts the BAR back and publishes the bytes in the registry. On the
+G5: command 0006, BAR 80120000, first word answered `55aa80e9`, image of
+65536 bytes with checksum 0, no difference between the two ways of
+reading; the 163840 reads took about two seconds. Read out with `ioreg` and
+compared on the host: the first 64 KB are `private/vbios.rom` byte for
+byte (SHA-256 `591e5d5d...`), one x86 image with the last-image flag,
+and the second 64 KB of the BAR are zeros. The screen did not change and
+the driver was not touched.
+
+**The kext** (`RadeonNI::loadBios()`): the ROM first (`biosFromRom()`),
+then the personality's image (`biosFromPersonality()`, the old code).
+The ROM read needs an address in the BAR and an `IODeviceMemory` for it,
+reads every word with `ml_probe_read()`, and wants the signature, a
+length that fits the BAR and a checksum of zero; any failure is one log
+line with the reason and the fallback. An image the AtomBIOS parser
+rejects is also given up for the next source. When the ROM is used and a
+file is there too, the log says whether they are the same.
+`rdn_rom=0` as a boot argument leaves the ROM alone; `rdn_romtest` and
+`compareRom()` are gone.
+
+**The installer** (`g5/install.sh`): the VBIOS file is optional. With one
+(argument, or `vbios.rom` beside the script) it goes into the kext as
+before, now as the fallback. Without one the script looks the card up in
+the device tree by its `compatible` list (the node is `pci1028,2b20`
+here, which the old `grep pci1002,675d` does not find) and refuses to
+install if Open Firmware gave register 0x30 no address. Rehearsed in the
+guest (no card: "absent", a note, no failure) without and with a file and
+with a missing one; the kext was removed again with `kext.sh uninstall`.
+
+**On the G5**, four restarts, each back on ssh in under a minute, each
+with `install.sh --accel --hwcursor` from the installed package with
+only the kext, the installer and the README replaced:
+1. With the file inside: "VBIOS, 65536 bytes from the card's ROM", "the
+   personality's VBIOS is the same as the ROM", then "card is not posted
+   on entry" and everything as before. So the cold card's ROM answers and
+   is the same image.
+2. Without the file (no `VBIOS` key in the installed `Info.plist`): the
+   same lines minus the comparison; POST, 1920x1080, 3D engine, GART
+   self-test, 649.96 / 800 MHz, hardware cursor, Quartz Extreme in use.
+3. `boot-args="rdn_rom=0"` and the file inside: "the card's ROM is left
+   alone (rdn_rom=0)", "VBIOS, 65536 bytes from the personality",
+   Quartz Extreme in use.
+4. Boot arguments deleted, without the file again: as 2. The desktop is
+   right by readback (`rdnuc grab`).
+
+**How the G5 is left:** kext `efb70d8a...` from commit b553466, no VBIOS
+file in it, no boot arguments. `~/RadeonNI-g5` is the package it was
+installed from (no `vbios.rom`); the one before is `~/RadeonNI-g5.prev5`
+(with `vbios.rom`), and the last kext that carried the VBIOS is
+`~/RadeonNI.kext.before-rom`.
+
+**Not done, not seen:**
+- The failure paths of the ROM read (no answer, a machine check, a wrong
+  signature or checksum, no address) have never run anywhere: the ROM
+  answered every time. Under QEMU "no address" is what will happen; the
+  card is not in the host now, so that was not run either.
+- The user has not looked at the G5's screen; nothing about the picture
+  should differ, and the grab does not.
+- `build/RadeonNI-g5.tar.gz` on the host was not rebuilt
+  (`scripts/make-g5-package.sh`, now without `--with-vbios` for a package
+  that carries no VBIOS).
+- Other cards and other Macs: a card whose ROM holds an Open Firmware or
+  EFI image first, or a Mac that assigns the ROM no address, would take
+  the fallback and need a file.
+
+## 2026-10-06 — An archive to hand to other people (`scripts/make-dist.sh`)
+
+**The user** wants to distribute the project so that someone with a
+compatible card can install it on a scratch 10.4.11: a script that builds
+everything and makes a zip with the installer, a copy of `README.md` and
+the licences.
+
+**The script:** `scripts/make-dist.sh` runs `make-g5-package.sh` (kext and
+2D plug-in built in the guest, the OpenGL bundle cross-built on the host:
+Mesa 26 cannot be built with Tiger's gcc 4.0.1, so "in the guest" holds
+for two of the three), then adds `README.md`, renames the package's
+`README.txt` to `INSTALL.txt`, adds Mesa's `docs/license.rst` as
+`LICENSE.mesa` with its `licenses/` directory, checks that every piece is
+there and that no VBIOS is, and writes
+`build/RadeonNI-<date>-<commit>.zip` with Python (the host has no `zip`),
+keeping the executable bits. `make-g5-package.sh` got `--keep-gl` (pack
+the bundle as last built), which `make-dist.sh` passes on.
+
+**What a scratch install has:** checked on the G5 against the installer
+receipts (`lsbom`): every command `install.sh` and `uninstall.sh` call,
+perl's `MIME::Base64` included, belongs to BaseSystem, BSD or Essentials,
+none to the developer tools. The OpenGL bundle links libz, IOKit and
+libSystem, the plug-in CoreFoundation, IOKit and libSystem. Not checked on
+a Mac that really has no Xcode: both Tiger systems here have it.
+
+**The package's text** (`g5/README.txt`) said it had never run on a real
+Mac and had no acceleration; rewritten to what is true now (one G5, one
+card, one monitor), with `--accel --hwcursor` as the install to use and
+Remote Login as the way back in.
+
+**On the G5:** the zip (5.1 MB, about 22 MB unpacked) unpacked with `unzip` and
+with `ditto -x -k` (what a double-click does), identical both ways,
+scripts executable, the three binaries byte-identical to the installed
+ones (the guest rebuilt the kext to the same bytes). Installed from the
+unpacked folder with `sudo sh ./install.sh --accel --hwcursor`, restarted:
+VBIOS from the card's ROM, Quartz Extreme in use.
+
+**Not done:** run from the worktree, so only with `--keep-gl`; the path
+that rebuilds Mesa is `make-g5-package.sh`'s old one, unchanged. No other
+Mac, no other card, no system without Xcode. The compatibility list the
+README mentions does not exist: the kext matches `1002:675d` only.

@@ -191,16 +191,16 @@ and BAR2, and the ROM?), `sudo dmesg | grep RadeonNI`, and whether the
 Things knowingly left untested under QEMU, to revisit once the driver runs
 on the Power Mac G5.
 
-- **VBIOS from the PCI expansion ROM.** Under `mac99` the kext loads the
-  VBIOS from a file, because OpenBIOS does not assign the ROM BAR (user
-  decision, 2026-10-04; OpenBIOS is not patched for this). The ROM-read path
-  in the kext is therefore never exercised in the harness. On the G5: check
-  that Open Firmware assigns the ROM (`assigned-addresses` entry for
-  register 0x30), implement or enable reading it through the ROM BAR, compare
-  the image against the file byte for byte, and make the ROM the primary
-  source with the file as fallback. Keep in mind the pc297 failure (VBIOS
-  taken from the wrong place) and the warning that the ROM size in the
-  device tree may be truncated.
+- **VBIOS from the PCI expansion ROM. Done on the G5 (2026-10-06,
+  journal).** Open Firmware assigns the ROM (128 KB at 0x80120000), the
+  image read through it equals the file byte for byte, before and after
+  POST, and the kext takes the VBIOS from there; the G5 runs with no VBIOS
+  file installed. The file in the personality is the fallback, and the only
+  source under `mac99`, where OpenBIOS does not assign the ROM BAR (user
+  decision, 2026-10-04; OpenBIOS is not patched for this), so the ROM path
+  never runs in the harness. Not seen: a ROM that does not answer, or a Mac
+  whose firmware assigns no address (the code falls back to the file for
+  both; neither has happened).
 
 # Phase 2 — hardware acceleration
 

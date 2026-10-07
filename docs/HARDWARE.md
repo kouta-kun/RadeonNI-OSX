@@ -38,6 +38,12 @@ Dump: `private/vbios.rom` (git-ignored), read from the sysfs `rom` node.
 | MD5 | `9e1e08facfbedf0cad46866e949a7c49` |
 | Signature / checksum | `55 AA`, image checksum 0 (valid) |
 | ATOM header | offset `0x1b2`, magic `ATOM` |
+
+On the Power Mac G5 (2026-10-06) Open Firmware puts the ROM at 0x80120000,
+128 KB, with decoding off. Read there with decoding on, the first 64 KB are
+this image byte for byte (same SHA-256) and the second 64 KB are zeros, on
+the cold card and on the running one alike; `BUS_CNTL` (0x5420) reads 0,
+so the ROM is not disabled while the driver runs.
 | Part number | `113-C3340200-101` |
 | Build date | 09/05/11 05:06 |
 | Version string | `ATOMBIOSBK-ATI VER013.012.000.032.041591` |
