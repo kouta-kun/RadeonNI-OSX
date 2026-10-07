@@ -3705,3 +3705,39 @@ of `rdn_gltest` does not link.
 **Not run:** `qebench`, the plug-in's counters, the window server's log,
 Quartz Extreme off. Restarting the window server and running the
 benchmark as root were refused by the session's permission rules.
+
+## 2026-10-07 — Quartz Extreme on against off, measured on the G5
+
+`~/gl/qebench.sh` (results in `~/qebench` on the G5), 1920x1080, a
+600x400 Finder window, ten seconds a phase, `sample` every 10 ms in both
+runs. On: the round 1 driver with `--accel --hwcursor`, the window
+server logging its `gld*` calls. Off: the same package installed without
+`--accel` (a restart each way).
+
+| Phase | | Quartz Extreme on | off |
+|---|---|---|---|
+| AppleScript moves in 10 s | moves done | 4763 | 1335 |
+| | window server CPU | 5.87 s | 10.04 s |
+| | GPU command buffers | 5224 | - |
+| 8 drags of 300,120 pixels | window server CPU | 1.38 s | 5.29 s |
+| | GPU command buffers | 640 | - |
+| Exposé in and out, 4 times | window server CPU | 1.61 s | 3.49 s |
+| | GPU command buffers | 670 | - |
+| Idle | window server CPU | 0.02 s | 0.02 s |
+
+So with the card compositing, the window server moves a window 3.6
+times as often with 0.6 of the CPU time, and a paced drag costs a
+quarter.
+
+**Also seen with Quartz Extreme on:**
+- The 2D plug-in's blitters were not called once (fill, copy, copy
+  region: 0). The plug-in is only the gate; its GPU path
+  (`/tmp/rdnga.gpu`) has nothing to speed up while Quartz Extreme is on.
+- The window server's surface client: `setIDMode` once and `setShape`
+  6666 times, nothing else, with no program's GL window open.
+- Of the entries Mesa lacks, the window server calls
+  `glTextureRangeAPPLE` and `glTestObjectAPPLE` (55 wrapped).
+- It never comes through `rdn_mesa_present()`.
+
+The accelerated driver is installed again (bundle 39a16a74), Quartz
+Extreme in use, no switch files.
