@@ -61,6 +61,16 @@ sudo nvram boot-args="..." and a restart:
   rdn_mc=0           do not load the memory controller's microcode
                      (the memory clock then stays as it is)
 
+The driver also lets the card read the computer's own memory (a "GART"):
+programs keep there what they write all the time, and what no longer
+fits in video memory goes there instead of stopping the program. At
+start the driver has the card run a few commands from system memory and
+leaves all this off if that fails. To leave it off yourself:
+  rdn_gart=0         video memory only
+If the desktop does not come up after an install, start the Mac with
+that argument (in Open Firmware: setenv boot-args rdn_gart=0) and tell
+us.
+
 Mesa's work for each OpenGL call is done on the second processor (Mesa's
 "glthread") for every program except the window server. To change that
 for one program, name it on a line of the text file

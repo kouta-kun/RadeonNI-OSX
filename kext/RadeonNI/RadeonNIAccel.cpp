@@ -175,7 +175,7 @@ bool RadeonNIAccel::startEngine(void)
 {
 	struct rdn_accel_fw fw;
 	UInt32 pfpSize = 0, meSize = 0, apertureSize = fFramebuffer->apertureSize();
-	int r, keepBootClocks = 0, gart = 0;
+	int r, keepBootClocks = 0, gart = 1;
 
 	fPfp = copyFirmware("FW_PFP", &pfpSize);
 	fMe = copyFirmware("FW_ME", &meSize);
@@ -214,8 +214,17 @@ bool RadeonNIAccel::startEngine(void)
 	      (unsigned long)((apertureSize - HEAP_OFFSET) >> 20),
 	      (unsigned long)(fHiddenSize >> 20));
 
-	if (PE_parse_boot_arg("rdn_gart", &gart) && gart)
+	/*
+	 * The GART: programs' own memory for what the CPU keeps writing, and
+	 * somewhere to go when video memory is full. It tests itself and
+	 * stays off if the GPU cannot run a command buffer from system
+	 * memory. rdn_gart=0 as a boot argument does not start it.
+	 */
+	PE_parse_boot_arg("rdn_gart", &gart);
+	if (gart)
 		startGart();
+	else
+		IOLog("RadeonNI: GART: not started (rdn_gart=0)\n");
 
 	/*
 	 * ASIC_Init leaves the card at slow boot clocks. Go to the PowerPlay
