@@ -88,6 +88,8 @@ After some investigation, it turned out the issue (specifically in Doom 3) was t
 
 World of Warcraft is a special case, in that the original OpenGL renderer used fixed-pipeline extensions that were never or barely adopted outside the Apple ecosystem (ARB_vertex_blend), so an implementation was cobbled together. Additionally it reuses parts of buffers multiple times, which Apple had a propietary extension for (GL_APPLE_flush_buffer_range), also now implemented and gets the framerate from ~33 to ~110.
 
+Call of Duty 2 also depended on a couple of Apple-specific extensions, with that + optimizations it runs at about 40 to 70FPS on the demo mission.
+
 ## Future steps
 
 - At some point, I should try with other cards of the same family/model to see if anything works or if this is too HD 7570 specific.
