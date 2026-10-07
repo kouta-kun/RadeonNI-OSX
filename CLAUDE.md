@@ -44,15 +44,15 @@ System Preferences and a software cursor.
   Open Firmware assigns the card's ROM BAR there (journal). Since the
   same day it boots with `install.sh --accel` and `~/gl/qe` reports
   Quartz Extreme in use; the user has not yet said what they see.
-- Since 2026-10-07 the G5's monitor is on the card's DisplayPort
-  connector, which the driver does not drive: the kext stops at "no EDID
-  on the DVI connector" and the Mac has no framebuffer from us (ssh
-  works). DisplayPort is written (`hw/rdn_dp.c`, outputs table in
-  `hw/rdn_modeset.c`, detection DVI-I first) and passes `tests/dp_link`
-  against a simulated sink, but has never run on the card: the kext built
-  from it is `build/RadeonNI-dp.kext.tar` on the host, not installed on
-  the G5 (journal 2026-10-07; `docs/HARDWARE.md`, "DisplayPort
-  connector"). There is no Linux trace of DisplayPort to compare with.
+- DisplayPort works (2026-10-07, G5, seen by the user: "It looks about
+  correct"): the monitor is on the card's DisplayPort connector, 4 lanes
+  at 1.62 Gbit/s, 1920x1080, Quartz Extreme in use. `hw/rdn_dp.c`; the
+  kext tries DVI-I first, then DisplayPort, and logs DPCD and the
+  training result. No Linux trace of DisplayPort exists; `tests/dp_link`
+  is a simulated sink. Not done: hot-plug and monitor wake (the link is
+  trained only at a mode set), 2.7 Gbit/s on a real sink, passive
+  adapters. The kext before it on the G5 is `~/RadeonNI.kext.before-dp`
+  (journal 2026-10-07; `docs/HARDWARE.md`, "DisplayPort connector").
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including

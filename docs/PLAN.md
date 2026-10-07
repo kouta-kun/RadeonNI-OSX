@@ -130,8 +130,9 @@ Driver:
   come from the VBIOS object table before any other connector or card works.
   Since 2026-10-07 it is a table of this card's two outputs in
   `hw/rdn_modeset.c`, still not read from the VBIOS. The DisplayPort
-  connector is written (`hw/rdn_dp.c`) and untested on the card; a passive
-  DisplayPort to DVI/HDMI adapter is not supported.
+  connector works on the G5 (`hw/rdn_dp.c`, 2026-10-07, one monitor); no
+  hot-plug or wake handling, and a passive DisplayPort to DVI/HDMI adapter
+  is not supported.
 - **Modes** are only the EDID's detailed timings (two on the test monitor).
   No standard or established timings, no CEA modes, no scaling.
 - **HDMI** signalling is used when the EDID asks for it, with the AVI

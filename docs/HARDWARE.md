@@ -104,7 +104,7 @@ DisplayPort connector uses id 0x92 with the AUX channel.
 ## DisplayPort connector (VBIOS, read 2026-10-07)
 
 From the object table, FirmwareInfo and the command table list of
-`private/vbios.rom`. Nothing here has run on the card.
+`private/vbios.rom`. The connector works with these values (2026-10-07).
 
 | Fact | Value |
 |---|---|
@@ -127,6 +127,11 @@ The reference trace (`ref-radeon-3`) has only Linux's detection of this
 connector with nothing plugged in: `DPEncoderService` with `0x92`, reads of
 `0x6040`, an I2C probe on `0x6450`. It has no AUX transaction and no link
 training.
+
+The user's monitor on DisplayPort (2026-10-07): DPCD `12 14 c4 81 01 00 01
+80 02 02 06 00 00 00 81`, EDID with one detailed timing (1920x1080 at
+148.5 MHz). The link trained at 4 lanes of 1.62 Gbit/s with voltage swing
+0 and pre-emphasis 0. The AUX channel and HPD4 work as Linux uses them.
 
 ## Still unknown
 

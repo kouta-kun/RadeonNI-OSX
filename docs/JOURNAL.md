@@ -3489,3 +3489,43 @@ rules and is left to the user.
 channel not answering (pad or hot-plug setup), `SetPixelClock` with the
 DCPLL doing something to the display engine clock, training failing at
 4 lanes of 1.62 Gbit/s. The kernel log has a line for each.
+
+## 2026-10-07 — DisplayPort works on the G5, first run
+
+**Installed** on the G5 (the user allowed it): the kext from b2128aa
+(`5f1bc7a6...`) into `~/RadeonNI-g5`, `install.sh --accel --hwcursor`,
+restart. The kext before it is `~/RadeonNI.kext.before-dp` there.
+
+**Kernel log of that boot:**
+- "DVI-I: no EDID (-6)", then "the BIOS reports sink type 0x13"
+  (DisplayPort).
+- DPCD on the first try, hot-plug high: `12 14 c4 81 01 00 01 80 02 02 06
+  00 00 00 81`. DisplayPort 1.2, up to 5.4 Gbit/s, 4 lanes, enhanced
+  framing and training pattern 3, downspread capable.
+- EDID 256 bytes over AUX, one mode: 1920x1080 at 148.5 MHz.
+- "PLL 270000 kHz, fb 80.0 ref 2 post 4": what `AdjustDisplayPll`
+  returned for the link clock, sent to `SetPixelClock` with the DCPLL.
+- "DisplayPort link 4 lanes at 162000 kHz: trained, voltage 0,
+  pre-emphasis 0, status 77 77 81": both phases passed with the first
+  drive setting, no adjustment asked for.
+- Then as on DVI: 3D engine, GART self-test, 649.96 / 800 MHz, hardware
+  cursor.
+
+**After boot:** Quartz Extreme in use at 1920x1080, the registry property
+`Output` is "DisplayPort", the GPU completes command buffers, `rdnuc
+grab` shows the desktop. **The user** looked at the monitor: "It looks
+about correct".
+
+**Not done, not seen:**
+- Only this monitor, this mode, 4 lanes at 1.62 Gbit/s. 2.7 Gbit/s, fewer
+  lanes, and a sink that asks for more voltage or pre-emphasis have run
+  only in `tests/dp_link`.
+- Unplugging and replugging, monitor sleep and wake: the link is trained
+  once per mode set and nothing watches the hot-plug line, so a monitor
+  that loses the link stays dark until the next mode set.
+- A mode change from System Preferences on DisplayPort (the EDID has one
+  mode), other depths.
+- What `SetPixelClock` with the DCPLL does to the display engine clock:
+  the picture and the watermarks look right, nothing was measured.
+- The link's state cannot be read from user space; the log line at mode
+  set is all there is.
