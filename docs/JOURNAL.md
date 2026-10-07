@@ -4091,3 +4091,31 @@ call takes any page-aligned memory of the program) and giving Mesa buffer
 objects over it (r600 has `resource_from_user_memory`; our winsys says
 `has_userptr = false`); the fences would have to be real then. Not
 started.
+
+## 2026-10-07: the GPU draws from a program's own memory (zero copy, stage 1)
+
+The user: "try the zero-copy route", then asked why it would be quicker.
+It is not, for the GPU; it only takes the copy (10 % of Call of Duty 2's
+thread) away from the one thread that is the limit.
+
+Built: `gart_bind_user()` in the device layer for Tiger (the kext's
+`RDN_UC_GART_BIND` on memory the program gives, page aligned, counted in
+the 512 MB limit; `RDN_NO_USERPTR=1` leaves it out), `buffer_from_ptr` in
+the winsys (destroying such a buffer waits for the GPU and unbinds), and
+the screen's `resource_from_user_memory` set by our target: r600 leaves it
+off on big-endian. With that Mesa names `GL_AMD_pinned_memory`. No kext
+change. The entry point's split of large `glBufferData` must skip that
+target (it sent the data in pieces after a null: GL_INVALID_OPERATION).
+
+`tools/guest/pinned.c` (cross-built on the host, `~/gl/pinned` on the G5;
+our renderer is 0x21a00 there): a buffer object over 1 MB from `valloc`, a
+triangle from its last three vertices drawn into a texture. Read back:
+red; after the colours were changed in memory with no OpenGL call, green.
+So the GPU reads the program's memory, big-endian vertices and all. With
+the memory freed before the buffer object is deleted (1 MB and 24 MB):
+still right, and the machine's wired pages are where they were afterwards
+(64854 before, 64852 after).
+
+Found on the way, not looked into: an off-screen context on our renderer
+reads zeroes back from `glReadPixels` on the G5 (`glprobe draw 0x21a00`
+too), so the test draws into a framebuffer object.

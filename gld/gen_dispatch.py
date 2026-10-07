@@ -977,8 +977,9 @@ APPLE_ONLY = {
 # fills it.
 SPLIT = {
     'buffer_data': """\
+	/* Not GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD: that data is not copied. */
 	if (__builtin_expect(rdn_async_limit && data && size > rdn_async_limit, 0) &&
-	    m_buffer_sub_data) {
+	    m_buffer_sub_data && target != 0x9160) {
 		GLsizeiptrARB done, n;
 
 		m_buffer_data(target, size, 0, usage);

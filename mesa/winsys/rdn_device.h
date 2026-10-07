@@ -92,6 +92,17 @@ struct rdn_device {
                      uint64_t *offset);
    void (*gart_free)(struct rdn_device *dev, uint64_t offset);
    void *(*gart_cpu)(struct rdn_device *dev, uint64_t offset);
+   /*
+    * Optional: memory of the program's own, page aligned and a whole
+    * number of pages, behind the GART as it is, so that the GPU reads what
+    * the program writes there. The offset is like gart_alloc()'s. The
+    * pages stay wired until gart_unbind_user(), which the caller calls
+    * when the GPU is done with them; the program may have freed the
+    * memory by then.
+    */
+   int (*gart_bind_user)(struct rdn_device *dev, void *address, uint64_t size,
+                         uint64_t *offset);
+   void (*gart_unbind_user)(struct rdn_device *dev, uint64_t offset, uint64_t size);
 
    /*
     * Run `words` command words stored at `offset`, in the CPU's byte order

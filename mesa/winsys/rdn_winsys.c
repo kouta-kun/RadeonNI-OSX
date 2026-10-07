@@ -77,6 +77,8 @@ struct rdn_bo {
    /* Memory that is not from the allocator (the screen). */
    bool foreign;
    enum rdn_place region;
+   /* The program's own memory behind the GART (rdn_buffer_from_ptr). */
+   void *user;
 };
 
 struct rdn_cs_buffer {
@@ -523,7 +525,17 @@ static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean 
    struct radeon_drm_winsys *ws = rdn_winsys(rws);
    struct rdn_bo *bo = rdn_bo(buf);
 
-   if (!bo->foreign) {
+   if (bo->user) {
+      /*
+       * The program's memory: nothing to keep. The pages must stay behind
+       * the GART until the GPU has read what it was told to, so this
+       * waits; it happens when the program gives a vertex buffer up.
+       */
+      simple_mtx_lock(&ws->lock);
+      rdn_busy_wait(ws, &bo->last_use, OS_TIMEOUT_INFINITE);
+      ws->dev->gart_unbind_user(ws->dev, bo->offset, bo->base.size);
+      simple_mtx_unlock(&ws->lock);
+   } else if (!bo->foreign) {
       /*
        * The GPU may still be using the memory. Waiting for it here would
        * stop the program at every buffer it drops while drawing, so the
@@ -647,6 +659,8 @@ static void *rdn_buffer_map(struct radeon_winsys *rws, struct pb_buffer_lean *bu
       if (bo->region != RDN_GART)
          ws->dev->sync_for_cpu(ws->dev);
    }
+   if (bo->user)
+      return bo->user;
    if (bo->region == RDN_GART)
       return ws->dev->gart_cpu(ws->dev, bo->offset);
    return (uint8_t *)ws->dev->aperture + bo->offset;
@@ -706,12 +720,41 @@ static struct pb_buffer_lean *
 rdn_buffer_from_ptr(struct radeon_winsys *rws, void *pointer, uint64_t size,
                     enum radeon_bo_flag flags)
 {
-   return NULL;
+   struct radeon_drm_winsys *ws = rdn_winsys(rws);
+   struct rdn_bo *bo;
+   int r;
+
+   if (!ws->dev->gart_bind_user)
+      return NULL;
+   bo = CALLOC_STRUCT(rdn_bo);
+   if (!bo)
+      return NULL;
+   simple_mtx_lock(&ws->lock);
+   r = ws->dev->gart_bind_user(ws->dev, pointer, size, &bo->offset);
+   simple_mtx_unlock(&ws->lock);
+   if (r) {
+      FREE(bo);
+      return NULL;
+   }
+   pipe_reference_init(&bo->base.reference, 1);
+   bo->base.alignment_log2 = 12;
+   bo->base.usage = 0;
+   bo->base.size = size;
+   bo->domain = RADEON_DOMAIN_GTT;
+   bo->flags = flags;
+   bo->region = RDN_GART;
+   bo->user = pointer;
+   return &bo->base;
 }
 
 static bool rdn_buffer_false(struct pb_buffer_lean *buf)
 {
    return false;
+}
+
+static bool rdn_buffer_is_user_ptr(struct pb_buffer_lean *buf)
+{
+   return rdn_bo(buf)->user != NULL;
 }
 
 static bool rdn_buffer_get_handle(struct radeon_winsys *rws, struct pb_buffer_lean *buf,
@@ -1167,7 +1210,7 @@ static void rdn_init_info(struct radeon_drm_winsys *ws)
    info->ip[AMD_IP_GFX].ib_alignment = 4096;
    info->ip[AMD_IP_SDMA].num_queues = 0;
 
-   info->has_userptr = false;
+   info->has_userptr = ws->dev->gart_bind_user != NULL;
    /*
     * There is no GART, but r600 measures what one command buffer may
     * reference and what texture transfers may allocate against this size.
@@ -1264,7 +1307,7 @@ struct radeon_winsys *rdn_winsys_create(struct rdn_device *dev,
    ws->base.buffer_set_metadata = rdn_buffer_set_metadata;
    ws->base.buffer_from_handle = rdn_buffer_from_handle;
    ws->base.buffer_from_ptr = rdn_buffer_from_ptr;
-   ws->base.buffer_is_user_ptr = rdn_buffer_false;
+   ws->base.buffer_is_user_ptr = rdn_buffer_is_user_ptr;
    ws->base.buffer_is_suballocated = rdn_buffer_false;
    ws->base.buffer_get_handle = rdn_buffer_get_handle;
    ws->base.buffer_commit = rdn_buffer_commit;

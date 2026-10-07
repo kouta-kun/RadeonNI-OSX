@@ -169,6 +169,30 @@ static void dev_gart_free(struct rdn_device *dev, uint64_t offset)
 	}
 }
 
+static int dev_gart_bind_user(struct rdn_device *dev, void *address, uint64_t size,
+			      uint64_t *offset)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	int at = 0;
+
+	if (((uintptr_t)address & 4095) || (size & 4095) || !size ||
+	    size > GART_MOST_BYTES - d->gart_bytes ||
+	    IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_BIND, 2, 1,
+					  (int)(uintptr_t)address, (int)size, &at))
+		return -1;
+	d->gart_bytes += (uint32_t)size;
+	*offset = (uint32_t)at;
+	return 0;
+}
+
+static void dev_gart_unbind_user(struct rdn_device *dev, uint64_t offset, uint64_t size)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+
+	IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_UNBIND, 1, 0, (int)offset);
+	d->gart_bytes -= (uint32_t)size;
+}
+
 static void *dev_gart_cpu(struct rdn_device *dev, uint64_t offset)
 {
 	struct gart_chunk *c = gart_chunk_of((struct darwin_device *)dev, offset);
@@ -447,6 +471,10 @@ struct rdn_device *rdn_device_open(void)
 			d->base.gart_alloc = dev_gart_alloc;
 			d->base.gart_free = dev_gart_free;
 			d->base.gart_cpu = dev_gart_cpu;
+			if (!getenv("RDN_NO_USERPTR")) {
+				d->base.gart_bind_user = dev_gart_bind_user;
+				d->base.gart_unbind_user = dev_gart_unbind_user;
+			}
 		}
 	}
 	/* An older kext has no such method: then there is no hidden memory. */

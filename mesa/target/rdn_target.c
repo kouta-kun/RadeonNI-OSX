@@ -183,6 +183,13 @@ osmesa_create_screen(void)
    if (!ws)
       return NULL;
    the_device = dev;
+   /*
+    * Buffers over the program's own memory (GL_AMD_pinned_memory). r600
+    * leaves it off on big-endian; vertex arrays, the only thing they are
+    * for here, are fetched with the swap any vertex buffer gets.
+    */
+   if (dev->gart_bind_user)
+      ((struct pipe_caps *)&ws->screen->caps)->resource_from_user_memory = true;
    if (rdn_subdata_copy())
       ((struct pipe_caps *)&ws->screen->caps)->allow_glthread_buffer_subdata_opt = true;
    return ws->screen;
