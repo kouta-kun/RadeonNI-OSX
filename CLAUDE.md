@@ -248,6 +248,9 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
 - `docs/GLD-INTERFACE.md`: Apple's OpenGL driver interface as observed.
 - `docs/QUARTZ-EXTREME.md`: what the window server requires before it
   composites with OpenGL, and how far it gets with us.
+- `docs/2D-ACCELERATION.md`: Quartz Extreme and Core Image as audited and
+  measured on 2026-10-07 (Quartz Extreme is real; Core Image filters on the
+  CPU and its picture comes out wrong), what was built, what is next.
 - `docs/EXTENDED-DESKTOP-TODO.md`: the expected steps for two monitors as
   two displays (a plan from 2026-10-07; nothing started).
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
