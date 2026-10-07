@@ -150,6 +150,448 @@ CLIENT_STATE = {
     'disable_client_state': 'm_disable_vertex_attrib_array_ARB',
 }
 
+# GL_APPLE_vertex_array_range (with GL_APPLE_fence), which Mesa lacks. A
+# program that has it keeps its vertices in its own memory, says which
+# memory (glVertexArrayRangeAPPLE) and when it changed some of it
+# (glFlushVertexArrayRangeAPPLE), and draws from it with ordinary array
+# pointers; Apple's drivers let the GPU read that memory. Without it Mesa
+# copies, for every draw, the vertices from the lowest to the highest index
+# the draw uses: Call of Duty 2 has no other way of drawing, its draws of
+# the world reach across a 20 MB buffer each, and every one of its vertex
+# array objects keeps Mesa's last copy alive (out of video memory after
+# 1.2 GB of such copies, and 0.4 frames a second on the way there).
+#
+# Here the memory gets a copy in a buffer object (a "mirror"): of the whole
+# malloc block the range lies in when that can be found, so that all the
+# ranges a program names inside one of its buffers share one copy, else of
+# the range itself. A flush updates every mirror it touches, with the parts
+# that differ from what the mirror was last given. An array
+# pointer into a mirror becomes an offset into its buffer object. What the
+# program changes without a flush is not seen: that is the extension's
+# rule, and the only way this differs from the GPU reading the memory.
+#
+# The fences only ever said when the GPU had read the program's memory;
+# with copies it always has, so they are always finished.
+#
+# For the programs named in RDN_VAR_LIST, one name a line, or with
+# RDN_VAR=1 in the environment (0: not even if named). Never asked for by
+# name by Call of Duty 2: it takes the range for granted and looks for
+# GL_APPLE_vertex_array_object, GL_APPLE_fence and GL_APPLE_element_array
+# before it calls any of this, so those are named too (it never calls the
+# last one's functions, and nothing here implements them).
+VAR_HELP = """
+#define RDN_VAR_LIST "/Library/Application Support/RadeonNI/vertexrange"
+
+extern size_t malloc_size(const void *ptr);
+
+static int var_on(void)
+{
+	static int on = -1;
+	const char *env, *name = getprogname();
+	char line[256];
+	FILE *f;
+
+	if (on >= 0)
+		return on;
+	on = 0;
+	if (!name || !strcmp(name, "WindowServer") || !m_gen_buffers || !m_buffer_sub_data)
+		return on;
+	if ((env = getenv("RDN_VAR")) != NULL)
+		on = atoi(env) != 0;
+	else if ((f = fopen(RDN_VAR_LIST, "r")) != NULL) {
+		while (fgets(line, sizeof(line), f)) {
+			line[strcspn(line, "\\r\\n")] = 0;
+			if (!strcmp(line, name))
+				on = 1;
+		}
+		fclose(f);
+	}
+	if (on)
+		rdn_log("GL_APPLE_vertex_array_range and GL_APPLE_fence: ours, for %s", name);
+	return on;
+}
+
+struct var_mirror {
+	const char *base;
+	size_t size;
+	GLuint buffer;
+	unsigned refs;		/* vertex array objects that point into it */
+	char *shadow;		/* what the buffer object has, if memory allowed */
+	unsigned used;		/* var_swaps when last flushed or pointed into */
+};
+
+#define VAR_VAO_MIRRORS 4
+struct var_vao {
+	struct var_mirror *mirror[VAR_VAO_MIRRORS];
+	unsigned char next;
+};
+
+static struct {
+	void *ctx;			/* one context draws; another starts over */
+	struct var_mirror **mirrors;
+	unsigned count, room;
+	struct var_vao *vaos;
+	unsigned vao_room;
+	GLuint vao;			/* the one bound */
+	const char *range;		/* glVertexArrayRangeAPPLE's last */
+	size_t range_size;
+	unsigned long bytes, copied;
+} var;
+static unsigned var_swaps;
+
+static void var_context(void *ctx)
+{
+	if (var.ctx == ctx)
+		return;
+	if (var.ctx)
+		rdn_log("vertex array range: context %p after %p, mirrors forgotten", ctx, var.ctx);
+	/* The buffer objects are the other context's: nothing to delete here. */
+	memset(&var, 0, sizeof(var));
+	var.ctx = ctx;
+}
+
+/*
+ * The malloc block [ptr, ptr + len) lies in. A large block is page aligned
+ * in a region of its own, or one the kernel has joined with its
+ * neighbours': walk the blocks from the region's start, or, when that does
+ * not start with one, the pages back from the pointer.
+ */
+static int var_block(const char *ptr, size_t len, const char **base, size_t *size)
+{
+	vm_address_t addr = (vm_address_t)ptr, a;
+	vm_size_t region = 0;
+	struct vm_region_basic_info info;
+	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT;
+	mach_port_t object = MACH_PORT_NULL;
+	/* Regions no block was found in: small blocks live there. */
+	static struct { vm_address_t start, end; } none[32];
+	static unsigned none_next;
+	size_t s;
+	unsigned n;
+
+	for (n = 0; n < 32; n++)
+		if ((vm_address_t)ptr >= none[n].start && (vm_address_t)ptr < none[n].end)
+			return 0;
+	if (vm_region(mach_task_self(), &addr, &region, VM_REGION_BASIC_INFO,
+		      (vm_region_info_t)&info, &count, &object) ||
+	    addr > (vm_address_t)ptr)
+		return 0;
+	for (a = addr, n = 0; n < 4096 && a <= (vm_address_t)ptr; n++) {
+		s = malloc_size((void *)a);
+		if (!s)
+			break;
+		if ((vm_address_t)ptr + len <= a + s)
+			goto found;
+		a += (s + 4095) & ~(size_t)4095;
+	}
+	for (a = (vm_address_t)ptr & ~(vm_address_t)4095, n = 0;
+	     n < 16384 && a >= addr; n++, a -= 4096) {
+		s = malloc_size((void *)a);
+		if (s && (vm_address_t)ptr + len <= a + s)
+			goto found;
+		if (s || a < 4096)
+			break;
+	}
+	none[none_next].start = addr;
+	none[none_next++ % 32].end = addr + region;
+	none_next %= 32;
+	return 0;
+found:
+	if (s > (64u << 20))
+		return 0;
+	*base = (const char *)a;
+	*size = s;
+	return 1;
+}
+
+static void t_buffer_data(GLIContext ctx, GLenum target, GLsizeiptrARB size,
+			  const GLvoid *data, GLenum usage);
+static void t_buffer_sub_data(GLIContext ctx, GLenum target, GLintptrARB offset,
+			      GLsizeiptrARB size, const GLvoid *data);
+
+/* The mirror that has all of [ptr, ptr + len), the newest first. */
+static struct var_mirror *var_find(const char *ptr, size_t len)
+{
+	static struct var_mirror *last;
+	unsigned i;
+
+	/* Most pointers follow one into the same mirror. */
+	if (var.count && last == var.mirrors[var.count - 1] &&
+	    ptr >= last->base && ptr + len <= last->base + last->size)
+		return last;
+	for (i = var.count; i-- > 0; ) {
+		struct var_mirror *m = var.mirrors[i];
+
+		if (ptr >= m->base && ptr + len <= m->base + m->size) {
+			/* Kept at the end, where the search starts. */
+			var.mirrors[i] = var.mirrors[var.count - 1];
+			var.mirrors[var.count - 1] = last = m;
+			return m;
+		}
+	}
+	return NULL;
+}
+
+/* Mirrors nothing points into and nothing has used for a while go. */
+static void var_sweep(void)
+{
+	static unsigned swept;
+	unsigned i, n = 0;
+
+	if (var_swaps - swept < 256)
+		return;
+	swept = var_swaps;
+	for (i = 0; i < var.count; i++) {
+		struct var_mirror *m = var.mirrors[i];
+
+		if (!m->refs && var_swaps - m->used > 120) {
+			m_delete_buffers(1, &m->buffer);
+			var.bytes -= m->size;
+			free(m->shadow);
+			free(m);
+			continue;
+		}
+		var.mirrors[n++] = m;
+	}
+	if (n != var.count)
+		rdn_log("vertex array range: %u mirrors let go, %u left, %lu KB",
+			var.count - n, n, var.bytes >> 10);
+	var.count = n;
+}
+
+static struct var_mirror *var_create(void *ctx, const char *ptr, size_t len)
+{
+	struct var_mirror *m;
+	const char *base = ptr;
+	size_t size = len;
+	int block;
+
+	var_sweep();
+	if (var.count == var.room) {
+		unsigned room = var.room ? var.room * 2 : 64;
+		struct var_mirror **more = realloc(var.mirrors, room * sizeof(*more));
+
+		if (!more)
+			return NULL;
+		var.mirrors = more;
+		var.room = room;
+	}
+	m = calloc(1, sizeof(*m));
+	if (!m)
+		return NULL;
+	block = var_block(ptr, len, &base, &size);
+	m->base = base;
+	m->size = size;
+	m->used = var_swaps;
+	m->shadow = malloc(size);
+	if (m->shadow)
+		memcpy(m->shadow, base, size);
+	m_gen_buffers(1, &m->buffer);
+	m_bind_buffer(0x8892, m->buffer);
+	t_buffer_data(ctx, 0x8892, (GLsizeiptrARB)size, base, 0x88E8);
+	m_bind_buffer(0x8892, 0);
+	var.mirrors[var.count++] = m;
+	var.bytes += size;
+	var.copied += size;
+	if (__builtin_expect(rdn_logging, 0))
+		rdn_log("vertex array range: mirror %u of %p, %lu bytes (%s; asked %p, %lu): %u mirrors, %lu KB",
+			m->buffer, (const void *)base, (unsigned long)size,
+			block ? "the malloc block" : "the range",
+			(const void *)ptr, (unsigned long)len, var.count, var.bytes >> 10);
+	return m;
+}
+
+/*
+ * Bring the mirror's buffer object up to date in [from, to). A program
+ * flushes far more than it changed (Call of Duty 2: the whole range again
+ * for every new vertex array object over the same buffer), so only the
+ * pieces that differ from the shadow are sent.
+ */
+#define VAR_PIECE 16384
+static void var_update(void *ctx, struct var_mirror *m, const char *from, const char *to)
+{
+	const char *start = NULL, *p, *end;
+	int bound = 0;
+
+	if (!m->shadow) {
+		m_bind_buffer(0x8892, m->buffer);
+		t_buffer_sub_data(ctx, 0x8892, from - m->base, to - from, from);
+		m_bind_buffer(0x8892, 0);
+		var.copied += to - from;
+		return;
+	}
+	for (p = from; p <= to; p = end) {
+		int differs;
+
+		end = to - p < VAR_PIECE ? to : p + VAR_PIECE;
+		differs = p < to && memcmp(p, m->shadow + (p - m->base), end - p) != 0;
+		if (differs && !start)
+			start = p;
+		if (start && (!differs || end == to)) {
+			const char *stop = differs ? end : p;
+
+			if (!bound++)
+				m_bind_buffer(0x8892, m->buffer);
+			t_buffer_sub_data(ctx, 0x8892, start - m->base, stop - start, start);
+			memcpy(m->shadow + (start - m->base), start, stop - start);
+			var.copied += stop - start;
+			start = NULL;
+		}
+		if (p == to)
+			break;
+	}
+	if (bound)
+		m_bind_buffer(0x8892, 0);
+}
+
+static void var_range(void *ctx, GLsizei length, const GLvoid *pointer)
+{
+	var_context(ctx);
+	var.range = length > 0 ? pointer : NULL;
+	var.range_size = length > 0 ? (size_t)length : 0;
+}
+
+static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
+{
+	const char *ptr = pointer;
+	size_t len = (size_t)length;
+	int whole = 0;
+	unsigned i;
+
+	if (length <= 0 || !pointer)
+		return;
+	var_context(ctx);
+	for (i = 0; i < var.count; i++) {
+		struct var_mirror *m = var.mirrors[i];
+		const char *from = ptr > m->base ? ptr : m->base;
+		const char *to = ptr + len < m->base + m->size ? ptr + len : m->base + m->size;
+
+		if (from >= to)
+			continue;
+		if (from == ptr && to == ptr + len)
+			whole = 1;
+		m->used = var_swaps;
+		var_update(ctx, m, from, to);
+	}
+	if (!whole)
+		var_create(ctx, ptr, len);
+}
+
+/* The bound vertex array object points into the mirror from now on. */
+static void var_point(struct var_mirror *m)
+{
+	struct var_vao *v;
+	unsigned i;
+
+	m->used = var_swaps;
+	if (var.vao >= var.vao_room) {
+		unsigned room = var.vao_room ? var.vao_room : 1024;
+		struct var_vao *more;
+
+		while (room <= var.vao)
+			room *= 2;
+		/* A name beyond reason: the mirror stays for good instead. */
+		if (var.vao > (1u << 20) ||
+		    !(more = realloc(var.vaos, room * sizeof(*more)))) {
+			m->refs++;
+			return;
+		}
+		memset(more + var.vao_room, 0, (room - var.vao_room) * sizeof(*more));
+		var.vaos = more;
+		var.vao_room = room;
+	}
+	v = &var.vaos[var.vao];
+	for (i = 0; i < VAR_VAO_MIRRORS; i++)
+		if (v->mirror[i] == m)
+			return;
+	i = v->next++ % VAR_VAO_MIRRORS;
+	if (v->mirror[i])
+		v->mirror[i]->refs--;
+	v->mirror[i] = m;
+	m->refs++;
+}
+
+/*
+ * An array pointer: if it is in a mirror, or in the range named last (of
+ * which a mirror is made then), bind the mirror's buffer object and make
+ * the pointer an offset. The caller sets the array and unbinds.
+ */
+static int var_pointer(void *ctx, const GLvoid **pointer)
+{
+	const char *p = *pointer;
+	struct var_mirror *m;
+	GLuint *bound = map_bound(ctx, 0x8892);
+
+	var_context(ctx);
+	if (!p || (bound && *bound))
+		return 0;
+	m = var_find(p, 1);
+	if (!m && var.range && p >= var.range && p < var.range + var.range_size)
+		m = var_create(ctx, var.range, var.range_size);
+	if (!m)
+		return 0;
+	var_point(m);
+	m_bind_buffer(0x8892, m->buffer);
+	*pointer = (const GLvoid *)(p - m->base);
+	return 1;
+}
+
+static void var_bind(void *ctx, GLuint id)
+{
+	var_context(ctx);
+	var.vao = id;
+}
+
+static void var_delete(void *ctx, GLsizei n, const GLuint *ids)
+{
+	GLsizei k;
+	unsigned i;
+
+	var_context(ctx);
+	for (k = 0; k < n; k++) {
+		if (ids[k] < var.vao_room) {
+			struct var_vao *v = &var.vaos[ids[k]];
+
+			for (i = 0; i < VAR_VAO_MIRRORS; i++)
+				if (v->mirror[i])
+					v->mirror[i]->refs--;
+			memset(v, 0, sizeof(*v));
+		}
+		if (ids[k] == var.vao)
+			var.vao = 0;
+	}
+}
+
+static void var_fences(GLsizei n, GLuint *fences)
+{
+	static GLuint last;
+	GLsizei i;
+
+	for (i = 0; i < n; i++)
+		fences[i] = ++last;
+}
+"""
+
+# The entries of the above that Mesa has no function for: ours when
+# var_on(), the engine's otherwise.
+VAR_OWN = {
+    'vertex_array_range_EXT': '\tvar_range(ctx, count, pointer);',
+    'flush_vertex_array_range_EXT': '\tvar_flush(ctx, count, pointer);',
+    'vertex_array_parameteri_EXT': '\t(void)pname;\n\t(void)param;',
+    'gen_fences_APPLE': '\tvar_fences(n, fences);',
+    'delete_fences_APPLE': '\t(void)n;\n\t(void)fences;',
+    'set_fence_APPLE': '\t(void)fence;',
+    'is_fence_APPLE': '\treturn fence != 0;',
+    'test_fence_APPLE': '\t(void)fence;\n\treturn 1;',
+    'finish_fence_APPLE': '\t(void)fence;',
+    'test_object_APPLE': '\t(void)object;\n\t(void)name;\n\treturn 1;',
+    'finish_object_APPLE': '\t(void)object;\n\t(void)name;',
+}
+
+# Array pointers that may point into a mirror.
+VAR_POINTERS = ('vertex_pointer', 'normal_pointer', 'color_pointer',
+                'tex_coord_pointer', 'vertex_attrib_pointer_ARB')
+
 # glMapBuffer(GL_WRITE_ONLY) without waiting for the GPU. Mesa waits until
 # the GPU is done with everything that uses the buffer, as OpenGL says, and
 # r600 flushes first. World of Warcraft maps its vertex buffers that way
@@ -371,14 +813,27 @@ static void *flushrange_function(const char *name)
 static const GLubyte *flushrange_extensions(const GLubyte *mesa)
 {
 	static const char more[] = " GL_APPLE_flush_buffer_range";
+	static const char *const range[] = {
+		"GL_APPLE_vertex_array_range", "GL_APPLE_fence",
+		"GL_APPLE_vertex_array_object", "GL_APPLE_element_array",
+	};
 	static char *list;
+	unsigned i;
 
 	if (!list && mesa) {
-		list = malloc(strlen((const char *)mesa) + sizeof(more));
+		list = malloc(strlen((const char *)mesa) + sizeof(more) + 4 * 40);
 		if (list) {
 			strcpy(list, (const char *)mesa);
-			strcat(list, more);
-			rdn_log("GL_APPLE_flush_buffer_range: named in the list of extensions");
+			if (flushrange)
+				strcat(list, more);
+			for (i = 0; var_on() && i < 4; i++)
+				if (!strstr(list, range[i])) {
+					strcat(list, " ");
+					strcat(list, range[i]);
+				}
+			rdn_log("extensions of ours named in the list:%s%s",
+				flushrange ? more : "",
+				var_on() ? " GL_APPLE_vertex_array_range and what goes with it" : "");
 		}
 	}
 	return list ? (const GLubyte *)list : mesa;
@@ -579,7 +1034,7 @@ def main():
 
     out = ['/* Generated by gen_dispatch.py from the SDK\'s gliDispatch.h. */',
            '#include <stddef.h>', '#include <stdio.h>', '#include <stdlib.h>',
-           '#include <string.h>', '#include <sys/time.h>',
+           '#include <string.h>', '#include <sys/time.h>', '#include <mach/mach.h>',
            '#include <OpenGL/CGLContext.h>',
            '#include "rdn_dispatch.h"', '']
     index = dict((e[1], i) for i, e in enumerate(entries))
@@ -591,7 +1046,8 @@ def main():
         out.append('static %s (*m_%s)(%s);' % (ret, name, params if params else 'void'))
     out.append('')
     out.append(WEIGHT)
-    out.append(MAP_BUFFER_HELP)
+    out.append(MAP_BUFFER_HELP.replace('static int flushrange;', 'static int flushrange;\nstatic int var_on(void);', 1))
+    out.append(VAR_HELP)
     out.append(DRAW_RANGE_HELP)
     for ret, name, params, names in entries:
         full = 'GLIContext ctx' + (', ' + params if params else '')
@@ -599,10 +1055,10 @@ def main():
         out.append('static %s t_%s(%s)' % (ret, name, full))
         out.append('{')
         out.append('\tRDN_ENTER(ctx);')
-        if name in OWN:
+        if name in OWN or name in VAR_OWN:
             out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
             out.append('\t\t%s;' % trace_call(name, params, names))
-            out.append(OWN[name])
+            out.append(OWN.get(name) or VAR_OWN[name])
             out.append('}')
             out.append('')
             continue
@@ -618,11 +1074,23 @@ def main():
             out.append(MAP_BUFFER)
         if name == 'draw_range_elements':
             out.append(DRAW_RANGE)
+        if name in VAR_POINTERS:
+            out.append('\tif (var_on() && var_pointer(ctx, &pointer)) {')
+            out.append('\t\t%s;' % call)
+            out.append('\t\tm_bind_buffer(0x8892, 0);')
+            out.append('\t\treturn;')
+            out.append('\t}')
+        if name == 'bind_vertex_array_EXT':
+            out.append('\tif (var_on())')
+            out.append('\t\tvar_bind(ctx, id);')
+        if name == 'delete_vertex_arrays_EXT':
+            out.append('\tif (var_on())')
+            out.append('\t\tvar_delete(ctx, n, ids);')
         if name == 'get_string':
-            out.append('\tif (name == 0x1F03 && flushrange)\t/* GL_EXTENSIONS */')
+            out.append('\tif (name == 0x1F03 && (flushrange || var_on()))\t/* GL_EXTENSIONS */')
             out.append('\t\treturn flushrange_extensions(m_get_string(name));')
         if name == 'bind_buffer':
-            out.append('\tif (map_mode() || flushrange) {')
+            out.append('\tif (map_mode() || flushrange || var_on()) {')
             out.append('\t\tGLuint *bound = map_bound(ctx, target);')
             out.append('')
             out.append('\t\tif (bound)')
@@ -632,6 +1100,8 @@ def main():
             out.append('\tif (map_mode() || flushrange)')
             out.append('\t\tmap_note_size(ctx, target, size);')
         if name in CLIENT_STATE:
+            out.append('\tif (array == 0x851D && var_on())\t/* GL_VERTEX_ARRAY_RANGE_APPLE */')
+            out.append('\t\treturn;')
             out.append('\tif (array == 0x86AD) {')
             out.append('\t\t%s(1);' % CLIENT_STATE[name])
             out.append('\t\treturn;')
@@ -734,6 +1204,7 @@ def main():
     out.append('static void rdn_swap_entry(GLIContext ctx)')
     out.append('{')
     out.append('\tswap_count();')
+    out.append('\tvar_swaps++;')
     out.append('\tif (__builtin_expect(rdn_logging, 0))')
     out.append('\t\tkept_calls[%d]++;' % index['swap_APPLE'])
     out.append('\tif (!rdn_swap(ctx) && engine_swap)')
@@ -806,6 +1277,9 @@ def main():
     for ret, name, params, names in entries:
         if name in OWN:
             out.append('\tif (FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name))
+            continue
+        if name in VAR_OWN:
+            out.append('\tif (var_on() && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name))
             continue
         out.append('\tif (m_%s && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name, name))
     out.append('\tif (FITS(swap_APPLE) && disp->swap_APPLE != rdn_swap_entry) {')

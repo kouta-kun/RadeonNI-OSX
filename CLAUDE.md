@@ -220,7 +220,7 @@ been planned in detail.
   `GL_ARB_vertex_blend`, which Mesa lacks and Mac programs use without
   asking; the bundle maps it to generic attribute 1
   (`gld/gen_dispatch.py`, `WEIGHT`). Confirmed by the user in the world;
-  Call of Duty 2 past its menu has not been seen. With `RDN_GLD_LOG` the bundle logs every ARB
+  Call of Duty 2 runs in its first map (below). With `RDN_GLD_LOG` the bundle logs every ARB
   program's text and Mesa's error, and which entries Mesa lacks a program
   calls ("kept:"): look there first when a game misses draws.
   `RDN_GLD_KEPT=first-last` wraps only some of those entries.
@@ -241,6 +241,21 @@ been planned in detail.
   extension; both corrupted World of Warcraft and it is off everywhere.
   `RDN_FPS=1` prints frames a second on standard error. When a program is
   slow and uses little CPU, look for the wait in a `sample`.
+- `GL_APPLE_vertex_array_range` with `GL_APPLE_fence` (2026-10-07,
+  journal): Call of Duty 2 draws only from its own memory and relies on
+  that extension; without it Mesa copied up to 20 MB of vertices per draw
+  and ran out of video memory in the first map. The bundle implements it
+  with buffer objects that mirror the program's memory
+  (`gld/gen_dispatch.py`, `VAR_HELP`), for the programs named in
+  `/Library/Application Support/RadeonNI/vertexrange` (on the G5: Call of
+  Duty 2) or with `RDN_VAR=1`. The user played the first map with it ("a
+  bit slow but it works"). When a Mac game is slow or runs out of memory
+  and its imports show no `glBindBuffer`, this is why.
+- The Tiger device layer binds at most 512 MB behind the GART for one
+  program (`GART_MOST_BYTES`): with about 860 MB bound the kext's bind
+  call never returned and the process could not be killed (G5 restarted;
+  cause not known, a guess is the G5's DART). Buffers above 16 MB get a
+  chunk of their own that is unbound when freed.
 - A6 has not started; A7 has (GART).
 - What is on by default since 2026-10-06, all decided by the user: the
   performance clocks and the memory controller's microcode, the GART,

@@ -3968,3 +3968,56 @@ MB more are in use than at the last failure. Installed on the G5.
 Open: why the game needs more than 1.4 GB of the card's memory at all. Not
 known. The buffers that fail are the same sizes in every run (21504000,
 17734656, 8344320 bytes ...).
+
+## 2026-10-07: Call of Duty 2 in its map: GL_APPLE_vertex_array_range from the bundle
+
+After the G5's restart, with the 512 MB limit: no hang, out of memory and
+the crash again, as expected. The statistics at three moments say what
+the memory is. Beyond the aperture (textures) it stays at 430 to 480 MB.
+What grows is what the CPU maps: at the end 483 MB behind the GART and 214
+MB in the aperture, in buffers of 1 to 22 MB (124 of 1 to 2 MB, 17 of 8 to
+16 MB, 7 of 16 to 32 MB ...).
+
+Those are Mesa's copies of the game's vertices. From its disassembly: the
+game keeps every vertex buffer in memory of its own (`new[]`), makes one
+vertex array object for every (pointer, length) it draws from
+(`CVAOPacket`, pointer = buffer + stride x lowest vertex), and for each
+calls `glVertexArrayRangeAPPLE`, `glFlushVertexArrayRangeAPPLE(length,
+pointer)` once and the array pointers. It flushes again in pages of 1 KB
+when it has changed a static buffer (`CStaticCacheInfo::Flush`), takes new
+memory when a dynamic one is locked with discard, and sets fences to know
+when the GPU has read what it is about to overwrite. It does all of that
+only when `GL_APPLE_vertex_array_object`, `GL_APPLE_fence` and
+`GL_APPLE_element_array` are in the list of extensions (it never asks for
+the range by name and never calls the element array's functions); Mesa
+names none of the three, so with us it drew from plain client arrays. Mesa
+then copies, for every draw, from the lowest to the highest vertex the
+indices use: the world's draws reach across a buffer of 20 MB each, and
+each vertex array object keeps its last copy alive. Hence 1.2 GB, and 0.4
+frames a second while it got there. The range in `glDrawRangeElements`
+never mattered.
+
+Built: the extension in the bundle (`gld/gen_dispatch.py`, `VAR_HELP`).
+A "mirror" is a buffer object with a copy of the program's memory: of the
+whole malloc block a range lies in when that is found (`vm_region`, then
+`malloc_size` along the region), so that all ranges in one of the game's
+buffers share it; else of the range. A flush sends the pieces of 16 KB
+that differ from a shadow copy kept in ordinary memory (the game flushes
+20 MB again for every new vertex array object over the same buffer). An
+array pointer into a mirror becomes an offset into its buffer object.
+Each vertex array object counts the mirrors it points into; mirrors nobody
+points into go after 120 swaps. The fences are always finished. The four
+extension names are added to the list. Only for the programs named in
+`/Library/Application Support/RadeonNI/vertexrange` or with `RDN_VAR=1`:
+other programs work without it today, and it draws stale vertices for a
+program that changes its memory without a flush.
+
+Result on the G5, the user playing: "It's a bit slow but it works!" No
+out of memory; 64 MB of mirrors; the picture right by readback (the grab
+tears, taken while the view moved). 13 to 16 frames a second. `sample`:
+Mesa's thread waits 83 % of the time; the game's thread spends 51 % in my
+searches through 6000 mirrors, nearly all of them small ranges of a few KB
+(I had only looked for the malloc block when the range was 64 KB or more).
+Changed: the block is looked for at any size, regions without one are
+remembered, the search starts at the mirror found last. Installed; not yet
+run.
