@@ -371,11 +371,18 @@ static struct var_mirror *var_find(const char *ptr, size_t len)
  */
 #define VAR_USERS 64
 #define VAR_USER_LEAST 65536
-static struct { volatile vm_address_t base; volatile int freed; } var_user[VAR_USERS];
-static volatile int var_user_freed;
+static struct {
+	volatile vm_address_t base;
+	volatile int freed;	/* the block was freed */
+	volatile int taken;	/* a block was handed out at that address again */
+} var_user[VAR_USERS];
+static volatile int var_user_freed, var_user_taken;
 static malloc_zone_t *var_zone;
 static void (*var_zone_free)(malloc_zone_t *zone, void *ptr);
 static void *(*var_zone_realloc)(malloc_zone_t *zone, void *ptr, size_t size);
+static void *(*var_zone_malloc)(malloc_zone_t *zone, size_t size);
+static void *(*var_zone_calloc)(malloc_zone_t *zone, size_t count, size_t size);
+static void *(*var_zone_valloc)(malloc_zone_t *zone, size_t size);
 
 /* Any thread, inside malloc: only looks and sets flags. */
 static void var_freeing(void *ptr)
@@ -391,6 +398,20 @@ static void var_freeing(void *ptr)
 		}
 }
 
+static void *var_taking(void *ptr, size_t size)
+{
+	unsigned i;
+
+	if (size < VAR_USER_LEAST || !ptr || ((vm_address_t)ptr & 4095))
+		return ptr;
+	for (i = 0; i < VAR_USERS; i++)
+		if (var_user[i].base == (vm_address_t)ptr) {
+			var_user[i].taken = 1;
+			var_user_taken = 1;
+		}
+	return ptr;
+}
+
 static void var_hook_free(malloc_zone_t *zone, void *ptr)
 {
 	var_freeing(ptr);
@@ -400,7 +421,22 @@ static void var_hook_free(malloc_zone_t *zone, void *ptr)
 static void *var_hook_realloc(malloc_zone_t *zone, void *ptr, size_t size)
 {
 	var_freeing(ptr);
-	return var_zone_realloc(zone, ptr, size);
+	return var_taking(var_zone_realloc(zone, ptr, size), size);
+}
+
+static void *var_hook_malloc(malloc_zone_t *zone, size_t size)
+{
+	return var_taking(var_zone_malloc(zone, size), size);
+}
+
+static void *var_hook_calloc(malloc_zone_t *zone, size_t count, size_t size)
+{
+	return var_taking(var_zone_calloc(zone, count, size), count * size);
+}
+
+static void *var_hook_valloc(malloc_zone_t *zone, size_t size)
+{
+	return var_taking(var_zone_valloc(zone, size), size);
 }
 
 /* Let a mirror go; it is no longer in the list. */
@@ -411,6 +447,7 @@ static void var_drop(struct var_mirror *m)
 	if (m->user) {
 		var_user[m->user - 1].base = 0;
 		var_user[m->user - 1].freed = 0;
+		var_user[m->user - 1].taken = 0;
 	}
 	free(m->shadow);
 	m->shadow = NULL;
@@ -475,6 +512,31 @@ static int var_revive(struct var_mirror *m)
 	return 1;
 }
 
+/*
+ * Memory was handed out where a mirror had been freed. The program may
+ * draw from it through a vertex array object it made for that address
+ * before, with no flush and no pointer set, so the mirror goes over the
+ * new memory now, before the next draw. Where the block is not there (or
+ * no longer), the mirror stays as it is until the address is used.
+ */
+static void var_retake(void)
+{
+	unsigned i;
+
+	var_user_taken = 0;
+	if (var_user_freed)
+		var_reap();
+	for (i = 0; i < var.count; i++) {
+		struct var_mirror *m = var.mirrors[i];
+
+		if (m->user && var_user[m->user - 1].taken) {
+			var_user[m->user - 1].taken = 0;
+			if (m->stale)
+				var_revive(m);
+		}
+	}
+}
+
 /* Take a mirror out of the list and let it go. */
 static void var_remove(struct var_mirror *m)
 {
@@ -521,8 +583,14 @@ static GLuint var_pin(const char *base, size_t size)
 			return 0;
 		var_zone_free = zone->free;
 		var_zone_realloc = zone->realloc;
+		var_zone_malloc = zone->malloc;
+		var_zone_calloc = zone->calloc;
+		var_zone_valloc = zone->valloc;
 		zone->free = var_hook_free;
 		zone->realloc = var_hook_realloc;
+		zone->malloc = var_hook_malloc;
+		zone->calloc = var_hook_calloc;
+		zone->valloc = var_hook_valloc;
 		var_zone = zone;
 		rdn_log("vertex array range: watching what malloc zone %p frees", (void *)zone);
 	} else if (malloc_zone_from_ptr(base) != var_zone)
@@ -539,6 +607,7 @@ static GLuint var_pin(const char *base, size_t size)
 		return 0;
 	}
 	var_user[slot].freed = 0;
+	var_user[slot].taken = 0;
 	var_user[slot].base = (vm_address_t)base;
 	return buffer | ((GLuint)(slot + 1) << 24);
 }
@@ -1388,6 +1457,8 @@ def main():
         if name in ('draw_range_elements', 'draw_elements', 'draw_arrays'):
             out.append('\tif (__builtin_expect(var_dirty_count, 0))')
             out.append('\t\tvar_settle(ctx);')
+            out.append('\tif (__builtin_expect(var_user_taken, 0))')
+            out.append('\t\tvar_retake();')
         if name == 'draw_range_elements':
             out.append(DRAW_RANGE)
         if name in VAR_POINTERS:

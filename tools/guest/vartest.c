@@ -15,6 +15,11 @@
  *
  *   RDN_VAR=2 vartest [renderer id, default 0x21a00]
  *
+ * VARTEST_NO_FLUSH=1: step 4 without the flush either, as a program does
+ * that draws through a vertex array object it made for that address
+ * before. Blue only when the GPU reads the memory; with copies the old
+ * green is right.
+ *
  * Build on the host:
  *   scripts/darwin.sh powerpc-apple-darwin8-gcc -O2 -o build/vartest \
  *       tools/guest/vartest.c -framework OpenGL -framework ApplicationServices
@@ -148,7 +153,8 @@ int main(int argc, char **argv)
 		 * As a program does that keeps track of the pointers it has
 		 * set: the address is the one it set, so it only flushes.
 		 */
-		glFlushVertexArrayRangeAPPLE(BYTES, w);
+		if (!getenv("VARTEST_NO_FLUSH"))
+			glFlushVertexArrayRangeAPPLE(BYTES, w);
 	} else {
 		point(w);
 	}

@@ -145,14 +145,29 @@ int main(int argc, char **argv)
 	glDrawArrays(GL_TRIANGLES, first, 3);
 	ok &= pixel("after the memory changed (green)", 0, 255, 0);
 
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glDisableClientState(GL_COLOR_ARRAY);
 	if (argc > 3 && !strcmp(argv[3], "freefirst")) {
-		/* Freed while the buffer object is still there, as a game may. */
+		char *other;
+
+		/*
+		 * Freed while the buffer object is still there, as a game may;
+		 * then other memory taken and written, and the triangle drawn
+		 * again: do the pages the GPU reads still hold the vertices?
+		 */
 		free(v);
-		printf("memory freed with the buffer object alive\n");
+		other = malloc(64 << 20);
+		memset(other, 0x55, 64 << 20);
+		printf("memory freed with the buffer object alive; 64 MB taken at %p and written\n",
+		       (void *)other);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glDrawArrays(GL_TRIANGLES, first, 3);
+		ok &= pixel("drawn from the freed memory (green)", 0, 255, 0);
+		free(other);
+		glDisableClientState(GL_VERTEX_ARRAY);
+		glDisableClientState(GL_COLOR_ARRAY);
 		glDeleteBuffersARB(1, &buffer);
 	} else {
+		glDisableClientState(GL_VERTEX_ARRAY);
+		glDisableClientState(GL_COLOR_ARRAY);
 		glDeleteBuffersARB(1, &buffer);
 		glFinish();
 		free(v);

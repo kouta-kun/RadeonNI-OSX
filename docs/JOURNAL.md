@@ -4156,3 +4156,30 @@ of the test, before the game ran with it); four now.
 
 Unexplained, from `vartest` with `RDN_VAR=0`: the triangle from plain
 client arrays, first vertex 65533, reads back black.
+
+## 2026-10-07: zero-copy mirrors: memory taken again without a flush
+
+Second run in the game, with the buffer object kept across a free: the
+user: "there's still some flickering", "visible even in the main menu".
+35 to 75 frames a second in the map this time.
+
+In the menu every frame is the same, so after the game has freed and taken
+its 2 MB again every (pointer, length) it draws from is one it has a vertex
+array object for already (`CVAOPacket::IsCached`): it binds that and
+draws, with no flush and no pointer set. Nothing told my code that the
+address was in use again, the mirror stayed over the freed pages, and the
+picture was drawn from the vertices of the cycle before: the same menu,
+except where it moves.
+
+Changed: the zone's `malloc`, `calloc` and `valloc` are watched too
+(`var_taking`); memory handed out at a freed mirror's address sets a flag,
+and the next draw puts the mirror over it first (`var_retake`).
+`VARTEST_NO_FLUSH=1 vartest` is that case: blue with `RDN_VAR=2`.
+
+Checked on the way, because the menu runs at 400 frames a second and the
+game frees a discarded buffer two frames later: do pages the GPU reads keep
+what was in them when the program frees them? `pinned ... freefirst` now
+frees, takes and writes 64 MB of other memory, and draws from the freed
+buffer once more: still green. They do.
+
+Installed on the G5; the user's game was still the build before.
