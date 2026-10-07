@@ -3217,3 +3217,23 @@ Dashboard opens and shows its widgets; no crash log.
 **Not done:** the window server has not started with any of this; the
 user has to be there for that. The screen saver's black screen is as it
 was.
+
+## 2026-10-06 — The window server with the true extension list
+
+With the user's go-ahead, `sudo killall WindowServer` on the G5 (nothing
+open there but the Finder). Back in ten seconds, logged in by itself,
+the same process afterwards (no restart loop), `qe`: Quartz Extreme in
+use, no crash log, nothing but its start-up lines in
+`windowserver.log`. By readback: desktop, menu bar, Dock and Finder
+windows with their shadows are right; Apple's Chess and `glwin`, both
+with glthread, are composited right over them; the picture is right
+again after a mouse drag. The window server itself runs without
+glthread, as intended.
+
+Left on the screen by the system, not by us: the Keyboard Setup
+Assistant, which Tiger starts at login when it cannot tell what keyboard
+is attached (there is none). A `drag` I started inside a Finder window
+selected its icons; nothing was moved.
+
+**Not seen by the user yet;** Exposé, Dashboard's effects and anything
+moving are not covered by a grab.

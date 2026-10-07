@@ -198,8 +198,8 @@ been planned in detail.
   path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.
   In Doom 3 Mesa's thread is the limit. The screen saver shows black
   and draws nothing with the card; not looked into. The window server
-  has not yet run the bundle with the true extension list: the first
-  restart after 2026-10-06 is that test.
+  runs with the true extension list since the evening of 2026-10-06
+  (desktop, windows, Chess right by readback; the user has not said).
 - A6 has not started; A7 has (GART).
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
