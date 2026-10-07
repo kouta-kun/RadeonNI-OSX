@@ -183,6 +183,44 @@ int rdn_blit(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
 	     uint32_t work_offset, uint32_t *seq);
 
 /*
+ * Fill rectangles of a surface with one colour: `colour` is a pixel's
+ * value, and `big_endian_pixels` says whether the surface keeps its pixels
+ * as big-endian words (rdn_fb.big_endian_pixels) or as little-endian ones.
+ * Work space, fence and return value as for rdn_blit().
+ */
+struct rdn_fill_rect {
+	uint32_t x, y, width, height;
+};
+
+int rdn_blit_fill(struct rdn_accel *accel, const struct rdn_draw_surface *dst,
+		  const struct rdn_fill_rect *rects, uint32_t count,
+		  uint32_t colour, bool big_endian_pixels,
+		  uint32_t work_offset, uint32_t *seq);
+
+/*
+ * Copy rectangles from one place of a surface to another. Sources and
+ * destinations may overlap, their own and each other's: the result is as
+ * if every source had been read before anything was written, and where
+ * destinations overlap the later rectangle is on top.
+ *
+ * The pixels go by way of `scratch`, a second surface that only this
+ * function uses, at least as large as the box around all the sources
+ * (-EINVAL if it is smaller). Only the GPU touches it, in the order of the
+ * calls, so the next call need not wait for this one because of it.
+ *
+ * `work_offset` names rdn_blit_move_work_bytes() of scratch space in the
+ * aperture, under rdn_blit()'s rules. When this fails, the surface is as
+ * it was, but the GPU may have been given work that reads that space:
+ * take the newest fence emitted (rdn_accel.fence_emitted), not `*seq`, as
+ * the one that frees it.
+ */
+uint32_t rdn_blit_move_work_bytes(void);
+int rdn_blit_move(struct rdn_accel *accel, const struct rdn_draw_surface *surface,
+		  const struct rdn_draw_surface *scratch,
+		  const struct rdn_blit_rect *rects, uint32_t count,
+		  uint32_t work_offset, uint32_t *seq);
+
+/*
  * rdn_selftest.c: draw, with the 3D engine, a square (64,64)-(320,320) and
  * a triangle with corners (768,64), (640,320), (896,320) onto a 32-bit
  * surface. Both carry the same texture: red top left, green top right, blue
