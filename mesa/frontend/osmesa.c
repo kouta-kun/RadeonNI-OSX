@@ -70,6 +70,7 @@
 
 #include "state_tracker/st_context.h"
 #include "main/glthread.h"
+#include "main/mtypes.h"
 
 #include "glapi/glapi/glapi.h"  /* for OSMesaGetProcAddress below */
 
@@ -125,6 +126,15 @@ struct osmesa_buffer
     */
    unsigned own_handle, own_stride, own_offset;
    struct pipe_resource *store_res;
+   /*
+    * OSMesaMakeCurrentStore: that memory (own_*) is the drawable's colour
+    * buffer and nothing is shown anywhere. The context draws into the
+    * memory itself; with store_copy it draws on a texture of its own, as
+    * above, and the GPU copies to the memory (store_res) when the context
+    * is flushed. bottom_up: the memory's first row is the picture's bottom
+    * row, not its top one.
+    */
+   bool store, store_copy, bottom_up;
 
    struct osmesa_buffer *next;  /**< next in linked list */
 };
@@ -345,6 +355,38 @@ osmesa_copy(struct pipe_context *pipe, struct pipe_resource *dst,
    pipe->blit(pipe, &info);
 }
 
+/*
+ * Memory of the device that a caller named (a store: handle, row length in
+ * bytes, byte offset) as a surface of this size and format: one level,
+ * linear, and not owned, so letting go of the surface frees nothing.
+ */
+static struct pipe_resource *
+osmesa_import_store(struct pipe_screen *screen, enum pipe_texture_target target,
+                    enum pipe_format format, unsigned bind, unsigned handle,
+                    unsigned stride, unsigned offset, unsigned width,
+                    unsigned height)
+{
+   struct pipe_resource templat;
+   struct winsys_handle whandle;
+
+   memset(&templat, 0, sizeof(templat));
+   templat.target = target;
+   templat.format = format;
+   templat.width0 = width;
+   templat.height0 = height;
+   templat.depth0 = 1;
+   templat.array_size = 1;
+   templat.usage = PIPE_USAGE_DEFAULT;
+   templat.bind = bind;
+   memset(&whandle, 0, sizeof(whandle));
+   whandle.type = WINSYS_HANDLE_TYPE_KMS;
+   whandle.handle = handle;
+   whandle.stride = stride;
+   whandle.offset = offset;
+   return screen->resource_from_handle(screen, &templat, &whandle,
+                                       PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+}
+
 static void
 osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
                  struct pipe_resource *res, int x, int y, int w, int h)
@@ -512,6 +554,22 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
    if (statt != ST_ATTACHMENT_FRONT_LEFT)
       return false;
 
+   if (osbuffer->store) {
+      /*
+       * The picture is in the caller's memory already, or the GPU copies
+       * it there now. It is never read back and never shown.
+       */
+      if (osbuffer->store_copy && osbuffer->store_res && res) {
+         struct pipe_context *pipe = osmesa->st->pipe;
+         struct pipe_box box;
+
+         u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
+         osmesa_copy(pipe, osbuffer->store_res, 0, 0, res, &box);
+         pipe->flush(pipe, NULL, 0);
+      }
+      return true;
+   }
+
    if (osbuffer->direct) {
       struct pipe_context *pipe = osmesa->st->pipe;
       struct pipe_box box;
@@ -630,6 +688,30 @@ osmesa_st_framebuffer_validate(struct st_context *st,
          templat.nr_samples = templat.nr_storage_samples = 0;
       }
       pipe_resource_reference(&out[i], NULL);
+      if (osbuffer->store && statts[i] == ST_ATTACHMENT_FRONT_LEFT) {
+         /*
+          * The caller's memory is the colour buffer itself. Multisampled,
+          * or asked to copy, it is where every finished picture goes
+          * instead, and the colour buffer is made below like any other.
+          */
+         if (!osbuffer->store_copy) {
+            out[i] = osbuffer->textures[statts[i]] =
+               osmesa_import_store(screen, PIPE_TEXTURE_RECT, format,
+                                   PIPE_BIND_RENDER_TARGET |
+                                   PIPE_BIND_SAMPLER_VIEW,
+                                   osbuffer->own_handle, osbuffer->own_stride,
+                                   osbuffer->own_offset, osbuffer->width,
+                                   osbuffer->height);
+            continue;
+         }
+         if (!osbuffer->store_res)
+            osbuffer->store_res =
+               osmesa_import_store(screen, PIPE_TEXTURE_RECT, format,
+                                   PIPE_BIND_RENDER_TARGET,
+                                   osbuffer->own_handle, osbuffer->own_stride,
+                                   osbuffer->own_offset, osbuffer->width,
+                                   osbuffer->height);
+      }
       if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT &&
           !osbuffer->direct_res) {
          struct winsys_handle whandle;
@@ -810,6 +892,41 @@ osmesa_want_glthread(void)
    return !name || strcmp(name, "WindowServer") != 0;
 }
 
+/*
+ * The context is about to stop drawing into a store (OSMesaMakeCurrentStore).
+ * Give the GPU everything it drew there, and with the copy the last
+ * picture, so that nothing given later writes to that memory; `wait`:
+ * and do not return before the GPU has run it.
+ */
+static void
+osmesa_leave_store(OSMesaContext osmesa, bool wait)
+{
+   struct pipe_context *pipe = osmesa->st->pipe;
+   struct pipe_screen *screen = pipe->screen;
+   struct pipe_fence_handle *fence = NULL;
+
+   /* What Mesa itself still holds back; only the thread's own context can. */
+   if (OSMesaGetCurrentContext() == osmesa)
+      st_context_flush(osmesa->st, ST_FLUSH_FRONT, NULL, NULL, NULL);
+   pipe->flush(pipe, wait ? &fence : NULL, 0);
+   if (fence) {
+      screen->fence_finish(screen, NULL, fence, OS_TIMEOUT_INFINITE);
+      screen->fence_reference(screen, &fence, NULL);
+   }
+}
+
+/* The context's drawable is not wanted any more. */
+static void
+osmesa_drop_buffer(OSMesaContext osmesa, bool wait)
+{
+   if (!osmesa->current_buffer)
+      return;
+   if (osmesa->current_buffer->store)
+      osmesa_leave_store(osmesa, wait);
+   osmesa_destroy_buffer(osmesa->current_buffer);
+   osmesa->current_buffer = NULL;
+}
+
 GLAPI OSMesaContext GLAPIENTRY
 OSMesaCreateContext(GLenum format, OSMesaContext sharelist)
 {
@@ -860,6 +977,14 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
    int i;
 
    if (sharelist) {
+      /*
+       * The new context has the textures, programs, lists and buffer
+       * objects of this one, and of every context that shares with it.
+       * If it is the caller's own, let it finish what it was told first
+       * (glthread), so that the new one starts from all of it.
+       */
+      if (sharelist == OSMesaGetCurrentContext())
+         osmesa_sync(sharelist);
       st_shared = sharelist->st;
    }
    else {
@@ -1003,7 +1128,16 @@ OSMesaDestroyContext(OSMesaContext osmesa)
 {
    osmesa_sync(osmesa);
    if (osmesa) {
+      /*
+       * What the context shared with others (OSMesaCreateContext's
+       * sharelist) lives on in them, whichever is destroyed first; Mesa
+       * counts the users. The drawable is this context's alone.
+       */
+      if (osmesa->current_buffer && osmesa->current_buffer->store)
+         osmesa_leave_store(osmesa, true);
       st_destroy_context(osmesa->st);
+      if (osmesa->current_buffer)
+         osmesa_destroy_buffer(osmesa->current_buffer);
       free(osmesa->zs);
       free(osmesa->rects);
       FREE(osmesa);
@@ -1058,13 +1192,13 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
    /* See if we already have a buffer that uses these pixel formats */
    if (osmesa->current_buffer &&
        (osmesa->current_buffer->direct ||
+        osmesa->current_buffer->store ||
         osmesa->current_buffer->visual.color_format != color_format ||
         osmesa->current_buffer->visual.depth_stencil_format != osmesa->depth_stencil_format ||
         osmesa->current_buffer->visual.accum_format != osmesa->accum_format ||
         osmesa->current_buffer->width != width ||
         osmesa->current_buffer->height != height)) {
-      osmesa_destroy_buffer(osmesa->current_buffer);
-      osmesa->current_buffer = NULL;
+      osmesa_drop_buffer(osmesa, false);
    }
 
    if (!osmesa->current_buffer) {
@@ -1148,48 +1282,77 @@ OSMesaShowStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
 }
 
 
+/*
+ * Make a store of this format the image of the texture bound to `target`
+ * in the context; handle 0 takes the image away again. The texture only
+ * holds a description of the memory: it does not keep it alive.
+ */
+static GLboolean
+osmesa_tex_store(OSMesaContext osmesa, GLenum target, enum pipe_format format,
+                 GLuint handle, GLsizei stride, GLuint offset, GLsizei width,
+                 GLsizei height, bool alpha)
+{
+   struct pipe_screen *screen = osmesa->st->pipe->screen;
+   struct pipe_resource *res;
+   bool ok;
+
+   if (target != GL_TEXTURE_2D && target != GL_TEXTURE_RECTANGLE)
+      return GL_FALSE;
+   if (!handle)
+      return st_context_teximage(osmesa->st, target, 0, PIPE_FORMAT_NONE,
+                                 NULL, false) ? GL_TRUE : GL_FALSE;
+   if (width < 1 || height < 1)
+      return GL_FALSE;
+   if (!alpha) {
+      /* The same layout without alpha: a surface is opaque. */
+      if (format == PIPE_FORMAT_B8G8R8A8_UNORM)
+         format = PIPE_FORMAT_B8G8R8X8_UNORM;
+      else if (format == PIPE_FORMAT_A8R8G8B8_UNORM)
+         format = PIPE_FORMAT_X8R8G8B8_UNORM;
+   }
+   res = osmesa_import_store(screen, target == GL_TEXTURE_2D ?
+                             PIPE_TEXTURE_2D : PIPE_TEXTURE_RECT, format,
+                             PIPE_BIND_SAMPLER_VIEW, handle, stride, offset,
+                             width, height);
+   if (!res)
+      return GL_FALSE;
+   ok = st_context_teximage(osmesa->st, target, 0, format, res, false);
+   pipe_resource_reference(&res, NULL);
+   return ok ? GL_TRUE : GL_FALSE;
+}
+
+
 GLAPI GLboolean GLAPIENTRY
 OSMesaTexStore(OSMesaContext osmesa, GLenum target, GLuint handle,
                GLsizei stride, GLuint offset, GLsizei width, GLsizei height)
 {
    osmesa_sync(osmesa);
    struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
-   struct pipe_screen *screen;
-   struct pipe_resource templat, *res;
-   struct winsys_handle whandle;
-   enum pipe_format format;
-   bool ok;
 
-   if (!osbuffer || width < 1 || height < 1)
+   /* The window server's use: opaque, and never taken away again. */
+   if (!osbuffer || !handle)
       return GL_FALSE;
-   /* The same layout without alpha: a surface is opaque. */
-   format = osbuffer->visual.color_format;
-   if (format == PIPE_FORMAT_B8G8R8A8_UNORM)
-      format = PIPE_FORMAT_B8G8R8X8_UNORM;
-   else if (format == PIPE_FORMAT_A8R8G8B8_UNORM)
-      format = PIPE_FORMAT_X8R8G8B8_UNORM;
-   screen = osmesa->st->pipe->screen;
-   memset(&templat, 0, sizeof(templat));
-   templat.target = PIPE_TEXTURE_RECT;
-   templat.format = format;
-   templat.width0 = width;
-   templat.height0 = height;
-   templat.depth0 = 1;
-   templat.array_size = 1;
-   templat.usage = PIPE_USAGE_DEFAULT;
-   templat.bind = PIPE_BIND_SAMPLER_VIEW;
-   memset(&whandle, 0, sizeof(whandle));
-   whandle.type = WINSYS_HANDLE_TYPE_KMS;
-   whandle.handle = handle;
-   whandle.stride = stride;
-   whandle.offset = offset;
-   res = screen->resource_from_handle(screen, &templat, &whandle,
-                                      PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
-   if (!res)
+   return osmesa_tex_store(osmesa, target, osbuffer->visual.color_format,
+                           handle, stride, offset, width, height, false);
+}
+
+
+GLAPI GLboolean GLAPIENTRY
+OSMesaTexStoreImage(OSMesaContext osmesa, GLenum target, GLuint handle,
+                    GLsizei stride, GLuint offset, GLsizei width,
+                    GLsizei height, GLuint flags)
+{
+   osmesa_sync(osmesa);
+   enum pipe_format format;
+
+   if (!osmesa || OSMesaGetCurrentContext() != osmesa)
       return GL_FALSE;
-   ok = st_context_teximage(osmesa->st, target, 0, format, res, false);
-   pipe_resource_reference(&res, NULL);
-   return ok ? GL_TRUE : GL_FALSE;
+   /* What OSMesaMakeCurrentStore draws with this context's format. */
+   format = osmesa_choose_format(osmesa->format, GL_UNSIGNED_BYTE);
+   if (format == PIPE_FORMAT_NONE)
+      return GL_FALSE;
+   return osmesa_tex_store(osmesa, target, format, handle, stride, offset,
+                           width, height, (flags & OSMESA_STORE_ALPHA) != 0);
 }
 
 
@@ -1302,8 +1465,7 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
         osbuffer->own_handle != osmesa->own_handle ||
         osbuffer->own_stride != osmesa->own_stride ||
         osbuffer->own_offset != osmesa->own_offset)) {
-      osmesa_destroy_buffer(osbuffer);
-      osmesa->current_buffer = NULL;
+      osmesa_drop_buffer(osmesa, false);
    }
    if (!osmesa->current_buffer) {
       osmesa->current_buffer = osmesa_create_buffer(color_format,
@@ -1332,6 +1494,104 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
 
    st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base);
    osmesa->ever_used = true;
+   return GL_TRUE;
+}
+
+
+/*
+ * Which row of its colour buffer a drawable's bottom row is. Mesa keeps
+ * the top row of a window system's framebuffer first (FlipY) and the
+ * bottom row of one made with OpenGL first; a store that another context
+ * uses as a texture must be like the second. Everything in Mesa that
+ * depends on it reads this one flag.
+ */
+static void
+osmesa_row_order(OSMesaContext osmesa, bool bottom_up)
+{
+   struct gl_context *ctx = osmesa->st->ctx;
+   struct gl_framebuffer *fb = ctx->WinSysDrawBuffer;
+
+   if (!fb || fb->FlipY == !bottom_up)
+      return;
+   fb->FlipY = !bottom_up;
+   ctx->NewState |= _NEW_BUFFERS;
+   st_invalidate_buffers(osmesa->st);
+}
+
+
+GLAPI GLboolean GLAPIENTRY
+OSMesaMakeCurrentStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
+                       GLuint offset, GLsizei width, GLsizei height,
+                       GLuint flags)
+{
+   osmesa_sync_switch(osmesa);
+   enum pipe_format color_format;
+   struct osmesa_buffer *osbuffer;
+   struct pipe_screen *screen;
+   bool bottom_up = (flags & OSMESA_STORE_BOTTOM_UP) != 0;
+   bool copy = (flags & OSMESA_STORE_COPY) != 0;
+
+   if (!osmesa || !handle || width < 1 || height < 1 || stride < width * 4)
+      return GL_FALSE;
+   color_format = osmesa_choose_format(osmesa->format, GL_UNSIGNED_BYTE);
+   screen = osmesa->st->pipe->screen;
+   if (color_format == PIPE_FORMAT_NONE ||
+       util_format_get_blocksize(color_format) != 4 ||
+       !screen->is_format_supported(screen, color_format, PIPE_TEXTURE_RECT,
+                                    0, 0, PIPE_BIND_RENDER_TARGET))
+      return GL_FALSE;
+   /* Experiment: RDN_STORE_COPY=1 makes every store drawable copy. */
+   if (getenv("RDN_STORE_COPY"))
+      copy = strcmp(getenv("RDN_STORE_COPY"), "0") != 0;
+   /* More than one sample per pixel does not fit the caller's memory. */
+   if (osmesa_usable_samples(color_format, osmesa->depth_stencil_format) > 1)
+      copy = true;
+
+   osbuffer = osmesa->current_buffer;
+   if (osbuffer &&
+       (!osbuffer->store ||
+        osbuffer->visual.color_format != color_format ||
+        osbuffer->width != (unsigned)width ||
+        osbuffer->height != (unsigned)height ||
+        osbuffer->own_handle != handle ||
+        osbuffer->own_stride != (unsigned)stride ||
+        osbuffer->own_offset != offset ||
+        osbuffer->store_copy != copy)) {
+      osmesa_drop_buffer(osmesa, false);
+   }
+   if (!osmesa->current_buffer) {
+      osmesa->current_buffer = osmesa_create_buffer(color_format,
+                                      osmesa->depth_stencil_format,
+                                      osmesa->accum_format);
+      if (!osmesa->current_buffer)
+         return GL_FALSE;
+   }
+   osbuffer = osmesa->current_buffer;
+   osbuffer->width = width;
+   osbuffer->height = height;
+   osbuffer->map = NULL;
+   osbuffer->store = true;
+   osbuffer->store_copy = copy || osbuffer->visual.samples > 1;
+   osbuffer->own_handle = handle;
+   osbuffer->own_stride = stride;
+   osbuffer->own_offset = offset;
+   osbuffer->bottom_up = bottom_up;
+   osmesa->type = GL_UNSIGNED_BYTE;
+
+   if (!st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base))
+      return GL_FALSE;
+   osmesa->ever_used = true;
+   osmesa_row_order(osmesa, bottom_up);
+   /*
+    * Others use what this context draws without asking it: glFlush must
+    * not return before the commands are with the GPU (glthread would let
+    * it), in this context and in those that share with it.
+    */
+   osmesa->st->ctx->Shared->HasExternallySharedImages = true;
+   /* The device did not take the memory as a surface. */
+   if (!osbuffer->textures[ST_ATTACHMENT_FRONT_LEFT] ||
+       (osbuffer->store_copy && !osbuffer->store_res))
+      return GL_FALSE;
    return GL_TRUE;
 }
 
