@@ -228,6 +228,7 @@ struct var_mirror {
 	 */
 	unsigned char user;
 	unsigned char gone;	/* let go, but a vertex array object still has it */
+	unsigned char stale;	/* the program freed the memory it was over */
 	unsigned used;		/* var_swaps when last flushed or pointed into */
 };
 
@@ -246,7 +247,7 @@ static struct {
 	GLuint vao;			/* the one bound */
 	const char *range;		/* glVertexArrayRangeAPPLE's last */
 	size_t range_size;
-	unsigned long bytes, copied, freed;
+	unsigned long bytes, copied, freed, revived;
 } var;
 static unsigned var_swaps;
 /* The mirrors with something flushed that they have not been given yet. */
@@ -425,23 +426,66 @@ static void var_unref(struct var_mirror *m)
 		free(m);
 }
 
-/* The program freed memory the GPU was reading: those mirrors go. */
+/*
+ * The program freed memory the GPU was reading. The mirror stays, with
+ * its buffer object, and is put over the memory anew when that address is
+ * used again (var_revive): malloc gives the same address back, and a
+ * program that sees the pointer it set last does not set it again (Call of
+ * Duty 2 frees and takes its 2 MB of computed vertices 8 times a second),
+ * so its vertex array objects must find the new memory behind the buffer
+ * object they already have. A new buffer object drew the old memory:
+ * flickering models.
+ */
 static void var_reap(void)
 {
-	unsigned i, n = 0;
+	unsigned i;
 
 	var_user_freed = 0;
 	for (i = 0; i < var.count; i++) {
 		struct var_mirror *m = var.mirrors[i];
 
 		if (m->user && var_user[m->user - 1].freed) {
+			var_user[m->user - 1].freed = 0;
+			m->stale = 1;
 			var.freed++;
-			var_drop(m);
-			continue;
 		}
-		var.mirrors[n++] = m;
 	}
-	var.count = n;
+}
+
+static int var_block(const char *ptr, size_t len, const char **base, size_t *size);
+
+/* Over the memory again, if the same block is there again. 0: it is not. */
+static int var_revive(struct var_mirror *m)
+{
+	const char *base;
+	size_t size;
+	unsigned i;
+
+	if (!var_block(m->base, m->size, &base, &size) || base != m->base || size != m->size)
+		return 0;
+	for (i = 0; i < 8 && m_get_error(); i++)
+		;
+	m_bind_buffer(0x9160, m->buffer);
+	m_buffer_data(0x9160, (GLsizeiptrARB)m->size, m->base, 0x88E8);
+	m_bind_buffer(0x9160, 0);
+	if (m_get_error())
+		return 0;
+	m->stale = 0;
+	var.revived++;
+	return 1;
+}
+
+/* Take a mirror out of the list and let it go. */
+static void var_remove(struct var_mirror *m)
+{
+	unsigned i;
+
+	for (i = 0; i < var.count; i++)
+		if (var.mirrors[i] == m) {
+			var.mirrors[i] = var.mirrors[--var.count];
+			var_drop(m);
+			return;
+		}
 }
 
 /*
@@ -514,7 +558,8 @@ static void var_fence_finish(GLuint fence)
 		return;
 	m_finish();
 	var_fence_done = var_fence_seq;
-	if (!(++var_fence_waits & (var_fence_waits - 1)))
+	var_fence_waits++;
+	if (!(var_fence_waits & (var_fence_waits - 1)))
 		rdn_log("vertex array range: %lu fences waited for so far", var_fence_waits);
 }
 
@@ -589,6 +634,8 @@ static struct var_mirror *var_create(void *ctx, const char *ptr, size_t len)
 			m->user ? ", not copied" : "",
 			(const void *)ptr, (unsigned long)len, var.count, var.bytes >> 10,
 			var.copied >> 10, var.freed);
+	if (__builtin_expect(rdn_logging, 0) && var.revived && !(var.revived & (var.revived - 1)))
+		rdn_log("vertex array range: %lu mirrors put over new memory so far", var.revived);
 	return m;
 }
 
@@ -715,6 +762,12 @@ static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
 
 		if (from >= to)
 			continue;
+		if (__builtin_expect(m->stale, 0) && !var_revive(m)) {
+			/* Something else is at that address now. */
+			var_remove(m);
+			i--;
+			continue;
+		}
 		if (from == ptr && to == ptr + len)
 			whole = 1;
 		m->used = var_swaps;
@@ -777,6 +830,12 @@ static int var_pointer(void *ctx, const GLvoid **pointer)
 	if (!p || (bound && *bound))
 		return 0;
 	m = var_find(p, 1);
+	if (m && __builtin_expect(m->stale, 0) && !var_revive(m)) {
+		var_remove(m);
+		m = var_find(p, 1);
+		if (m && m->stale)
+			m = NULL;
+	}
 	if (!m && var.range && p >= var.range && p < var.range + var.range_size)
 		m = var_create(ctx, var.range, var.range_size);
 	if (!m)

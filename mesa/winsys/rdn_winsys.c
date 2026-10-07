@@ -45,7 +45,8 @@ uint32_t rdn_shim_tiling_config;
  * aperture, video memory beyond it, or the program's own memory, which
  * the GPU reaches through the GART.
  */
-enum rdn_place { RDN_VISIBLE, RDN_HIDDEN, RDN_GART, RDN_REGIONS };
+/* RDN_USER: the program's own memory behind the GART, only ever given back. */
+enum rdn_place { RDN_VISIBLE, RDN_HIDDEN, RDN_GART, RDN_USER, RDN_REGIONS };
 
 /* What r600 holds on to: a command buffer it may ask about or wait for. */
 struct rdn_fence {
@@ -224,7 +225,7 @@ static void rdn_ws_fence_reference(struct radeon_winsys *rws,
  * is called with the lock held.
  */
 #define RDN_CACHE_FLUSHES 128
-static const uint64_t RDN_CACHE_BYTES[RDN_REGIONS] = { 32ull << 20, 128ull << 20, 64ull << 20 };
+static const uint64_t RDN_CACHE_BYTES[RDN_REGIONS] = { 32ull << 20, 128ull << 20, 64ull << 20, 0 };
 
 static struct list_head *rdn_cache_bucket(struct radeon_drm_winsys *ws,
                                           uint64_t size, enum rdn_place region)
@@ -236,9 +237,11 @@ static struct list_head *rdn_cache_bucket(struct radeon_drm_winsys *ws,
 
 /* Give memory back to where it came from. */
 static void rdn_region_free(struct radeon_drm_winsys *ws, enum rdn_place region,
-                            uint64_t offset)
+                            uint64_t offset, uint64_t size)
 {
-   if (region == RDN_GART)
+   if (region == RDN_USER)
+      ws->dev->gart_unbind_user(ws->dev, offset, size);
+   else if (region == RDN_GART)
       ws->dev->gart_free(ws->dev, offset);
    else
       ws->dev->free(ws->dev, offset);
@@ -261,7 +264,7 @@ static void rdn_cache_put(struct radeon_drm_winsys *ws, uint64_t offset,
 
    if (!c) {
       rdn_busy_wait(ws, busy, OS_TIMEOUT_INFINITE);
-      rdn_region_free(ws, region, offset);
+      rdn_region_free(ws, region, offset, size);
       return;
    }
    c->offset = offset;
@@ -313,7 +316,7 @@ static void rdn_cache_trim(struct radeon_drm_winsys *ws, bool all)
             continue;
          break;
       }
-      rdn_region_free(ws, c->region, c->offset);
+      rdn_region_free(ws, c->region, c->offset, c->size);
       rdn_cache_drop(ws, c);
    }
 }
@@ -368,6 +371,7 @@ static void rdn_mem_stats_account(struct radeon_drm_winsys *ws, uint64_t size,
       rdn_stats_at_most.cached_bytes[0] = ws->cached_bytes[0];
       rdn_stats_at_most.cached_bytes[1] = ws->cached_bytes[1];
       rdn_stats_at_most.cached_bytes[2] = ws->cached_bytes[2];
+      rdn_stats_at_most.cached_bytes[3] = ws->cached_bytes[3];
    }
 }
 
@@ -379,7 +383,8 @@ static void rdn_mem_stats_print(const char *when)
    if (!rdn_stats_most)
       return;
    static const char *const where[RDN_REGIONS] = {
-      "in the aperture", "beyond the aperture", "in system memory (GART)"
+      "in the aperture", "beyond the aperture", "in system memory (GART)",
+      "the program's own memory (GART)"
    };
 
    for (h = 0; h < RDN_REGIONS; h++) {
@@ -527,13 +532,13 @@ static void rdn_buffer_destroy(struct radeon_winsys *rws, struct pb_buffer_lean 
 
    if (bo->user) {
       /*
-       * The program's memory: nothing to keep. The pages must stay behind
-       * the GART until the GPU has read what it was told to, so this
-       * waits; it happens when the program gives a vertex buffer up.
+       * The program's memory. The pages must stay behind the GART until
+       * the GPU has read what it was told to; the cache keeps them until
+       * then (nothing is ever handed out from RDN_USER) and unbinds.
        */
       simple_mtx_lock(&ws->lock);
-      rdn_busy_wait(ws, &bo->last_use, OS_TIMEOUT_INFINITE);
-      ws->dev->gart_unbind_user(ws->dev, bo->offset, bo->base.size);
+      rdn_cache_put(ws, bo->offset, bo->base.size, RDN_USER, &bo->last_use);
+      rdn_cache_trim(ws, false);
       simple_mtx_unlock(&ws->lock);
    } else if (!bo->foreign) {
       /*

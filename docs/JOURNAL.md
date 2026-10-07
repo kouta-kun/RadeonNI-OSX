@@ -4119,3 +4119,40 @@ still right, and the machine's wired pages are where they were afterwards
 Found on the way, not looked into: an off-screen context on our renderer
 reads zeroes back from `glReadPixels` on the G5 (`glprobe draw 0x21a00`
 too), so the test draws into a framebuffer object.
+
+## 2026-10-07: vertex array range without copies, in Call of Duty 2 (stage 2)
+
+Built (`gld/gen_dispatch.py`, `var_pin` and around it): a mirror of a
+page-aligned malloc block of 64 KB or more is a buffer object over the
+block itself (`GL_AMD_pinned_memory`), for programs with a "+" before
+their name in the vertex range list or `RDN_VAR=2`; up to 64 of them. The
+malloc zone's `free` and `realloc` are replaced by ours to see such a
+block go. `glFinishFenceAPPLE` is `glFinish` when something was drawn since
+the fence was set; `glTestFenceAPPLE` stays true.
+`tools/guest/vartest.c` (`~/gl/vartest`) draws through the extension and
+shows the three modes apart: without a flush the changed colour shows only
+with `RDN_VAR=2`.
+
+First run in the game, the user: "there's glitching, flickering geometry
+especially". 57 to 104 frames a second in the map. The log: the 22 MB,
+8 MB and 4 MB buffers pinned once each, and one block of 2101248 bytes
+pinned 719 times, 700 "freed under us": the game's buffer of computed
+vertices, freed and taken again 8 times a second, at the same few
+addresses. My code let the mirror go at the free and made a new buffer
+object at the next use. The game keeps track of the pointers it has set
+and does not set one again that has not changed, so its vertex array
+object went on drawing from the old buffer object: the old pages, still
+wired, with vertices two frames old.
+
+Changed: a freed mirror keeps its buffer object and is put over the
+memory anew (`glBufferData` on the same object, `var_revive`) when the
+address is used again and the same block is there; `vartest` step 4 now
+frees, takes the memory again and only flushes, and reads blue. The
+winsys no longer waits for the GPU when such a buffer is destroyed: the
+pages go to its cache as a fourth region, RDN_USER, that is only ever
+unbound, when the GPU is done. That region overran three arrays of three
+in `shim/radeon_drm_winsys.h` in the first build (seen in the statistics
+of the test, before the game ran with it); four now.
+
+Unexplained, from `vartest` with `RDN_VAR=0`: the triangle from plain
+client arrays, first vertex 65533, reads back black.

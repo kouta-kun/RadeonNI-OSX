@@ -9,7 +9,8 @@
  *      memory (RDN_VAR=2), still red with copies (RDN_VAR=1)
  *   3. flushed: green
  *   4. the memory freed, the same amount taken again (malloc gives the
- *      same address back as a rule), blue vertices, flushed, drawn: blue
+ *      same address back as a rule), blue vertices, flushed but the
+ *      pointers not set again when the address is the same, drawn: blue
  *   5. a fence set, finished, tested
  *
  *   RDN_VAR=2 vartest [renderer id, default 0x21a00]
@@ -142,7 +143,15 @@ int main(int argc, char **argv)
 	w = triangle(0, 0, 255);
 	printf("memory freed; new memory at %p (%s)\n", (void *)w,
 	       w == v ? "the same address" : "another address");
-	point(w);
+	if (w == v) {
+		/*
+		 * As a program does that keeps track of the pointers it has
+		 * set: the address is the one it set, so it only flushes.
+		 */
+		glFlushVertexArrayRangeAPPLE(BYTES, w);
+	} else {
+		point(w);
+	}
 	glDrawArrays(GL_TRIANGLES, FIRST, 3);
 	pixel("4. other memory, flushed and drawn (blue):");
 

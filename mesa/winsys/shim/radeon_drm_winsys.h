@@ -45,7 +45,7 @@ struct radeon_drm_winsys {
     */
    struct list_head cache_all;
    struct list_head cache_buckets[128];
-   uint64_t cached_bytes[3];   /* by region: enum rdn_place */
+   uint64_t cached_bytes[4];   /* by region: enum rdn_place */
    /* The newest fence known to have been reached. */
    uint32_t last_done;
    bool have_last_done;
@@ -55,9 +55,9 @@ struct radeon_drm_winsys {
     * and by size class (class c: under 4 KB << c), and the most there was.
     */
    struct {
-      uint64_t bytes[3], count[3], padding[3];
-      uint64_t class_bytes[3][24], class_count[3][24];
-      uint64_t peak_bytes[3], creates, cache_hits, overflowed;
+      uint64_t bytes[4], count[4], padding[4];
+      uint64_t class_bytes[4][24], class_count[4][24];
+      uint64_t peak_bytes[4], creates, cache_hits, overflowed;
    } mem_stats;
    uint64_t num_flushes;
 };
