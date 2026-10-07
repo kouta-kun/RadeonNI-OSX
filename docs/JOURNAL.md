@@ -3529,3 +3529,53 @@ about correct".
   the picture and the watermarks look right, nothing was measured.
 - The link's state cannot be read from user space; the log line at mode
   set is all there is.
+
+## 2026-10-07 — Is Quartz Extreme a stub? An audit, and a profile of the window server
+
+**The user** remembered reading that Quartz Extreme was only a stub and
+accelerated nothing, and asked for a check and a plan for real Quartz
+Extreme and Core Image.
+
+**Where the statement is:** `README.md`, "A 2D accelerator plugin that
+enables Quartz Extreme. Currently a CPU-only stub." It is about
+`ga/RadeonNIGA.plugin`, whose fill and copy use the CPU and which exists
+to pass the window server's first gate. Nothing says it of the
+compositing.
+
+**On the G5** (kext and bundle as installed, DisplayPort, 1920x1080):
+- Idle desktop, fence counter read every 5 s for 65 s: no command buffer
+  except 2 at 08:58:00, when the menu bar clock changed (the kext logged
+  `setShape` with bounds 1772,0 98x22 for it).
+- A 700x500 Finder window dragged back and forth for 10 s (`drag`, 40 ms
+  a step) with `sample WindowServer 12 1`: 259 command buffers in 10 s.
+  Of the window server's main thread, 92.4 % is waiting for messages in
+  its server loop, 4.7 % `CGXUpdateDisplay`, of which 3.1 % is the
+  compositing through GL (`CGGLAccelComposite`: Mesa's immediate mode
+  path, binding textures, texture environment). `glTexSubImage2D` 0.25 %,
+  `glFlush` with the copy to the screen 0.15 %. No `glFinish` and no fence
+  wait anywhere: the window server calls `glFlush` (from
+  `CGXGLAccelFinish`) and never comes through `rdn_mesa_present()`.
+  2.3 % was `CGXSetDisplayTransferByFormula`, taken to be the fade after
+  the screen saver was killed for the test.
+- The surface client's methods in the logs since 2026-10-05: `setShape`
+  22687, `control` 1820, `flush` 512, read locks 214, `setIDMode` 170;
+  `setScale`, `setShapeBacking`, write locks and `read` never; no
+  private method asked for. `windowserver.log`: "Accel caps: 00000003".
+
+**So:** the compositing is done by the card and costs the window server
+little. What uses the CPU around it: window contents (Quartz 2D, as on
+any Tiger Mac), the copy of changed window tiles into textures (small
+in this test), the 2D plug-in if it is called at all (not known).
+
+**Wrong in my first reading:** that every update waits for the GPU. The
+code that waits is not reached by the window server. A switch for it
+(`/tmp/rdngld.wsflush`) was written and reverted unused.
+
+**Core Image** has not been run. By reading: a pbuffer, or any drawable
+that is not off-screen, a window, a surface or the whole screen, leaves
+the Mesa context bound to a 16x16 dummy; Mesa contexts are never shared;
+one context is current per process; 63 Apple-only entries stay with
+Apple's engine.
+
+**Not measured:** Quartz Extreme off for comparison; Exposé; larger
+windows; what "a bit slow" (the user, 2026-10-05) was.
