@@ -217,6 +217,7 @@ struct var_mirror {
 	GLuint buffer;
 	unsigned refs;		/* vertex array objects that point into it */
 	char *shadow;		/* what the buffer object has, if memory allowed */
+	const char *dirty, *dirty_end;	/* flushed, not yet brought up to date */
 	unsigned used;		/* var_swaps when last flushed or pointed into */
 };
 
@@ -238,6 +239,11 @@ static struct {
 	unsigned long bytes, copied;
 } var;
 static unsigned var_swaps;
+/* The mirrors with something flushed that they have not been given yet. */
+#define VAR_DIRTY 16
+static struct var_mirror *var_dirty[VAR_DIRTY];
+static unsigned var_dirty_count;
+static void var_settle(void *ctx);
 
 static void var_context(void *ctx)
 {
@@ -247,6 +253,7 @@ static void var_context(void *ctx)
 		rdn_log("vertex array range: context %p after %p, mirrors forgotten", ctx, var.ctx);
 	/* The buffer objects are the other context's: nothing to delete here. */
 	memset(&var, 0, sizeof(var));
+	var_dirty_count = 0;
 	var.ctx = ctx;
 }
 
@@ -366,6 +373,7 @@ static struct var_mirror *var_create(void *ctx, const char *ptr, size_t len)
 	size_t size = len;
 	int block;
 
+	var_settle(ctx);
 	var_sweep();
 	if (var.count == var.room) {
 		unsigned room = var.room ? var.room * 2 : 64;
@@ -444,9 +452,44 @@ static void var_update(void *ctx, struct var_mirror *m, const char *from, const 
 		m_bind_buffer(0x8892, 0);
 }
 
+/*
+ * Flushes come in small pieces (Call of Duty 2: a call for every KB it
+ * changed), so a mirror is brought up to date when something is about to
+ * read it, with the pieces that touch joined.
+ */
+static void var_settle(void *ctx)
+{
+	unsigned i;
+
+	for (i = 0; i < var_dirty_count; i++) {
+		struct var_mirror *m = var_dirty[i];
+
+		var_update(ctx, m, m->dirty, m->dirty_end);
+		m->dirty = m->dirty_end = NULL;
+	}
+	var_dirty_count = 0;
+}
+
+static void var_mark(void *ctx, struct var_mirror *m, const char *from, const char *to)
+{
+	if (m->dirty && from <= m->dirty_end && to >= m->dirty) {
+		if (from < m->dirty)
+			m->dirty = from;
+		if (to > m->dirty_end)
+			m->dirty_end = to;
+		return;
+	}
+	if (m->dirty || var_dirty_count == VAR_DIRTY)
+		var_settle(ctx);
+	m->dirty = from;
+	m->dirty_end = to;
+	var_dirty[var_dirty_count++] = m;
+}
+
 static void var_range(void *ctx, GLsizei length, const GLvoid *pointer)
 {
 	var_context(ctx);
+	var_settle(ctx);
 	var.range = length > 0 ? pointer : NULL;
 	var.range_size = length > 0 ? (size_t)length : 0;
 }
@@ -471,7 +514,7 @@ static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
 		if (from == ptr && to == ptr + len)
 			whole = 1;
 		m->used = var_swaps;
-		var_update(ctx, m, from, to);
+		var_mark(ctx, m, from, to);
 	}
 	if (!whole)
 		var_create(ctx, ptr, len);
@@ -523,6 +566,8 @@ static int var_pointer(void *ctx, const GLvoid **pointer)
 	GLuint *bound = map_bound(ctx, 0x8892);
 
 	var_context(ctx);
+	if (var_dirty_count)
+		var_settle(ctx);
 	if (!p || (bound && *bound))
 		return 0;
 	m = var_find(p, 1);
@@ -539,6 +584,8 @@ static int var_pointer(void *ctx, const GLvoid **pointer)
 static void var_bind(void *ctx, GLuint id)
 {
 	var_context(ctx);
+	if (var_dirty_count)
+		var_settle(ctx);
 	var.vao = id;
 }
 
@@ -1072,6 +1119,9 @@ def main():
             out.append('\t\treturn;')
         if name == 'map_buffer':
             out.append(MAP_BUFFER)
+        if name in ('draw_range_elements', 'draw_elements', 'draw_arrays'):
+            out.append('\tif (__builtin_expect(var_dirty_count, 0))')
+            out.append('\t\tvar_settle(ctx);')
         if name == 'draw_range_elements':
             out.append(DRAW_RANGE)
         if name in VAR_POINTERS:

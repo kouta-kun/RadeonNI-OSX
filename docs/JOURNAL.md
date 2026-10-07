@@ -4021,3 +4021,24 @@ searches through 6000 mirrors, nearly all of them small ranges of a few KB
 Changed: the block is looked for at any size, regions without one are
 remembered, the search starts at the mirror found last. Installed; not yet
 run.
+
+## 2026-10-07: Call of Duty 2 sampled again with the block lookup at any size
+
+The user started it again; `sample` for 8 s in the map. The searches are
+gone from the game's thread (`t_flush_vertex_array_range_EXT` 0.8 % self,
+`var_pointer` not in the list; they were 33 % and 18 %). No frame rate:
+started from the Finder, so no `RDN_FPS`.
+
+Where the game's thread is now: 33 % in the game's own frame
+(`CG_DrawActiveFrame`), 63 % in its renderer, of which
+`DrawIndexedPrimitive` 40 %. Ours in that: the flushes 14 % inclusive, 10 %
+of it `glBufferSubData`, and 6 % of the whole is that call waiting for
+room in glthread's queue (`util_queue_add_job`). Mesa's thread waits 58 %
+of the time, so it is behind only in bursts: the game flushes its skinned
+vertices a KB at a time (`CStaticCacheInfo::Flush`), each flush a bind, a
+`glBufferSubData` and an unbind.
+
+Changed: a flush only marks the mirror; touching flushes are joined, and
+the mirror is brought up to date when a pointer is set, a draw comes, a
+range is named or a vertex array object is bound. Installed on the G5, not
+yet run.
