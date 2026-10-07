@@ -74,6 +74,7 @@ Claude took the r600 driver from Mesa, patched it for Tiger compatibility, and d
 | Sauerbraten | Working in full screen, glitchy lower half in windowed mode |
 | Tux Racer   | Broken (window only updates when moved, has no full-screen mode) |
 | Doom 3      | Working in full screen, performance about 2x 6600LE |
+| World of Warcraft | Working, required custom extension implementation for high speed |
 
 It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-I output of specificially the HD 7570.
 
@@ -85,7 +86,8 @@ At this point performance was slightly below 6600LE on Doom 3, and about equival
 
 After some investigation, it turned out the issue (specifically in Doom 3) was that a type-size mismatch between Mesa's expectations and OS X Tiger (bool is 4 bytes on OS X Tiger, Mesa expects 1 byte) caused the OpenGL Extension list to be wrong. As Doom 3 found none of the extensions it expected (ARB2 rendering path) it fell back to a nearly fixed-path rendering mode where the CPU took up more responsability. Once this was fixed, some shadowing and lighting issues were resolved but more importantly framerate rose from ~22FPS to 48-50FPS. This has no effect on Quake 3 which was already using all of the extensions it supported, but newer games (id Tech 4, etc) should see performance closer to a true CPU bottleneck.
 
+World of Warcraft is a special case, in that the original OpenGL renderer used fixed-pipeline extensions that were never or barely adopted outside the Apple ecosystem (ARB_vertex_blend), so an implementation was cobbled together. Additionally it reuses parts of buffers multiple times, which Apple had a propietary extension for (GL_APPLE_flush_buffer_range), also now implemented and gets the framerate from ~33 to ~110.
+
 ## Future steps
 
-- G5 testing worked, so the next step is to try to read the VBIOS from the ROM and get a compatibility list working.
 - At some point, I should try with other cards of the same family/model to see if anything works or if this is too HD 7570 specific.
