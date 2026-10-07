@@ -150,6 +150,78 @@ CLIENT_STATE = {
     'disable_client_state': 'm_disable_vertex_attrib_array_ARB',
 }
 
+# glMapBuffer(GL_WRITE_ONLY) without waiting for the GPU. Mesa waits until
+# the GPU is done with everything that uses the buffer, as OpenGL says, and
+# r600 flushes first. World of Warcraft maps its vertex buffers that way
+# many times a frame, each time to add to them (82 % of its main thread's
+# time was that wait); on Leopard it asks for no wait with
+# GL_APPLE_flush_buffer_range, which Tiger's OpenGL does not have. A
+# program's choice, since OpenGL gives it no way to say:
+#   RDN_MAPBUFFER=unsync   the buffer as it is, no wait: right when the
+#                          program writes where no drawing it has asked
+#                          for reads
+#   RDN_MAPBUFFER=discard  new storage, no wait: right when the program
+#                          writes all it will draw from again
+#   RDN_MAPBUFFER=sync     Mesa's
+# or a line "unsync Name" or "discard Name" in RDN_MAPBUFFER_LIST, the
+# program's name as the system has it. Without either: sync.
+MAP_BUFFER_HELP = """\
+#define RDN_MAPBUFFER_LIST "/Library/Application Support/RadeonNI/mapbuffer"
+
+static void *(*x_map_buffer_range)(GLenum target, GLintptr offset,
+				   GLsizeiptr length, GLbitfield access);
+
+static int map_mode_named(const char *mode)
+{
+	if (!strcmp(mode, "unsync"))
+		return 1;
+	if (!strcmp(mode, "discard"))
+		return 2;
+	return 0;
+}
+
+static int map_mode(void)
+{
+	static int mode = -1;
+	const char *env, *name = getprogname();
+	char line[256];
+	FILE *f;
+
+	if (mode >= 0)
+		return mode;
+	mode = 0;
+	env = getenv("RDN_MAPBUFFER");
+	if (env)
+		mode = map_mode_named(env);
+	else if (name && (f = fopen(RDN_MAPBUFFER_LIST, "r")) != NULL) {
+		while (fgets(line, sizeof(line), f)) {
+			char *who = strchr(line, ' ');
+
+			line[strcspn(line, "\\r\\n")] = 0;
+			if (!who)
+				continue;
+			*who++ = 0;
+			if (!strcmp(who, name))
+				mode = map_mode_named(line);
+		}
+		fclose(f);
+	}
+	if (mode)
+		rdn_log("glMapBuffer(GL_WRITE_ONLY) does not wait (%s)",
+			mode == 1 ? "unsync" : "discard");
+	return mode;
+}
+"""
+
+MAP_BUFFER = """\tif (access == 0x88B9 && x_map_buffer_range && map_mode()) {
+\t\tGLint size = 0;
+
+\t\tm_get_buffer_parameteriv(target, 0x8764, &size);	/* GL_BUFFER_SIZE */
+\t\tif (size > 0)	/* write; unsynchronized or invalidate buffer */
+\t\t\treturn x_map_buffer_range(target, 0, size,
+\t\t\t\t\t\t  map_mode() == 1 ? 0x2 | 0x20 : 0x2 | 0x8);
+\t}"""
+
 # With the log on, the text of every ARB program and what Mesa said to it.
 PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len);
 
@@ -316,6 +388,7 @@ def main():
         out.append('static %s (*m_%s)(%s);' % (ret, name, params if params else 'void'))
     out.append('')
     out.append(WEIGHT)
+    out.append(MAP_BUFFER_HELP)
     for ret, name, params, names in entries:
         full = 'GLIContext ctx' + (', ' + params if params else '')
         call = 'm_%s(%s)' % (name, ', '.join(names))
@@ -337,6 +410,8 @@ def main():
                 sys.exit('%s has no %s' % (name, arg))
             out.append('\tif (%s)' % ' || '.join('%s == 0x%X' % (arg, v) for v in values))
             out.append('\t\treturn;')
+        if name == 'map_buffer':
+            out.append(MAP_BUFFER)
         if name in CLIENT_STATE:
             out.append('\tif (array == 0x86AD) {')
             out.append('\t\t%s(1);' % CLIENT_STATE[name])
@@ -393,6 +468,7 @@ def main():
     out.append('{')
     out.append('\tunsigned i, found = 0;')
     out.append('')
+    out.append('\tx_map_buffer_range = lookup("glMapBufferRange");')
     out.append('\tfor (i = 0; i < sizeof(lookups) / sizeof(lookups[0]); i++) {')
     out.append('\t\t*lookups[i].mesa = lookup(lookups[i].name);')
     out.append('\t\tif (*lookups[i].mesa)')

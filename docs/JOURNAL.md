@@ -3791,3 +3791,29 @@ Not done: `glWeight*vARB`, `glVertexBlendARB`, blending without a vertex
 program; the game called none of them up to the login screen. Not seen:
 the world (it needs the user's login). The four programs seen declare
 `vertex.weight` and never read it.
+
+## 2026-10-07 — World of Warcraft is slow: glMapBuffer waits for the GPU
+
+The user: the world looks correct, a bit slow. `sample` of the running
+game for 10 s (G5, 1920x1080, Northshire): the process uses 30 % of a
+CPU; 82 % of its main thread is under `glMapBuffer`, 68 % of it in
+`r600_buffer_map_sync_with_rings` -> `rdn_buffer_map` ->
+`rdn_number_wait` (waiting for the GPU) and 13 % waiting for glthread.
+No `glBufferData` in the sample: the game maps buffers the GPU is using
+and does not replace them first. 900 command buffers a second, most of
+them the flush before each wait.
+
+The game's binary names `GL_APPLE_flush_buffer_range`, the extension that
+tells the driver not to wait. Tiger 10.4.11's libGL has neither of its
+two functions, so offering it here would do nothing; the SDK header's
+last two table entries are for a later system (which is why the engine
+has data where `buffer_parameteri_APPLE` would be).
+
+**Built:** `RDN_MAPBUFFER=unsync|discard|sync` in a program's environment,
+or a line `unsync Name` in `/Library/Application Support/RadeonNI/mapbuffer`,
+makes `glMapBuffer(GL_WRITE_ONLY)` a `glMapBufferRange` of the whole
+buffer with `GL_MAP_UNSYNCHRONIZED_BIT` (or `INVALIDATE_BUFFER`). The
+default is Mesa's. Bundle 4acbb66d on the G5, with the file naming World
+of Warcraft. **Not run yet:** the game was the user's running session;
+whether unsync is right for it (it is if the game only adds to a buffer
+between replacements) and what it gains is not known.
