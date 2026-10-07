@@ -350,7 +350,6 @@ static int force_dvi;
 static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 {
 	uint8_t edid[RDN_EDID_MAX_SIZE];
-	struct rdn_i2c_bus bus;
 	struct rdn_mode mode;
 	struct rdn_fb fb;
 	volatile uint32_t *pix;
@@ -363,17 +362,18 @@ static int do_modeset(struct linux_card *lc, struct rdn_card *card)
 		return -1;
 	}
 
-	/* DDC line of the DVI-I connector (AtomBIOS i2c id 0x93). */
-	rdn_i2c_bus_by_id(card, 0x93, &bus);
-	len = rdn_edid_read(card, &bus, edid);
+	/* The first connector with a display: DVI-I, then DisplayPort. */
+	len = rdn_output_detect(card, edid);
 	if (len < 0 || !rdn_edid_preferred_mode(edid, &mode)) {
-		fprintf(stderr, "no EDID on the DVI connector (%d)\n", len);
+		fprintf(stderr, "no EDID on any connector (%d)\n", len);
 		return -1;
 	}
-	hdmi = rdn_edid_is_hdmi(edid, len) && !force_dvi;
-	printf("EDID: %d bytes, preferred %ux%u at %u kHz, %s\n", len,
+	hdmi = rdn_edid_is_hdmi(edid, len) && !force_dvi &&
+		!card->output->displayport;
+	printf("%s, EDID: %d bytes, preferred %ux%u at %u kHz, %s\n",
+	       card->output->name, len,
 	       mode.hdisplay, mode.vdisplay, (unsigned)mode.clock,
-	       hdmi ? "HDMI" : "DVI");
+	       card->output->displayport ? "DisplayPort" : hdmi ? "HDMI" : "DVI");
 
 	memset(&fb, 0, sizeof(fb));
 	fb.width = mode.hdisplay;

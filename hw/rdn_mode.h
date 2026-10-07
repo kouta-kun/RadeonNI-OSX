@@ -54,6 +54,23 @@ bool rdn_edid_preferred_mode(const uint8_t *edid, struct rdn_mode *mode);
 /* True when the EDID carries an HDMI vendor block in a CEA extension. */
 bool rdn_edid_is_hdmi(const uint8_t *edid, int len);
 
+/* The card's outputs, by position; NULL past the last one. */
+#define RDN_OUTPUT_DVI	0
+#define RDN_OUTPUT_DP	1
+const struct rdn_output *rdn_output(int index);
+
+/* The output rdn_modeset() drives from now on. */
+void rdn_output_select(struct rdn_card *card, const struct rdn_output *out);
+
+/*
+ * Find the display: try each output in turn for an EDID and select the
+ * first that has one. `edid` must hold RDN_EDID_MAX_SIZE bytes (rdn_i2c.h).
+ * Returns the EDID's length or a negative errno value. On the DisplayPort
+ * connector this also reads the sink's capabilities, which rdn_modeset()
+ * needs. The card must be posted.
+ */
+int rdn_output_detect(struct rdn_card *card, uint8_t *edid);
+
 /*
  * One-time display setup after the card is posted and before the first
  * rdn_modeset(): transmitter initialisation and the display engine clock.
@@ -62,12 +79,12 @@ bool rdn_edid_is_hdmi(const uint8_t *edid, int len);
 int rdn_display_init(struct rdn_card *card);
 
 /*
- * Set `mode` on CRTC 0 and drive it out of the DVI-I connector's digital
- * output, scanning out `fb`. The card must be posted and rdn_display_init()
- * must have run. `hdmi` selects HDMI
- * rather than DVI signalling. Returns 0 or a negative errno value.
- *
- * The display topology is fixed for now (see rdn_modeset.c).
+ * Set `mode` on CRTC 0 and drive it out of the selected output (the DVI-I
+ * connector's digital output if none was selected), scanning out `fb`. The
+ * card must be posted and rdn_display_init() must have run. `hdmi` selects
+ * HDMI rather than DVI signalling on the DVI-I connector; DisplayPort
+ * ignores it. Returns 0 or a negative errno value; on DisplayPort that
+ * includes a link that did not train.
  */
 int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 		const struct rdn_fb *fb, bool hdmi);

@@ -6,10 +6,12 @@
  * radeon_display.c (radeon_compute_pll_avivo), radeon_atombios.c
  * (radeon_atom_get_clock_info) and radeon_clocks.c.
  *
- * Fixed topology, for this phase: CRTC 0, pixel PLL 1, digital encoder 0,
- * UNIPHY transmitter link A, hot-plug line 1. That is the DVI-I connector of
- * the HD 7570 this driver is written for, as the Linux driver uses it. It
- * should come from the VBIOS object table instead.
+ * Always CRTC 0. The two outputs of the HD 7570 this driver is written for
+ * are listed below as its VBIOS object table describes them and as the
+ * Linux driver uses them; they should be read from that table instead.
+ * The DVI-I connector's digital output is checked against a register trace
+ * of Linux. The DisplayPort connector is not: the trace has no DisplayPort
+ * sink in it, so that path follows the Linux sources only.
  *
  * Parameter blocks are built byte by byte in little-endian layout, so there
  * are no bitfields or host-endian structure fields to get wrong.
@@ -41,15 +43,62 @@
  */
 
 #include "rdn_mode.h"
+#include "rdn_dp.h"
+#include "rdn_i2c.h"
 #include "rdn_reg.h"
 
-/* The fixed topology. */
+#ifndef ENODEV
+#define ENODEV 19
+#endif
+
 #define CRTC_ID			0
-#define PLL_ID			ATOM_PPLL1
-#define DIG_ENCODER		0
-#define HPD_ID			0	/* RADEON_HPD_1 */
-#define TRANSMITTER_ID		ENCODER_OBJECT_ID_INTERNAL_UNIPHY
-#define CONNECTOR_OBJECT_ID	CONNECTOR_OBJECT_ID_DUAL_LINK_DVI_I
+
+/*
+ * The outputs, in the order rdn_output_detect() tries them. Digital
+ * encoders follow radeon_atom_pick_dig_encoder() for DCE5: two for each
+ * UNIPHY, the first of the pair for link A. Both outputs are on link A.
+ */
+static const struct rdn_output outputs[] = {
+	{
+		"DVI-I", false, CONNECTOR_OBJECT_ID_DUAL_LINK_DVI_I,
+		ENCODER_OBJECT_ID_INTERNAL_UNIPHY, 0, 0,
+		0,	/* RADEON_HPD_1 */
+		0x93,
+	},
+	{
+		"DisplayPort", true, CONNECTOR_OBJECT_ID_DISPLAYPORT,
+		ENCODER_OBJECT_ID_INTERNAL_UNIPHY2, 2, 4,
+		3,	/* RADEON_HPD_4 */
+		0x92,
+	},
+};
+
+const struct rdn_output *rdn_output(int index)
+{
+	if (index < 0 || index >= (int)(sizeof(outputs) / sizeof(outputs[0])))
+		return NULL;
+	return &outputs[index];
+}
+
+static const struct rdn_output *card_output(struct rdn_card *card)
+{
+	return card->output ? card->output : &outputs[RDN_OUTPUT_DVI];
+}
+
+/* The output carries DisplayPort signalling, not TMDS. */
+static bool output_is_dp(struct rdn_card *card)
+{
+	return card_output(card)->displayport && card->dp.sink;
+}
+
+/*
+ * radeon_atom_pick_pll() for DCE5: the DCPLL clocks every DisplayPort link
+ * when the board has no external clock for that, as this one has not.
+ */
+static int output_pll(struct rdn_card *card)
+{
+	return output_is_dp(card) ? ATOM_DCPLL : ATOM_PPLL1;
+}
 
 #define PS_WORDS		16
 
@@ -403,8 +452,9 @@ static uint32_t adjust_pll(struct rdn_card *card, const struct rdn_mode *mode,
 		return 0;
 
 	ps_init(&ps);
-	ps_le16(&ps, 0, mode->clock / 10);		/* usPixelClock */
-	ps_u8(&ps, 2, TRANSMITTER_ID);			/* ucTransmitterID */
+	/* usPixelClock; for DisplayPort the link clock, 16200 or 27000 */
+	ps_le16(&ps, 0, (output_is_dp(card) ? card->dp.rate : mode->clock) / 10);
+	ps_u8(&ps, 2, card_output(card)->transmitter_id); /* ucTransmitterID */
 	ps_u8(&ps, 3, encoder_mode);			/* ucEncodeMode */
 	ps_u8(&ps, 4, DISPPLL_CONFIG_COHERENT_MODE);	/* ucDispPllConfig */
 	ps_u8(&ps, 5, 0);				/* ucExtTransmitterID */
@@ -426,6 +476,11 @@ static uint32_t adjust_pll(struct rdn_card *card, const struct rdn_mode *mode,
 /* atombios_set_encoder_crtc_source(), SELECT_CRTC_SOURCE_PARAMETERS_V2 */
 static int select_crtc_source(struct rdn_card *card, int encoder_mode)
 {
+	static const uint8_t dig_id[] = {
+		ASIC_INT_DIG1_ENCODER_ID, ASIC_INT_DIG2_ENCODER_ID,
+		ASIC_INT_DIG3_ENCODER_ID, ASIC_INT_DIG4_ENCODER_ID,
+		ASIC_INT_DIG5_ENCODER_ID, ASIC_INT_DIG6_ENCODER_ID,
+	};
 	int index = GetIndexIntoMasterTable(COMMAND, SelectCRTC_Source);
 	struct ps ps;
 
@@ -433,18 +488,23 @@ static int select_crtc_source(struct rdn_card *card, int encoder_mode)
 		return -EINVAL;
 	ps_init(&ps);
 	ps_u8(&ps, 0, CRTC_ID);				/* ucCRTC */
-	ps_u8(&ps, 1, ASIC_INT_DIG1_ENCODER_ID + DIG_ENCODER); /* ucEncoderID */
+	ps_u8(&ps, 1, dig_id[card_output(card)->dig_encoder]); /* ucEncoderID */
 	ps_u8(&ps, 2, encoder_mode);			/* ucEncodeMode */
 	return ps_exec(card, index, &ps);
 }
 
-/* atombios_crtc_program_ss() with ATOM_DISABLE, V3 parameters: all zero */
+/*
+ * atombios_crtc_program_ss() with ATOM_DISABLE, V3 parameters: all zero but
+ * the PLL in ucSpreadSpectrumType, and pixel PLL 1 is zero there too.
+ */
 static int disable_spread_spectrum(struct rdn_card *card)
 {
 	int index = GetIndexIntoMasterTable(COMMAND, EnableSpreadSpectrumOnPPLL);
 	struct ps ps;
 
 	ps_init(&ps);
+	if (output_pll(card) == ATOM_DCPLL)
+		ps_u8(&ps, 2, ATOM_PPLL_SS_TYPE_V3_DCPLL);
 	return ps_exec(card, index, &ps);
 }
 
@@ -464,8 +524,8 @@ static int program_pll(struct rdn_card *card, const struct rdn_mode *mode,
 	ps_le16(&ps, 4, fb_div);			/* usFbDiv */
 	ps_u8(&ps, 6, post_div);			/* ucPostDiv */
 	ps_u8(&ps, 7, ref_div);				/* ucRefDiv */
-	ps_u8(&ps, 8, PLL_ID);				/* ucPpll */
-	ps_u8(&ps, 9, TRANSMITTER_ID);			/* ucTransmitterID */
+	ps_u8(&ps, 8, output_pll(card));		/* ucPpll */
+	ps_u8(&ps, 9, card_output(card)->transmitter_id); /* ucTransmitterID */
 	ps_u8(&ps, 10, encoder_mode);			/* ucEncoderMode */
 	ps_u8(&ps, 11, 0);	/* ucMiscInfo: 24 bpp for HDMI is 0 */
 	ps_le32(&ps, 12, frac_fb_div * 100000);		/* ulFbDivDecFrac */
@@ -793,30 +853,38 @@ static void hdmi_enable(struct rdn_card *card, bool enable)
 
 /*
  * atombios_dig_encoder_setup2(), DIG_ENCODER_CONTROL_PARAMETERS_V4.
+ * acConfig: bits 0-1 DisplayPort link rate, bits 4-6 the digital encoder.
  * For the panel-mode action Linux tests the panel mode byte as if it were
- * an encoder mode, finds "DisplayPort" (0) and sends a lane count of 0.
+ * an encoder mode, finds "DisplayPort" (0) and sends the DisplayPort lane
+ * count, which is 0 on a TMDS output. The training actions of DisplayPort
+ * take the same block as the setup.
  */
 static int dig_encoder_setup(struct rdn_card *card, const struct rdn_mode *mode,
 			     int action, int encoder_mode)
 {
 	int index = GetIndexIntoMasterTable(COMMAND, DIGxEncoderControl);
+	const struct rdn_output *out = card_output(card);
+	bool dp = output_is_dp(card);
+	uint8_t config = (uint8_t)(out->dig_encoder << 4);
 	struct ps ps;
 
 	if (cmd_table_check(card, index, "DIGxEncoderControl", 1, 4))
 		return -EINVAL;
+	if (dp && card->dp.rate == 270000)
+		config |= ATOM_ENCODER_CONFIG_V4_DPLINKRATE_2_70GHZ;
 	ps_init(&ps);
 	ps_le16(&ps, 0, mode->clock / 10);		/* usPixelClock */
-	ps_u8(&ps, 2, DIG_ENCODER << 4);		/* acConfig: ucDigSel */
+	ps_u8(&ps, 2, config);				/* acConfig */
 	ps_u8(&ps, 3, action);				/* ucAction */
 	if (action == ATOM_ENCODER_CMD_SETUP_PANEL_MODE) {
 		ps_u8(&ps, 4, DP_PANEL_MODE_EXTERNAL_DP_MODE); /* ucPanelMode */
-		ps_u8(&ps, 5, 0);			/* ucLaneNum */
+		ps_u8(&ps, 5, dp ? card->dp.lanes : 0);	/* ucLaneNum */
 	} else {
 		ps_u8(&ps, 4, encoder_mode);		/* ucEncoderMode */
-		ps_u8(&ps, 5, 4);			/* ucLaneNum */
+		ps_u8(&ps, 5, dp ? card->dp.lanes : 4);	/* ucLaneNum */
 	}
 	ps_u8(&ps, 6, PANEL_8BIT_PER_COLOR);		/* ucBitPerColor */
-	ps_u8(&ps, 7, HPD_ID + 1);			/* ucHPD_ID */
+	ps_u8(&ps, 7, out->hpd + 1);			/* ucHPD_ID */
 	return ps_exec(card, index, &ps);
 }
 
@@ -824,54 +892,177 @@ static int dig_encoder_setup(struct rdn_card *card, const struct rdn_mode *mode,
  * atombios_dig_transmitter_setup2(), DIG_TRANSMITTER_CONTROL_PARAMETERS_V4.
  * acConfig: bit 0 dual link, bit 1 coherent mode, bit 2 link B, bit 3
  * encoder select, bits 4-5 reference clock source (the PLL), bits 6-7
- * transmitter select.
+ * transmitter select. For DisplayPort the clock is the link's. The action
+ * SETUP_VSEMPH takes a lane (0: all at once) and `lane_set`, the voltage
+ * swing and pre-emphasis as the sink's TRAINING_LANEx_SET register has
+ * them, where the other actions take the clock.
  */
 static int dig_transmitter_setup(struct rdn_card *card,
-				 const struct rdn_mode *mode, int action)
+				 const struct rdn_mode *mode, int action,
+				 uint8_t lane_set)
 {
 	int index = GetIndexIntoMasterTable(COMMAND, UNIPHYTransmitterControl);
+	const struct rdn_output *out = card_output(card);
+	bool dp = output_is_dp(card);
 	uint8_t config = 0;
 	struct ps ps;
 
 	if (cmd_table_check(card, index, "UNIPHYTransmitterControl", 1, 4))
 		return -EINVAL;
 	config |= 1 << 1;				/* fCoherentMode */
-	config |= (DIG_ENCODER & 1) << 3;		/* ucEncoderSel */
-	config |= (PLL_ID & 3) << 4;			/* ucRefClkSource */
+	config |= (out->dig_encoder & 1) << 3;		/* ucEncoderSel */
+	config |= (output_pll(card) & 3) << 4;		/* ucRefClkSource */
+	config |= out->transmitter_sel << 6;		/* ucTransmitterSel */
 	ps_init(&ps);
-	ps_le16(&ps, 0, mode->clock / 10);		/* usPixelClock */
+	if (action == ATOM_TRANSMITTER_ACTION_SETUP_VSEMPH) {
+		ps_u8(&ps, 0, 0);			/* asMode.ucLaneSel */
+		ps_u8(&ps, 1, lane_set);		/* asMode.ucLaneSet */
+	} else {
+		/* usPixelClock */
+		ps_le16(&ps, 0, (dp ? card->dp.rate : mode->clock) / 10);
+	}
 	ps_u8(&ps, 2, config);				/* acConfig */
 	ps_u8(&ps, 3, action);				/* ucAction */
+	ps_u8(&ps, 4, dp ? card->dp.lanes : 4);		/* ucLaneNum */
+	return ps_exec(card, index, &ps);
+}
+
+/* What rdn_dp_link_train() asks of the source. */
+struct train_ctx {
+	struct rdn_card *card;
+	const struct rdn_mode *mode;
+};
+
+/* radeon_dp_set_tp() and the start and end of training, source side */
+static int train_pattern(void *ctx, int pattern)
+{
+	static const uint8_t action[] = {
+		ATOM_ENCODER_CMD_DP_LINK_TRAINING_START,
+		ATOM_ENCODER_CMD_DP_LINK_TRAINING_PATTERN1,
+		ATOM_ENCODER_CMD_DP_LINK_TRAINING_PATTERN2,
+		ATOM_ENCODER_CMD_DP_LINK_TRAINING_PATTERN3,
+		ATOM_ENCODER_CMD_DP_LINK_TRAINING_COMPLETE,
+	};
+	struct train_ctx *t = ctx;
+
+	return dig_encoder_setup(t->card, t->mode, action[pattern],
+				 ATOM_ENCODER_MODE_DP);
+}
+
+static int train_drive(void *ctx, uint8_t lane_set)
+{
+	struct train_ctx *t = ctx;
+
+	return dig_transmitter_setup(t->card, t->mode,
+				     ATOM_TRANSMITTER_ACTION_SETUP_VSEMPH,
+				     lane_set);
+}
+
+/* atombios_dig_transmitter_setup(ATOM_TRANSMITTER_ACTION_INIT) */
+static int dig_transmitter_init(struct rdn_card *card,
+				const struct rdn_output *out)
+{
+	int index = GetIndexIntoMasterTable(COMMAND, UNIPHYTransmitterControl);
+	struct ps ps;
+
+	if (cmd_table_check(card, index, "UNIPHYTransmitterControl", 1, 4))
+		return -EINVAL;
+	ps_init(&ps);
+	ps_le16(&ps, 0, out->connector_id);		/* usInitInfo */
+	/* acConfig: coherent mode and the transmitter; no encoder yet */
+	ps_u8(&ps, 2, (1 << 1) | (out->transmitter_sel << 6));
+	ps_u8(&ps, 3, ATOM_TRANSMITTER_ACTION_INIT);	/* ucAction */
 	ps_u8(&ps, 4, 4);				/* ucLaneNum */
 	return ps_exec(card, index, &ps);
 }
 
 /*
+ * radeon_dp_getsinktype(), DP_ENCODER_SERVICE_PARAMETERS: what the BIOS
+ * finds on a DisplayPort connector, as a connector object id.
+ * CONNECTOR_OBJECT_ID_DISPLAYPORT is a DisplayPort sink; anything else is a
+ * passive adapter to DVI or HDMI, or nothing.
+ */
+static int dp_sink_type(struct rdn_card *card, const struct rdn_output *out)
+{
+	int index = GetIndexIntoMasterTable(COMMAND, DPEncoderService);
+	struct ps ps;
+
+	ps_init(&ps);
+	ps_u8(&ps, 2, out->i2c_id);			/* ucConfig */
+	ps_u8(&ps, 3, ATOM_DP_ACTION_GET_SINK_TYPE);	/* ucAction */
+	if (ps_exec(card, index, &ps))
+		return -EINVAL;
+	return ps.b[4];					/* ucStatus */
+}
+
+void rdn_output_select(struct rdn_card *card, const struct rdn_output *out)
+{
+	card->output = out;
+}
+
+/*
+ * The EDID of the display on `out`. On the DisplayPort connector only a
+ * DisplayPort sink is looked for: a passive adapter to DVI or HDMI, which
+ * would answer as plain I2C on the same pins, is not supported.
+ */
+static int output_edid(struct rdn_card *card, const struct rdn_output *out,
+		       uint8_t *edid)
+{
+	struct rdn_i2c_bus bus;
+	int r;
+
+	if (!out->displayport) {
+		rdn_i2c_bus_by_id(card, out->i2c_id, &bus);
+		return rdn_edid_read(card, &bus, edid);
+	}
+	rdn_log(card->os, RDN_LOG_INFO, "%s: the BIOS reports sink type 0x%02x",
+		out->name, dp_sink_type(card, out));
+	r = rdn_dp_detect(card, out);
+	if (r)
+		return r;
+	r = rdn_dp_edid_read(card, out, edid);
+	if (r < 0)
+		card->dp.sink = false;
+	return r;
+}
+
+int rdn_output_detect(struct rdn_card *card, uint8_t *edid)
+{
+	int r = -ENODEV, i;
+
+	for (i = 0; rdn_output(i); i++) {
+		r = output_edid(card, rdn_output(i), edid);
+		if (r > 0) {
+			rdn_output_select(card, rdn_output(i));
+			return r;
+		}
+		rdn_log(card->os, RDN_LOG_INFO, "%s: no EDID (%d)",
+			rdn_output(i)->name, r);
+	}
+	return r < 0 ? r : -ENODEV;
+}
+
+/*
  * What Linux does once at driver start, before any mode is set
  * (radeon_atom_encoder_init() and radeon_atom_disp_eng_pll_init()): tell
- * the BIOS which connector the transmitter serves, and start the display
+ * the BIOS which connector each transmitter serves, and start the display
  * engine clock. Without that clock the CRTC timing is wrong even though
  * every modeset register holds the right value.
  */
 int rdn_display_init(struct rdn_card *card)
 {
 	struct atom_context *ctx = card->atom.ctx;
-	int index = GetIndexIntoMasterTable(COMMAND, UNIPHYTransmitterControl);
 	ATOM_FIRMWARE_INFO_V2_1 *info;
 	uint32_t dispclk;
 	uint16_t data_offset;
 	struct ps ps;
-	int r;
+	int index, r;
 
-	/* atombios_dig_transmitter_setup(ATOM_TRANSMITTER_ACTION_INIT) */
-	if (cmd_table_check(card, index, "UNIPHYTransmitterControl", 1, 4))
-		return -EINVAL;
-	ps_init(&ps);
-	ps_le16(&ps, 0, CONNECTOR_OBJECT_ID);		/* usInitInfo */
-	ps_u8(&ps, 2, (1 << 1) | ((DIG_ENCODER & 1) << 3)); /* acConfig */
-	ps_u8(&ps, 3, ATOM_TRANSMITTER_ACTION_INIT);	/* ucAction */
-	ps_u8(&ps, 4, 4);				/* ucLaneNum */
-	r = ps_exec(card, index, &ps);
+	/* Every transmitter, in Linux's order: DisplayPort's, then DVI's. */
+	r = dig_transmitter_init(card, &outputs[RDN_OUTPUT_DP]);
+	if (r)
+		return r;
+	r = dig_transmitter_init(card, &outputs[RDN_OUTPUT_DVI]);
 	if (r)
 		return r;
 
@@ -900,8 +1091,24 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 {
 	int encoder_mode = hdmi ? ATOM_ENCODER_MODE_HDMI : ATOM_ENCODER_MODE_DVI;
 	uint32_t adjusted_clock, fb_div, frac_fb_div, ref_div, post_div;
+	const struct rdn_output *out = card_output(card);
+	bool dp = output_is_dp(card);
 	struct rdn_pll pll;
 	int r;
+
+	if (out->displayport && !dp) {
+		rdn_log(card->os, RDN_LOG_ERROR,
+			"%s: no DisplayPort sink was detected", out->name);
+		return -ENODEV;
+	}
+	if (dp) {
+		/* radeon_dp_set_link_config() */
+		hdmi = false;
+		encoder_mode = ATOM_ENCODER_MODE_DP;
+		r = rdn_dp_link_config(card, mode);
+		if (r)
+			return r;
+	}
 
 	r = get_pll_info(card, &pll);
 	if (r)
@@ -952,7 +1159,10 @@ int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 	scaler_setup(card);
 
 	/* Encoder prepare: output off while the CRTC comes up */
-	dig_transmitter_setup(card, mode, ATOM_TRANSMITTER_ACTION_DISABLE);
+	if (dp)
+		dig_encoder_setup(card, mode, ATOM_ENCODER_CMD_DP_VIDEO_OFF,
+				  encoder_mode);
+	dig_transmitter_setup(card, mode, ATOM_TRANSMITTER_ACTION_DISABLE, 0);
 	if (hdmi)
 		hdmi_mode_set(card, mode);
 
@@ -968,11 +1178,30 @@ unlock:
 		return r;
 
 	/* Encoder commit */
-	hdmi_enable(card, hdmi);
+	if (!dp)
+		hdmi_enable(card, hdmi);
 	r = dig_encoder_setup(card, mode, ATOM_ENCODER_CMD_SETUP, encoder_mode);
 	if (r)
 		return r;
 	dig_encoder_setup(card, mode, ATOM_ENCODER_CMD_SETUP_PANEL_MODE,
 			  encoder_mode);
-	return dig_transmitter_setup(card, mode, ATOM_TRANSMITTER_ACTION_ENABLE);
+	r = dig_transmitter_setup(card, mode, ATOM_TRANSMITTER_ACTION_ENABLE, 0);
+	if (r || !dp)
+		return r;
+
+	/*
+	 * DisplayPort: train the link, then let the picture out. Linux
+	 * turns the video on whether training succeeded or not, and so
+	 * does this; the failure is still returned.
+	 */
+	{
+		struct train_ctx ctx = { card, mode };
+		struct rdn_dp_source src = { &ctx, train_pattern, train_drive };
+		int v;
+
+		r = rdn_dp_link_train(card, out, &src);
+		v = dig_encoder_setup(card, mode, ATOM_ENCODER_CMD_DP_VIDEO_ON,
+				      encoder_mode);
+		return r ? r : v;
+	}
 }

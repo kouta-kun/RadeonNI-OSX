@@ -14,9 +14,37 @@
 /* Turks has six display controllers. */
 #define RDN_NUM_CRTC	6
 
+/*
+ * A connector with the encoder path the card wires to it, in the terms the
+ * VBIOS command tables take (rdn_modeset.c has the list).
+ */
+struct rdn_output {
+	const char *name;
+	bool displayport;	/* a DisplayPort connector */
+	uint8_t connector_id;	/* connector object id */
+	uint8_t transmitter_id;	/* encoder object id of the UNIPHY */
+	uint8_t transmitter_sel;	/* which UNIPHY: 0 to 2 */
+	uint8_t dig_encoder;	/* digital encoder Linux uses with it */
+	uint8_t hpd;		/* hot-plug line, 0 is HPD1 */
+	uint8_t i2c_id;		/* DDC line, and the AUX channel in its low bits */
+};
+
+/* The DisplayPort link of the output in use (rdn_dp.c). */
+struct rdn_dp {
+	bool sink;		/* a DisplayPort sink answered on AUX */
+	uint8_t dpcd[15];	/* its receiver capabilities */
+	uint32_t rate;		/* link clock in kHz, 162000 or 270000 */
+	uint8_t lanes;
+	uint8_t train_set[4];	/* voltage swing and pre-emphasis in use */
+	uint32_t aux_status;	/* AUX_SW_STATUS of the last transaction */
+};
+
 struct rdn_card {
 	struct rdn_os *os;
 	struct rdn_atom atom;
+	/* The output rdn_modeset() drives; NULL is the DVI-I connector. */
+	const struct rdn_output *output;
+	struct rdn_dp dp;
 	/* CRTC 0 is scanning out; kept up to date by POST and modeset. */
 	bool crtc_on;
 	/*

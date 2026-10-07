@@ -27,7 +27,6 @@ OSDefineMetaClassAndStructors(RadeonNI, IOFramebuffer)
 #define REG_BAR			kIOPCIConfigBaseAddress2
 
 /* DDC line of the DVI-I connector (AtomBIOS i2c id). */
-#define DVI_DDC_ID		0x93
 /*
  * Where the hardware cursor's picture is kept in video memory: above
  * every screen surface, below the accelerator's ring (RadeonNIAccel.cpp).
@@ -314,7 +313,6 @@ void RadeonNI::describeFb(const struct rdn_mode *mode, IOIndex depth,
  */
 bool RadeonNI::bringUp()
 {
-	struct rdn_i2c_bus bus;
 	UInt32 i;
 	int r;
 
@@ -349,17 +347,20 @@ bool RadeonNI::bringUp()
 		}
 	}
 
-	rdn_i2c_bus_by_id(&fCard, DVI_DDC_ID, &bus);
-	fEdidLen = rdn_edid_read(&fCard, &bus, fEdid);
+	/* The first connector with a display on it: DVI-I, then DisplayPort. */
+	fEdidLen = rdn_output_detect(&fCard, fEdid);
 	if (fEdidLen < 0) {
-		IOLog("RadeonNI: no EDID on the DVI connector (%d)\n", fEdidLen);
+		IOLog("RadeonNI: no EDID on any connector (%d)\n", fEdidLen);
 		return false;
 	}
 	/* For ioreg: what the monitor said, when a mode is refused. */
 	setProperty("EDID", fEdid, fEdidLen);
+	setProperty("Output", fCard.output->name);
 	fForceDVI = PE_parse_boot_arg("rdn_dvi", &i) && i;
-	IOLog("RadeonNI: EDID %d bytes, %s input, %s signalling%s\n", fEdidLen,
-	      (fEdid[20] & 0x80) ? "digital" : "analog", useHDMI() ? "HDMI" : "DVI",
+	IOLog("RadeonNI: %s: EDID %d bytes, %s input, %s signalling%s\n",
+	      fCard.output->name, fEdidLen,
+	      (fEdid[20] & 0x80) ? "digital" : "analog",
+	      fCard.output->displayport ? "DisplayPort" : useHDMI() ? "HDMI" : "DVI",
 	      fForceDVI ? " (rdn_dvi)" : "");
 	fModeCount = 0;
 	for (i = 0; i < kMaxModes; i++)
@@ -417,7 +418,8 @@ bool RadeonNI::bringUp()
 
 bool RadeonNI::useHDMI()
 {
-	return !fForceDVI && rdn_edid_is_hdmi(fEdid, fEdidLen);
+	return !fForceDVI && !fCard.output->displayport &&
+	       rdn_edid_is_hdmi(fEdid, fEdidLen);
 }
 
 IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
