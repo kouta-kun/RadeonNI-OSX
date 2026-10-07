@@ -3927,3 +3927,44 @@ screen start, the Activision film cut in and the picture stop on one of
 its frames, while the game went on swapping at 960 frames a second. Quit
 with `killall`. Not looked into: it is my way of starting it, not the
 user's.
+
+## 2026-10-07: Call of Duty 2: the range was not it; the GART chunks; a bind that never returns
+
+The user: "It still crashes". Same place, and `t_draw_range_elements` had
+passed the range on: it was not wider than the indices. The range change
+stays (it is right for what it describes) but it was not the cause. I had
+not measured before saying so.
+
+Measured, with `RDN_STATS=1` and the user clicking through to the map. At
+the first `out of video memory` (17 MB asked) only 735 MB were in use: 185
+MB of the aperture's 256 (11 buffers of about 17 MB among them), 444 MB of
+the 768 beyond it, 71 MB behind the GART (209 at most). The device layer
+for Tiger (`mesa/target/rdn_device_darwin.c`) had 48 chunk slots, never
+gave a chunk back, and a buffer above 16 MB took a chunk of its own size
+that only a buffer of at most that size could use again. The game's
+buffers of 17 to 22 MB, each a different size, used the slots up; from then
+on everything the CPU maps went to the aperture until that was full.
+
+Change 1: 256 slots; buffers up to 16 MB only in chunks of 16 MB; a larger
+one gets a chunk of its own that is unbound and deallocated when it is
+freed (the first use of `RDN_UC_GART_UNBIND` outside a program's end).
+
+Result: no out of memory, and the game stopped on the map's title card
+("The End of the Beginning", the user). `sample`: the main thread in
+`IOConnectMethodScalarIScalarO` under `dev_gart_alloc`, for a 1 MB upload
+buffer, so in `RDN_UC_GART_BIND` for a new 16 MB chunk. Process state `U`,
+`kill -9` does nothing, 1.11 GB wired in the machine (271 MB before the
+game). The kext's other calls still answer (`rdnuc grab`), so its lock is
+not held: the thread sleeps before it, in `IOMemoryDescriptor::prepare()`.
+A guess, not verified: the G5's DART has no room left for the mapping and
+the kernel waits for some. The G5 needs a restart to get rid of the
+process.
+
+Change 2, so that it cannot happen again: one program may have 512 MB
+bound (`GART_MOST_BYTES`); beyond that the bind is refused and the winsys
+falls back as before. `RDN_STATS=1` prints its picture again whenever 128
+MB more are in use than at the last failure. Installed on the G5.
+
+Open: why the game needs more than 1.4 GB of the card's memory at all. Not
+known. The buffers that fail are the same sizes in every run (21504000,
+17734656, 8344320 bytes ...).

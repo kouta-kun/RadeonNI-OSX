@@ -495,8 +495,14 @@ rdn_buffer_create(struct radeon_winsys *rws, uint64_t size, unsigned alignment,
 
       fprintf(stderr, "rdn: out of video memory (%llu bytes asked, %llu in use)\n",
               (unsigned long long)size, (unsigned long long)ws->allocated_bytes);
+      /* Again whenever 128 MB more are in use than the last time. */
+      static uint64_t said_at;
+
+      if (rdn_mem_stats_on() && said && ws->allocated_bytes > said_at + (128ull << 20))
+         said = false;
       if (rdn_mem_stats_on() && !said) {
          said = true;
+         said_at = ws->allocated_bytes;
          rdn_mem_stats_print("when it ran out");
       }
       FREE(bo);

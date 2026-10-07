@@ -21,10 +21,21 @@
 /*
  * Memory behind the GART comes in chunks: a piece of this program's own
  * address space, wired and entered in the page table by the kext with one
- * call, and divided up here.
+ * call, and divided up here. A buffer larger than a chunk gets a chunk of
+ * its own size, which goes back to the kext when the buffer does: kept, it
+ * would hold a slot that only a buffer of at most that size can use again,
+ * and a program with many large buffers of different sizes (Call of Duty
+ * 2, 17 to 22 MB each) ran out of slots with most of the GART free.
  */
 #define GART_CHUNK_BYTES	(16u << 20)
-#define GART_CHUNKS		48
+#define GART_CHUNKS		256
+/*
+ * What one program may have bound at a time. Above some amount the kext's
+ * call to bind never returns (Call of Duty 2 on the G5, about 860 MB
+ * wired: the thread sleeps in the kernel and cannot be killed), so the
+ * program is refused long before.
+ */
+#define GART_MOST_BYTES		(512u << 20)
 
 struct gart_chunk {
 	uint8_t *cpu;
@@ -37,6 +48,7 @@ struct darwin_device {
 	io_connect_t conn;
 	struct rdn_os mem_os;
 	struct gart_chunk gart[GART_CHUNKS];
+	uint32_t gart_bytes;
 };
 
 static int dev_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
@@ -91,7 +103,7 @@ static struct gart_chunk *gart_new_chunk(struct darwin_device *d, uint64_t size)
 	for (i = 0; i < GART_CHUNKS && !c; i++)
 		if (!d->gart[i].cpu)
 			c = &d->gart[i];
-	if (!c || vm_allocate(mach_task_self(), &addr, bytes, VM_FLAGS_ANYWHERE))
+	if (!c || bytes > GART_MOST_BYTES - d->gart_bytes || vm_allocate(mach_task_self(), &addr, bytes, VM_FLAGS_ANYWHERE))
 		return NULL;
 	if (IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_BIND, 2, 1,
 					  (int)addr, (int)bytes, &offset) ||
@@ -102,6 +114,7 @@ static struct gart_chunk *gart_new_chunk(struct darwin_device *d, uint64_t size)
 	c->cpu = (uint8_t *)addr;
 	c->offset = (uint32_t)offset;
 	c->size = (uint32_t)bytes;
+	d->gart_bytes += (uint32_t)bytes;
 	return c;
 }
 
@@ -114,8 +127,8 @@ static int dev_gart_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
 
 	if (size > (256u << 20))
 		return -1;
-	for (i = 0; i < GART_CHUNKS; i++)
-		if (d->gart[i].cpu && size <= d->gart[i].size &&
+	for (i = 0; i < GART_CHUNKS && size <= GART_CHUNK_BYTES; i++)
+		if (d->gart[i].cpu && d->gart[i].size == GART_CHUNK_BYTES &&
 		    !rdn_mem_alloc(&d->gart[i].mem, size, align, offset))
 			return 0;
 	c = gart_new_chunk(d, size);
@@ -137,9 +150,23 @@ static void dev_gart_free(struct rdn_device *dev, uint64_t offset)
 {
 	struct gart_chunk *c = gart_chunk_of((struct darwin_device *)dev, offset);
 
-	/* The chunk stays bound: the next buffers will want it. */
-	if (c)
-		rdn_mem_free(&c->mem, offset);
+	struct darwin_device *d = (struct darwin_device *)dev;
+
+	if (!c)
+		return;
+	rdn_mem_free(&c->mem, offset);
+	/*
+	 * A chunk of the ordinary size stays bound: the next buffers will
+	 * want it. One made for a single large buffer goes back.
+	 */
+	if (c->size > GART_CHUNK_BYTES) {
+		rdn_mem_fini(&c->mem);
+		IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_UNBIND, 1, 0,
+					      (int)c->offset);
+		vm_deallocate(mach_task_self(), (vm_address_t)c->cpu, c->size);
+		c->cpu = NULL;
+		d->gart_bytes -= c->size;
+	}
 }
 
 static void *dev_gart_cpu(struct rdn_device *dev, uint64_t offset)
