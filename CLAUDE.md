@@ -225,6 +225,16 @@ been planned in detail.
   calls ("kept:"): look there first when a game misses draws.
   `RDN_GLD_KEPT=first-last` wraps only some of those entries.
   `~/gl/aglfull` asks AGL for a full-screen context step by step.
+- `glMapBuffer` (2026-10-07, journal): Mesa waits for the GPU when a
+  program maps a buffer it has just drawn from. World of Warcraft does
+  that 1500 times a second (30 frames a second at its login screen).
+  `RDN_MAPBUFFER=discard` in a program's environment, or a line `discard
+  Name` in `/Library/Application Support/RadeonNI/mapbuffer`, gives
+  `glMapBuffer(GL_WRITE_ONLY)` new storage instead (188 there); `unsync`
+  maps the buffer as it is and corrupted the game's interface. On for
+  World of Warcraft on the G5 by that file; Mesa's wait for everything
+  else. `RDN_FPS=1` prints frames a second on standard error. When a
+  program is slow and uses little CPU, look for this in a `sample`.
 - A6 has not started; A7 has (GART).
 - What is on by default since 2026-10-06, all decided by the user: the
   performance clocks and the memory controller's microcode, the GART,

@@ -3817,3 +3817,35 @@ default is Mesa's. Bundle 4acbb66d on the G5, with the file naming World
 of Warcraft. **Not run yet:** the game was the user's running session;
 whether unsync is right for it (it is if the game only adds to a buffer
 between replacements) and what it gains is not known.
+
+## 2026-10-07 — World of Warcraft: glMapBuffer with new storage, 30 to 188 frames a second at the login screen
+
+**unsync was wrong.** The user started the game with `unsync`: the 2D
+interface came out as stretched quads over a correct 3D scene (readback).
+A trace of the buffer calls at the login screen (40 s: 53387
+`glMapBuffer`, 67997 `glDrawRangeElements`, 21 `glBufferData`) shows why:
+the dynamic buffers are small (0x80 to 0xc000 bytes, `GL_STREAM_DRAW`),
+and each use is bind, map, write, unmap, draw from vertex 0, often the
+same buffer twice in a row. The game writes over what it has just asked
+to be drawn. That is the discard case, not the append one I had guessed
+from the extension it knows.
+
+**discard is right** by readback of the login screen (interface and
+scene). It moved the wait, twice: first to my own
+`glGetBufferParameteriv` for the size (52 % of the main thread, a
+glthread wait), so the bundle now keeps buffer sizes itself from
+`glBindBuffer` and `glBufferData`; then to glthread's own catching up
+before `glMapBufferRange` (60 %), which costs nothing in the end:
+
+| Login screen, 1920x1080 | frames a second | CPU |
+|---|---|---|
+| sync (Mesa's), glthread | 30 | 33 % |
+| discard, glthread | 188 | 79 % |
+| discard, no glthread | 188 | 72 % |
+| sync, no glthread | 30 | 31 % |
+
+`RDN_FPS=1` in a program's environment prints frames a second on standard
+error every five seconds (new, for this). Bundle 1c5555c7 plus the
+counter on the G5; `/Library/Application Support/RadeonNI/mapbuffer`
+there says `discard World of Warcraft`. Not seen: the world with it.
+The default for programs not named is still Mesa's wait.
