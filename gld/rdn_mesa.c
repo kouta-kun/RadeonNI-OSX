@@ -134,6 +134,24 @@ static int surface_direct(void);
 
 void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
+long rdn_async_limit, rdn_async_piece;
+
+/*
+ * How the entry points hand large buffer data to this context (see
+ * rdn_glue.h). Two pieces fill one of glthread's batches. RDN_GLD_NO_SPLIT
+ * in the environment leaves the data whole.
+ */
+static void async_data(OSMesaContext mesa)
+{
+	static int split = -1;
+	long limit;
+
+	if (split < 0)
+		split = getenv("RDN_GLD_NO_SPLIT") == NULL;
+	limit = split ? OSMesaAsyncDataLimit(mesa) : 0;
+	rdn_async_limit = limit;
+	rdn_async_piece = limit / 2;
+}
 
 /*
  * Draw on the screen's surface itself, unless /tmp/rdngld.copy exists:
@@ -582,6 +600,7 @@ void rdn_make_current(void *rend)
 		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
 	if (!c->mesa)
 		return;
+	async_data(c->mesa);
 	if (!read_record(c, &d)) {
 		/*
 		 * No drawable yet: programs load textures and build display

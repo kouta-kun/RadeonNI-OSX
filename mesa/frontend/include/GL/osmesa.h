@@ -305,6 +305,15 @@ GLAPI void GLAPIENTRY
 OSMesaSetSamples( GLint samples );
 
 /*
+ * osx-gpu: with glthread, the most bytes glBufferData or glBufferSubData
+ * can be given in one call without the program's thread waiting for the
+ * other one to finish everything before it. 0: the context has no
+ * glthread, and no call waits.
+ */
+GLAPI GLint GLAPIENTRY
+OSMesaAsyncDataLimit( OSMesaContext ctx );
+
+/*
  * osx-gpu: make such a memory picture the image of the texture bound to
  * `target` in the context, without copying: the texture shows whatever is
  * in that memory when it is used. Opaque.

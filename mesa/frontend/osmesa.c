@@ -1311,6 +1311,20 @@ OSMesaSetSamples(GLint samples)
    osmesa_samples = samples > 1 ? MIN2(samples, 8) : 1;
 }
 
+/*
+ * glthread records a call with its data in a batch if both fit in one
+ * (MARSHAL_MAX_CMD_SIZE); anything larger it runs at once in the program's
+ * thread, after waiting for the other thread to finish all that came
+ * before. The call's own record takes a few words of that.
+ */
+GLAPI GLint GLAPIENTRY
+OSMesaAsyncDataLimit(OSMesaContext osmesa)
+{
+   if (!osmesa || !osmesa->st || !osmesa->st->ctx->GLThread.enabled)
+      return 0;
+   return MARSHAL_MAX_CMD_SIZE - 256;
+}
+
 GLAPI OSMesaContext GLAPIENTRY
 OSMesaGetCurrentContext(void)
 {

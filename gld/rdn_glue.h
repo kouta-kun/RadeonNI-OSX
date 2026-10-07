@@ -51,6 +51,15 @@ void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
  */
 extern int rdn_origin_x, rdn_origin_y;
 
+/*
+ * The current context runs with glthread, and a glBufferData or
+ * glBufferSubData with more than rdn_async_limit bytes would make the
+ * program's thread wait for everything recorded so far (once a frame in
+ * Doom 3, a third of its time). The entry points hand such data over in
+ * pieces of rdn_async_piece bytes instead. 0: nothing to do.
+ */
+extern long rdn_async_limit, rdn_async_piece;
+
 /* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
 extern int rdn_trace;
 
