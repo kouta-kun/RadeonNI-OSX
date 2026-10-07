@@ -37,6 +37,12 @@ bool rdn_target_surface_region(uint32_t id, int32_t bounds[4],
  */
 bool rdn_target_vram_alloc(uint32_t bytes, uint32_t *offset);
 void rdn_target_vram_free(uint32_t offset);
+/*
+ * Where the CPU finds such memory, with all the GPU has finished writing
+ * to it by now: 32-bit pixels are in the CPU's byte order. NULL if the
+ * device has no such address.
+ */
+void *rdn_target_vram_map(uint32_t offset);
 /* Tell the window system where surface `id` keeps its picture (width 0: nowhere). */
 bool rdn_target_surface_buffer(uint32_t id, uint32_t offset, uint32_t row_bytes,
                                uint32_t width, uint32_t height);

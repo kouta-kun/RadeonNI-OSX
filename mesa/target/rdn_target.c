@@ -6,6 +6,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "pipe/p_screen.h"
@@ -15,6 +16,12 @@
 #include "util/macros.h"
 
 static struct rdn_device *the_device;
+
+#ifdef RDN_TARGET_SOFT
+#include "tests/rdn_soft.h"
+/* The screen is the software one, with ordinary memory for video memory. */
+static bool soft;
+#endif
 
 PUBLIC bool
 rdn_target_screen(volatile uint32_t **pixels, uint32_t *width,
@@ -52,6 +59,10 @@ rdn_target_vram_alloc(uint32_t bytes, uint32_t *offset)
 {
    uint64_t o;
 
+#ifdef RDN_TARGET_SOFT
+   if (soft)
+      return rdn_soft_vram_alloc(bytes, offset);
+#endif
    if (!the_device || the_device->alloc(the_device, bytes, 4096, &o))
       return false;
    *offset = (uint32_t)o;
@@ -63,6 +74,19 @@ rdn_target_vram_free(uint32_t offset)
 {
    if (the_device)
       the_device->free(the_device, offset);
+}
+
+void *
+rdn_target_vram_map(uint32_t offset)
+{
+#ifdef RDN_TARGET_SOFT
+   if (soft)
+      return rdn_soft_vram_map(offset);
+#endif
+   if (!the_device || !the_device->aperture || offset >= the_device->aperture_size)
+      return NULL;
+   the_device->sync_for_cpu(the_device);
+   return (uint8_t *)the_device->aperture + offset;
 }
 
 bool
@@ -105,9 +129,17 @@ struct pipe_screen *osmesa_create_screen(void);
 struct pipe_screen *
 osmesa_create_screen(void)
 {
-   struct rdn_device *dev = rdn_device_open();
+   struct rdn_device *dev;
    struct radeon_winsys *ws;
 
+#ifdef RDN_TARGET_SOFT
+   /* The test program without the card: tests/rdn_soft.c. */
+   if (getenv("RDN_SOFT")) {
+      soft = true;
+      return rdn_soft_screen_create();
+   }
+#endif
+   dev = rdn_device_open();
    if (!dev) {
       fprintf(stderr, "rdn: no device\n");
       return NULL;

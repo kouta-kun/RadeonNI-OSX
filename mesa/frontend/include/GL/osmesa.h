@@ -316,11 +316,103 @@ OSMesaAsyncDataLimit( OSMesaContext ctx );
 /*
  * osx-gpu: make such a memory picture the image of the texture bound to
  * `target` in the context, without copying: the texture shows whatever is
- * in that memory when it is used. Opaque.
+ * in that memory when it is used. Opaque. The memory's first row is the
+ * texture's row at t = 0, so a window's picture, which has its top row
+ * first, is upside down in the texture. A context must be bound to a
+ * drawable. OSMesaTexStoreImage is the same with more choices.
  */
 GLAPI GLboolean APIENTRY
 OSMesaTexStore( OSMesaContext ctx, GLenum target, GLuint handle,
                 GLsizei stride, GLuint offset, GLsizei width, GLsizei height );
+
+
+/*
+ * osx-gpu: flags of OSMesaMakeCurrentStore and OSMesaTexStoreImage.
+ *
+ * OSMESA_STORE_BOTTOM_UP  the store's first row is the picture's bottom
+ *                         row, as in a texture image, so that the store
+ *                         can be a texture's image the right way up.
+ *                         Without it the first row is the top row, as in
+ *                         the stores of OSMesaSurfaceStorage and on the
+ *                         screen.
+ * OSMESA_STORE_COPY       the context draws on a surface of its own and
+ *                         the device copies it to the store when the
+ *                         context is flushed (what OSMesaSurfaceStorage
+ *                         does), instead of drawing into the store.
+ * OSMESA_STORE_ALPHA      the texture has the store's alpha channel.
+ *                         Without it the texture is opaque (alpha 1).
+ */
+#define OSMESA_STORE_BOTTOM_UP	0x1
+#define OSMESA_STORE_COPY	0x2
+#define OSMESA_STORE_ALPHA	0x4
+
+
+/*
+ * osx-gpu: bind the context to a drawable whose colour buffer is such a
+ * memory picture (a store): memory of the device named by `handle`, with
+ * this row length in bytes and byte offset, width x height pixels of 32
+ * bits in the context's format. Nothing is shown on any screen and nothing
+ * is read back; depth, stencil and accumulation buffers are the context's
+ * own. This is a pbuffer.
+ *
+ * The context draws into the store itself: it holds what has been drawn as
+ * soon as the commands have run, and is never half copied. With
+ * OSMESA_STORE_COPY, or when the buffers are multisampled
+ * (OSMesaSetSamples), the context draws elsewhere and the store gets every
+ * finished picture, resolved, when the context is flushed. Either way the
+ * store is complete for every command given to the device after the
+ * context's glFlush has returned (also with glthread), by this context or
+ * any other, and for the CPU after its glFinish; with the copy after a
+ * second glFinish, because the copy follows what the first waits for.
+ *
+ * The row order is OSMESA_STORE_BOTTOM_UP's; `flags` takes that and
+ * OSMESA_STORE_COPY. A store that was drawn in one order looks upside down
+ * to a context bound to it in the other.
+ *
+ * The memory stays the caller's, and the device wants of it what it wants
+ * of any linear render target: a row length that is a multiple of 64
+ * pixels (256 bytes) and an offset that is a multiple of 256 bytes. The
+ * context uses it until it is bound to another drawable or destroyed.
+ * Binding it elsewhere gives the device all that was drawn into the store
+ * and does not wait; a glFinish in the context after that does, and so
+ * does destroying the context. Only then give the memory back, or the last
+ * commands write to whoever has it next. Returns GL_FALSE if the device
+ * does not take the memory as a surface.
+ */
+GLAPI GLboolean APIENTRY
+OSMesaMakeCurrentStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
+                        GLuint offset, GLsizei width, GLsizei height,
+                        GLuint flags );
+
+
+/*
+ * osx-gpu: OSMesaTexStore for a store that is not a window's. `target` is
+ * GL_TEXTURE_2D or GL_TEXTURE_RECTANGLE; the image is level 0 of the
+ * texture bound to it in `ctx`, which must be the calling thread's current
+ * context. With OSMESA_STORE_ALPHA in `flags` the texture has the store's
+ * alpha channel, without it the texture is opaque. The pixels are in the
+ * context's format, as OSMesaMakeCurrentStore draws them (any context of
+ * the same format, sharing or not).
+ *
+ * The store's first row is the texture's row at t = 0. A store drawn with
+ * OSMESA_STORE_BOTTOM_UP is therefore the picture as OpenGL has a texture
+ * image; one with the top row first (a window's) is upside down, and is to
+ * be drawn with t reversed.
+ *
+ * Nothing is copied, then or later: the texture shows what is in the
+ * memory when it is used, so a context that draws into the store must have
+ * been flushed before. There is one level; a GL_TEXTURE_2D needs a
+ * minifying filter without mipmaps to be complete. The texture holds no
+ * claim on the memory. Before the memory is given back, take the image
+ * away with handle 0 (the other arguments are ignored), delete the texture
+ * or give it another image; a texture left with the store samples whatever
+ * the memory holds next, and writes nothing. Textures are shared, so one
+ * context of a share list does this for all.
+ */
+GLAPI GLboolean APIENTRY
+OSMesaTexStoreImage( OSMesaContext ctx, GLenum target, GLuint handle,
+                     GLsizei stride, GLuint offset, GLsizei width,
+                     GLsizei height, GLuint flags );
 
 
 GLAPI void APIENTRY
