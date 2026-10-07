@@ -251,6 +251,16 @@ been planned in detail.
   Duty 2) or with `RDN_VAR=1`. The user played the first map with it ("a
   bit slow but it works"). When a Mac game is slow or runs out of memory
   and its imports show no `glBindBuffer`, this is why.
+- Zero-copy vertex ranges (2026-10-07, journal): the winsys can put a
+  program's own memory behind the GART (`buffer_from_ptr`,
+  `GL_AMD_pinned_memory`; `~/gl/pinned` draws from it, right by readback),
+  and the vertex range code can use that instead of copies ("+Name" in
+  the list, or `RDN_VAR=2`; `~/gl/vartest` tells the modes apart). In
+  Call of Duty 2 it flickers and was never faster than copies; the cause
+  is only partly known (the game reuses memory two frames after drawing
+  from it, and nothing bounds how far its thread runs ahead of the GPU).
+  Off; the G5's list has the game on copies. `RDN_SUBDATA_COPY` and the
+  list also turn on glthread's direct `glBufferSubData` upload.
 - The Tiger device layer binds at most 512 MB behind the GART for one
   program (`GART_MOST_BYTES`): with about 860 MB bound the kext's bind
   call never returned and the process could not be killed (G5 restarted;

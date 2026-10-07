@@ -4183,3 +4183,45 @@ frees, takes and writes 64 MB of other memory, and draws from the freed
 buffer once more: still green. They do.
 
 Installed on the G5; the user's game was still the build before.
+
+## 2026-10-07: zero-copy vertex ranges in Call of Duty 2: not right yet, put back on copies
+
+Three more runs by the user, each with the newest build.
+
+1. With memory taken again noticed at the next draw: "The flickering is
+   gone in the main menu, but it's still visible in the map". 30 to 67
+   frames a second in the map. The log of that run: the game's 2 MB block
+   appears at many addresses, and a freed mirror kept its slot (64 of
+   them) and its pages for as long as one of the game's vertex array
+   objects pointed at it, which is for good; once the slots were gone
+   every new 2 MB block was a copy mirror, copied whole when made (897 MB
+   copied in that run).
+2. The same build with `RDN_GLD_SWAP_FINISH=1` (every swap waits for the
+   GPU), to see whether the game's thread running ahead of the GPU is the
+   rest of it. The user first: "There's no flicker now"; then: "Actually,
+   the main menu has flickering. And there's a couple angles where slight
+   flickering happens anyway". 20 to 40 frames a second in the map. So
+   running ahead is part of it at most, and waiting at every swap costs
+   more than the copies ever did.
+
+The full-screen swap is a `glFlush` that glthread only records
+(`rdn_mesa_present`): nothing makes the game's thread wait for Mesa's or
+for the GPU, and the game takes memory it drew from two frames ago for
+read. A bound that waits at a swap for the frame before the last was
+designed (a job in glthread's queue that only reads the winsys's last
+fence number, so that it touches no context) and not built.
+
+Changed after run 1 and installed, run only in `vartest`: a mirror that
+goes stale gives its pages back at once (`glBufferData` of 4 KB on the
+same object), and there are 1024 slots.
+
+Where it stands: no run of the game without flicker with `RDN_VAR=2`, the
+menu's flicker under `RDN_GLD_SWAP_FINISH=1` is not explained, and no run
+was faster than with copies (55 to 90 in the map). The list on the G5 is
+back to `Call of Duty 2` without the "+": copies. `vartest` with
+`RDN_VAR=1` passes on the installed build. The code stays, off unless
+asked for.
+
+Seen in the last log, in the menu, copies or not: four mirrors of 256
+bytes made every frame (ranges in small malloc blocks at ever new
+addresses) and let go 120 swaps later, 1024 at a time.

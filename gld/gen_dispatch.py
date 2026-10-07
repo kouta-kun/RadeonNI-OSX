@@ -226,7 +226,7 @@ struct var_mirror {
 	 * No copy: the buffer object is over the program's memory itself
 	 * (GL_AMD_pinned_memory), and `user` is its place in var_user + 1.
 	 */
-	unsigned char user;
+	unsigned short user;
 	unsigned char gone;	/* let go, but a vertex array object still has it */
 	unsigned char stale;	/* the program freed the memory it was over */
 	unsigned used;		/* var_swaps when last flushed or pointed into */
@@ -369,7 +369,7 @@ static struct var_mirror *var_find(const char *ptr, size_t len)
  * Open: nothing bounds how far the GPU is behind, and the game takes a
  * fence two frames old for finished without asking.
  */
-#define VAR_USERS 64
+#define VAR_USERS 1024
 #define VAR_USER_LEAST 65536
 static struct {
 	volatile vm_address_t base;
@@ -483,8 +483,20 @@ static void var_reap(void)
 
 		if (m->user && var_user[m->user - 1].freed) {
 			var_user[m->user - 1].freed = 0;
-			m->stale = 1;
 			var.freed++;
+			if (m->stale)
+				continue;
+			m->stale = 1;
+			/*
+			 * The buffer object lets go of the freed pages (once
+			 * the GPU has drawn from them): the game's vertex
+			 * array objects keep the object itself for good, and
+			 * an address malloc does not come back to would keep
+			 * 2 MB wired each.
+			 */
+			m_bind_buffer(0x8892, m->buffer);
+			m_buffer_data(0x8892, 4096, NULL, 0x88E8);
+			m_bind_buffer(0x8892, 0);
 		}
 	}
 }
@@ -554,7 +566,7 @@ static void var_remove(struct var_mirror *m)
  * A buffer object over the block itself, if this program is to have such
  * and the block allows it. 0 if not; the caller makes a copy then.
  */
-static GLuint var_pin(const char *base, size_t size)
+static GLuint var_pin(const char *base, size_t size, unsigned short *user)
 {
 	static int have = -1;
 	GLuint buffer = 0;
@@ -609,7 +621,8 @@ static GLuint var_pin(const char *base, size_t size)
 	var_user[slot].freed = 0;
 	var_user[slot].taken = 0;
 	var_user[slot].base = (vm_address_t)base;
-	return buffer | ((GLuint)(slot + 1) << 24);
+	*user = slot + 1;
+	return buffer;
 }
 
 /* Fences, when the GPU reads the program's memory. */
@@ -681,10 +694,7 @@ static struct var_mirror *var_create(void *ctx, const char *ptr, size_t len)
 	m->base = base;
 	m->size = size;
 	m->used = var_swaps;
-	if (block && (m->buffer = var_pin(base, size)) != 0) {
-		m->user = m->buffer >> 24;
-		m->buffer &= 0xffffff;
-	} else {
+	if (!block || !(m->buffer = var_pin(base, size, &m->user))) {
 		m->shadow = malloc(size);
 		if (m->shadow)
 			memcpy(m->shadow, base, size);
