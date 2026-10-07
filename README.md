@@ -2,11 +2,20 @@
 
 RadeonNI-OSX is a project aiming to enable the usage of modern(-ish) cards on OS X 10.4 PowerPC machines. Specifically, the Radeon HD 7570 (Turks PRO-L, TeraScale 2) on the PowerMac G5.
 
-This project is vibecoded, meatproxied and any other AI slur you can think of. I am not responsible if your G5 explores, your HD 7570 breaks your display, or any other property or bodily harm arising from the usage of this project.
+This project is vibecoded, meatproxied and any other AI slur you can think of. I am not responsible if your G5 explodes, your HD 7570 breaks your display, or any other property or bodily harm arising from the usage of this project.
 
 # Usage
 
 WIP, check g5/README.txt. Compilation requires an OS X 10.4.11 installation with XCode 2.5. I will provide a build at some point.
+
+# What it actually is
+
+RadeonNI-OSX is a project that is composed of a couple of things:
+
+1. A hardware interface for the Radeon HD 7570 (could be compatible with other Turks and TeraScale 2 cards after a bit of fiddling) that implements card initialization, power management, command processing, video memory handling, and output framebuffer + a .kext that consumes it and provides an IOFramebuffer and an IOAccelerator. Ported from Linux's radeon driver.
+2. Patches for Mesa, a winsys that replaces Linux DRM and shims for Tiger compatibility that allow the r600 driver to run under OS X and communicate with the GPU using the aforementioned hardware interface.
+3. An OpenGL Driver bundle that dispatches every OpenGL call to Mesa.
+4. A 2D accelerator plugin that enables Quartz Extreme. Currently a CPU-only stub.
 
 # Development stages
 
@@ -26,7 +35,7 @@ After this was possible from within emulated OS X, the next step was to develop 
 
 Once display output was working, the next step was to ask Claude to port Mesa over to it. Why Mesa? It's MIT, uses well-isolated modules, and most importantly has the r600 driver with proven support for this card, which I'd already used under ArchPOWER on a big endian system.
 
-Claude took the r600 driver from Mesa, vendored it into the project, and developed two ends to this integration, a hardware interface that allows r600 to communicate with the GPU through PCIe (for command submission, etc) and a (currently in development) IOAccelerator implementation that passes through every OpenGL to Mesa. This worked, but did not support Quartz Extreme and essentially functioned by using OSMesa to render and then asking the CPU to copy over to the framebuffer. After some development Quartz Extreme seems to work correctly (no trails, OpenGL windowed and fullscreen works). A couple of games have been tested:
+Claude took the r600 driver from Mesa, patched it for Tiger compatibility, and developed two ends to this integration, a hardware interface that allows r600 to communicate with the GPU through PCIe (for command submission, etc) and a (currently in development) IOAccelerator implementation that passes through every OpenGL to Mesa. This worked, but did not support Quartz Extreme and essentially functioned by using OSMesa to render and then asking the CPU to copy over to the framebuffer. After some development Quartz Extreme seems to work correctly (no trails, OpenGL windowed and fullscreen works). A couple of games have been tested:
 
 |   Game      |  State  |
 | ----------- | ------- |
