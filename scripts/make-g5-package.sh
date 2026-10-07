@@ -11,9 +11,11 @@
 # The command processor's microcode (AMD's, redistributable in binary form)
 # is always packed, with its licence LICENSE.radeon;
 # scripts/fetch-firmware.sh gets it if firmware/ does not have it.
-# --with-vbios also packs private/vbios.rom, so that install.sh needs no
-# argument. The VBIOS belongs to the card's vendor: a package built that
-# way is for your own machine, not for publishing.
+# The driver reads the VBIOS from the card's ROM, so the package needs no
+# image. --with-vbios also packs private/vbios.rom, which install.sh then
+# stores in the kext for when the ROM cannot be read. The VBIOS belongs to
+# the card's vendor: a package built that way is for your own machine, not
+# for publishing.
 
 set -euo pipefail
 

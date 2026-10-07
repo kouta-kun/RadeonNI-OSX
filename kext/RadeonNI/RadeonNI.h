@@ -135,7 +135,9 @@ private:
 	struct rdn_lut_entry fGamma[256];
 
 	bool loadBios();
-	void compareRom(const char *when);
+	bool biosFromRom();
+	bool biosFromPersonality();
+	void compareWithPersonality();
 	bool bringUp();
 	const struct rdn_mode *modeForID(IODisplayModeID id);
 	void describeFb(const struct rdn_mode *mode, IOIndex depth,

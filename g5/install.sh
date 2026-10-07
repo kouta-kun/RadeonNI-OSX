@@ -4,10 +4,11 @@
 #
 #   sudo ./install.sh [--accel] [--hwcursor] [vbios.rom]
 #
-# Run it from the unpacked package directory, on the Mac itself. It needs
-# the VBIOS image of the card: the kext does not read the card's ROM yet, so
-# the image is stored in the kext's Info.plist. Without an argument the
-# script looks for vbios.rom next to itself.
+# Run it from the unpacked package directory, on the Mac itself. The driver
+# reads the VBIOS from the card's own ROM. A VBIOS image of the card, given
+# as an argument or found as vbios.rom next to this script, is stored in the
+# kext's Info.plist and used only if the ROM cannot be read; without one the
+# script checks that Open Firmware gave the card's ROM an address.
 #
 # Without options the driver is a plain framebuffer. --accel also starts
 # the card's 3D engine at boot, for OpenGL and Quartz Extreme; that needs
@@ -33,20 +34,21 @@ fail() { echo "install.sh: $*" >&2; exit 1; }
 
 accel=0
 hwcursor=0
-vbios=$here/vbios.rom
+vbios=
+[ ! -f "$here/vbios.rom" ] || vbios=$here/vbios.rom
 for arg in "$@"; do
     case "$arg" in
     --accel) accel=1 ;;
     --hwcursor) hwcursor=1 ;;
     -*) fail "unknown option $arg" ;;
-    *) vbios=$arg ;;
+    *) vbios=$arg
+       [ -f "$vbios" ] || fail "VBIOS image not found: $vbios" ;;
     esac
 done
 [ "$hwcursor" = 0 ] || [ "$accel" = 1 ] || fail "--hwcursor needs --accel"
 
 [ "$(id -u)" = 0 ] || fail "run as root: sudo ./install.sh [vbios.rom]"
 [ -d "$here/$KEXT" ] || fail "$KEXT not found next to this script"
-[ -f "$vbios" ] || fail "VBIOS image not found: $vbios"
 
 case "$(sw_vers -productVersion)" in
 10.4*) ;;
@@ -55,15 +57,17 @@ esac
 [ "$(uname -p)" = powerpc ] || fail "this kext is PowerPC only"
 
 # A PCI option ROM starts with 55 AA and states its length in 512-byte units.
-sig=$(od -A n -t x1 -N 3 "$vbios" | tr -d ' \n')
-case "$sig" in
-55aa*) ;;
-*) fail "$vbios does not start with the option ROM signature 55 AA" ;;
-esac
-blocks=$(printf '%d' "0x$(echo "$sig" | cut -c5-6)")
-size=$(wc -c < "$vbios" | tr -d ' ')
-[ "$size" -ge $((blocks * 512)) ] || fail "$vbios is truncated: $size bytes, header says $((blocks * 512))"
-strings "$vbios" | grep -q ATOMBIOS || fail "$vbios has no ATOMBIOS marker"
+if [ -n "$vbios" ]; then
+    sig=$(od -A n -t x1 -N 3 "$vbios" | tr -d ' \n')
+    case "$sig" in
+    55aa*) ;;
+    *) fail "$vbios does not start with the option ROM signature 55 AA" ;;
+    esac
+    blocks=$(printf '%d' "0x$(echo "$sig" | cut -c5-6)")
+    size=$(wc -c < "$vbios" | tr -d ' ')
+    [ "$size" -ge $((blocks * 512)) ] || fail "$vbios is truncated: $size bytes, header says $((blocks * 512))"
+    strings "$vbios" | grep -q ATOMBIOS || fail "$vbios has no ATOMBIOS marker"
+fi
 
 if [ "$accel" = 1 ]; then
     for f in TURKS_pfp.bin TURKS_me.bin; do
@@ -75,11 +79,38 @@ if [ "$accel" = 1 ]; then
     done
 fi
 
-if ioreg -p IODeviceTree | grep -q 'pci1002,675d'; then
-    echo "Found the Radeon HD 7570 (1002:675d)."
-else
+# The card in the device tree. Its node may be named after the subsystem
+# ID, so it is found by its "compatible" list. Open Firmware lists the
+# addresses it assigned, five words for each; the low byte of the first
+# word is the register, and 0x30 is the ROM's.
+card=$(ioreg -p IODeviceTree -l -w0 2>/dev/null | perl -ne '
+    if (/\+-o /) { $compat = $assigned = ""; }
+    $compat = $1 if /"compatible" = <(.*)>/;
+    $assigned = $1 if /"assigned-addresses" = <([0-9a-f]*)>/;
+    if (/^[\s|]*\}/ && $compat =~ /"pci1002,675d"/) {
+        $found = 1;
+        for ($i = 0; $i + 40 <= length($assigned); $i += 40) {
+            $rom = 1 if hex(substr($assigned, $i + 6, 2)) == 0x30;
+        }
+        $compat = "";
+    }
+    END { print $found ? ($rom ? "rom" : "norom") : "absent"; }
+')
+case "$card" in
+rom)
+    echo "Found the Radeon HD 7570 (1002:675d); its ROM has an address." ;;
+norom)
+    echo "Found the Radeon HD 7570 (1002:675d); Open Firmware gave its ROM no address."
+    [ -n "$vbios" ] || fail "the driver cannot read the card's ROM on this Mac: give a VBIOS image of the card (sudo ./install.sh /path/to/vbios.rom)" ;;
+*)
     echo "Note: no device 1002:675d in the device tree right now."
     echo "      The kext will be installed but will only load when that card is present."
+    [ -n "$vbios" ] || echo "      Without a VBIOS image it will only start if it can read the card's ROM." ;;
+esac
+if [ -n "$vbios" ]; then
+    echo "VBIOS image $vbios: kept in the kext for when the ROM cannot be read."
+else
+    echo "No VBIOS image: the driver reads the card's ROM."
 fi
 
 tmp=/tmp/RadeonNI-install.$$
@@ -87,19 +118,23 @@ rm -rf "$tmp"
 mkdir "$tmp"
 cp -R "$here/$KEXT" "$tmp/"
 
-# Put the image into the driver's personality as a base64 <data> property.
+# Put the image, if there is one, into the driver's personality as a base64
+# <data> property, and the options with it.
 perl -MMIME::Base64 -e '
     my ($plist, $rom, $accel, $hwcursor, $dir) = @ARGV;
     local $/;
     open(my $p, "<", $plist) or die "$plist: $!";
     my $text = <$p>;
     close($p);
-    open(my $r, "<", $rom) or die "$rom: $!";
-    binmode($r);
-    my $data = encode_base64(<$r>, "");
-    close($r);
     $text =~ s{\s*<key>VBIOS</key>\s*<data>.*?</data>}{}s;
-    my $extra = "\t\t\t<key>VBIOS</key>\n\t\t\t<data>$data</data>\n";
+    my $extra = "";
+    if ($rom ne "") {
+        open(my $r, "<", $rom) or die "$rom: $!";
+        binmode($r);
+        my $data = encode_base64(<$r>, "");
+        close($r);
+        $extra = "\t\t\t<key>VBIOS</key>\n\t\t\t<data>$data</data>\n";
+    }
     if ($accel) {
         # The keys scripts/kext.sh adds for Quartz Extreme under QEMU.
         $extra .= "\t\t\t<key>Accelerator</key>\n\t\t\t<true/>\n";
@@ -173,7 +208,8 @@ cat <<'MSG'
 
 Installed /System/Library/Extensions/RadeonNI.kext.
 Restart the Mac. The driver starts at boot when it finds the card; its
-messages are in the kernel log:  sudo dmesg | grep RadeonNI
+messages, with where it took the VBIOS from, are in the system log:
+  grep RadeonNI /var/log/system.log
 
 If the Mac does not finish booting with the driver installed:
   - hold Shift while it starts (Safe Boot does not load third-party

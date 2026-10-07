@@ -12,6 +12,7 @@ Contents
   install.sh      installs them into /System/Library/Extensions
   uninstall.sh    removes it
   vbios.rom       the card's VBIOS image, if the package was built with it
+                  (a fallback only, see below)
   TURKS_*.bin     the card's microcode, (C) Advanced Micro Devices, Inc.,
                   distributed unmodified under LICENSE.radeon
   LICENSE.radeon  the microcode's licence; keep it with the two files
@@ -22,8 +23,14 @@ Install
   3. sudo ./install.sh            (or: sudo ./install.sh /path/to/vbios.rom)
   4. Restart.
 
-The VBIOS image is required because the driver does not read the card's own
-ROM yet. It must be the image of the card that is in the Mac.
+The driver takes the VBIOS from the card's own ROM; no file is needed. A
+VBIOS image file is a fallback: given to install.sh, or present in this
+folder as vbios.rom, it is kept inside the driver and used only if the ROM
+cannot be read. It must be the image of the card that is in the Mac. The
+system log says where the VBIOS came from and, when there is a file too,
+whether the two are the same:  grep RadeonNI /var/log/system.log
+install.sh refuses to install without a file on a Mac whose Open Firmware
+gave the card's ROM no address.
 
 Acceleration (experimental)
   sudo ./install.sh --accel       (add --hwcursor for the hardware cursor)
@@ -70,6 +77,10 @@ leaves all this off if that fails. To leave it off yourself:
 If the desktop does not come up after an install, start the Mac with
 that argument (in Open Firmware: setenv boot-args rdn_gart=0) and tell
 us.
+
+To make the driver leave the card's ROM alone and use the VBIOS image
+install.sh was given (it does not start if there was none):
+  rdn_rom=0          do not read the card's ROM
 
 Mesa's work for each OpenGL call is done on the second processor (Mesa's
 "glthread") for every program except the window server. To change that
