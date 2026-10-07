@@ -248,9 +248,15 @@ been planned in detail.
   with buffer objects that mirror the program's memory
   (`gld/gen_dispatch.py`, `VAR_HELP`), for the programs named in
   `/Library/Application Support/RadeonNI/vertexrange` (on the G5: Call of
-  Duty 2) or with `RDN_VAR=1`. The user played the first map with it ("a
-  bit slow but it works"). When a Mac game is slow or runs out of memory
-  and its imports show no `glBindBuffer`, this is why.
+  Duty 2) or with `RDN_VAR=1`. The user played the first map with it, 55
+  to 90 frames a second at 1920x1080, and confirmed the last flicker gone.
+  The game does not flush what it rewrites when it draws through a vertex
+  array object it already has, so before such a draw the bundle compares
+  the object's range with its copy again, for memory a flush has found
+  changed or in a block malloc has freed or handed out since (the bundle
+  replaces the default malloc zone's functions to see that). When a Mac
+  game is slow or runs out of memory and its imports show no
+  `glBindBuffer`, this is why.
 - Zero-copy vertex ranges (2026-10-07, journal): the winsys can put a
   program's own memory behind the GART (`buffer_from_ptr`,
   `GL_AMD_pinned_memory`; `~/gl/pinned` draws from it, right by readback),

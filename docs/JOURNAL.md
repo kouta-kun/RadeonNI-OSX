@@ -4271,3 +4271,11 @@ draw the mirrors that overlap one are marked as changing
 that happens. A buffer rewritten in place with neither a flush nor a free
 is still not seen. Tests as before. Installed on the G5; the game that was
 running is the build before.
+
+## 2026-10-07: Call of Duty 2, copy mode: the menu's flicker gone
+
+The user, after playing the map and going back to the menu with the build
+that marks mirrors in blocks malloc has moved: "It seems to be gone".
+That build (bundle md5 4555f6d9f8777c8a199997979bb6d047) is the one on the
+G5, with `Call of Duty 2` in the vertex range list (copies). The bundle
+from before this work on the game is `~/RadeonNIGLDriver.wow5` there.
