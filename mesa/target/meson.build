@@ -18,6 +18,7 @@ else
     'hw/rdn_mem.c',
     'hw/rdn_gpu.c',
     'hw/rdn_cp.c',
+    'hw/rdn_blit.c',
     'hw/rdn_selftest.c',
   )
   rdn_device_link_args = []

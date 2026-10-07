@@ -278,9 +278,17 @@ IOReturn RadeonNISurfaceClient::setShape(UInt32 options, UInt32 fbIndex,
 	return kIOReturnSuccess;
 }
 
+/*
+ * The window server's way of showing a surface's new picture when it need
+ * not draw the window again itself. There is one screen: bit 0 of the mask.
+ */
 IOReturn RadeonNISurfaceClient::flush(UInt32 fbMask, UInt32 options)
 {
-	note("flush", fbMask, options, 0, 0);
+	IOReturn ret = kIOReturnSuccess;
+
+	if (fAccel && fWid && (fbMask & 1))
+		ret = fAccel->flushSurface(fWid);
+	note("flush", fbMask, options, ret, 0);
 	return kIOReturnSuccess;
 }
 
