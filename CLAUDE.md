@@ -219,8 +219,8 @@ been planned in detail.
   reaches its menu. The second needed the vertex program half of
   `GL_ARB_vertex_blend`, which Mesa lacks and Mac programs use without
   asking; the bundle maps it to generic attribute 1
-  (`gld/gen_dispatch.py`, `WEIGHT`). Its login screen is right; the world
-  has not been seen. With `RDN_GLD_LOG` the bundle logs every ARB
+  (`gld/gen_dispatch.py`, `WEIGHT`). Confirmed by the user in the world;
+  Call of Duty 2 past its menu has not been seen. With `RDN_GLD_LOG` the bundle logs every ARB
   program's text and Mesa's error, and which entries Mesa lacks a program
   calls ("kept:"): look there first when a game misses draws.
   `RDN_GLD_KEPT=first-last` wraps only some of those entries.
@@ -232,8 +232,9 @@ been planned in detail.
   lacks its two functions, and the game looks them up in the framework's
   bundle by name. The bundle answers that lookup itself (a second hook in
   `gld/rdn_hook.c`), has the functions and names the extension for every
-  program but the window server: 165 frames a second there, by readback;
-  the world not seen. `RDN_NO_FLUSHRANGE=1` turns it off.
+  program but the window server: 165 frames a second there, and the user
+  confirmed the world ("It all looks good"). `RDN_NO_FLUSHRANGE=1` turns
+  it off.
   `RDN_MAPBUFFER=discard|unsync` (or a line in
   `/Library/Application Support/RadeonNI/mapbuffer`) makes every
   `glMapBuffer(GL_WRITE_ONLY)` not wait, for programs without the

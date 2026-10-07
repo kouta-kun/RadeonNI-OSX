@@ -3887,3 +3887,10 @@ program but the window server gets the extension in its list
 (`~/gl/glext` shows it). Bundle 70946417 on the G5. Not seen: the world.
 Only buffers the game marks skip the wait; its other maps wait as before.
 The library of steps 1 and 2 is not kept.
+
+## 2026-10-07 — World of Warcraft confirmed by the user
+
+With bundle 70946417 and nothing set, started normally, in the world:
+"It all looks good". So the vertex blend mapping and
+`GL_APPLE_flush_buffer_range` are confirmed on the monitor for this game.
+Call of Duty 2 past its menu is still unseen.
