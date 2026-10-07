@@ -135,6 +135,9 @@ static int surface_direct(void);
 void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
 long rdn_async_limit, rdn_async_piece;
+int rdn_flush_waits;
+/* The context being made current runs with glthread. */
+static int glthread;
 
 /*
  * How the entry points hand large buffer data to this context (see
@@ -144,13 +147,17 @@ long rdn_async_limit, rdn_async_piece;
 static void async_data(OSMesaContext mesa)
 {
 	static int split = -1;
-	long limit;
+	long limit = OSMesaAsyncDataLimit(mesa);
 
 	if (split < 0)
 		split = getenv("RDN_GLD_NO_SPLIT") == NULL;
-	limit = split ? OSMesaAsyncDataLimit(mesa) : 0;
+	glthread = limit > 0;
+	if (!split)
+		limit = 0;
 	rdn_async_limit = limit;
 	rdn_async_piece = limit / 2;
+	/* Until the drawable turns out to be memory (rdn_make_current). */
+	rdn_flush_waits = 0;
 }
 
 /*
@@ -719,6 +726,7 @@ void rdn_make_current(void *rend)
 	c->drawable = d;
 	c->bound = 1;
 	c->nowhere = 0;
+	rdn_flush_waits = glthread;
 	rdn_current_rend = rend;
 }
 

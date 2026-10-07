@@ -61,20 +61,12 @@ sudo nvram boot-args="..." and a restart:
   rdn_mc=0           do not load the memory controller's microcode
                      (the memory clock then stays as it is)
 
-Games limited by the processor can have Mesa's work done on the second
-processor (Mesa's "glthread"). It is tried with few programs, so it is
-off except for those named, one a line, in the text file
+Mesa's work for each OpenGL call is done on the second processor (Mesa's
+"glthread") for every program except the window server. To change that
+for one program, name it on a line of the text file
   /Library/Application Support/RadeonNI/glthread
-by the name the system has for the program (as in Activity Monitor: for
-example Quake3, or Doom 3 Demo); a line with * means every program.
-RDN_GLTHREAD=1 or =0 in a program's environment overrides the file.
-
-Programs are told which OpenGL extensions the card has by a list the
-driver makes itself (Mesa's own comes out wrong on this system: it left
-out vertex programs, two-sided stencil and compressed textures, and
-Doom 3 drew the slow way for it). The window server alone still gets
-Mesa's list, because the desktop has only been seen with that one. To
-give it the true list too, make the empty file
-  /Library/Application Support/RadeonNI/true-extensions
-and restart; remove the file to go back. RDN_EXTENSIONS=mesa in a
-program's environment gives that program Mesa's list.
+by the name the system has for it (as in Activity Monitor: Quake3,
+Doom 3 Demo, WindowServer): the name alone turns it on, the name with a
+minus before it (-Quake3) turns it off; * and -* stand for every program
+the file does not name. RDN_GLTHREAD=1 or =0 in a program's environment
+overrides the file.

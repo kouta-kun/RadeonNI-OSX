@@ -1,0 +1,24 @@
+osx-gpu: read the extension flags as the bytes they are
+
+_mesa_extension_supported() reads struct gl_extensions, whose members are
+GLboolean (one byte), through a pointer to bool. On 32-bit Darwin PowerPC
+bool has four bytes, so flag n was looked for at byte 4n: the list of
+extensions a program got (glGetString, glGetStringi, GL_NUM_EXTENSIONS) had
+14 the context lacks and lacked 87 it has, GL_ARB_vertex_program among
+them. Mesa's own decisions were not affected: they ask each flag by name.
+
+diff --git a/src/mesa/main/extensions.c b/src/mesa/main/extensions.c
+--- a/src/mesa/main/extensions.c
++++ b/src/mesa/main/extensions.c
+@@ -316,7 +316,10 @@
+ static inline bool
+ _mesa_extension_supported(const struct gl_context *ctx, extension_index i)
+ {
+-   const bool *base = (bool *) &ctx->Extensions;
++   /* GLboolean, as the members of struct gl_extensions are, not bool:
++    * bool has four bytes on 32-bit Darwin PowerPC, and the offset is in
++    * bytes. */
++   const GLboolean *base = (const GLboolean *) &ctx->Extensions;
+    const struct mesa_extension *ext = _mesa_extension_table + i;
+ 
+    return (ctx->Version >= ext->version[ctx->API]) && base[ext->offset];

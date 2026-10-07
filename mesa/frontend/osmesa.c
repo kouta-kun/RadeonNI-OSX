@@ -66,11 +66,9 @@
 #include "GL/osmesa.h"
 
 #include <stdio.h>
-#include <unistd.h>
 #include <c11/threads.h>
 
 #include "state_tracker/st_context.h"
-#include "main/extensions.h"
 #include "main/glthread.h"
 
 #include "glapi/glapi/glapi.h"  /* for OSMesaGetProcAddress below */
@@ -749,11 +747,30 @@ osmesa_sync(OSMesaContext osmesa)
 }
 
 /*
- * Which programs run with glthread. RDN_GLTHREAD in the environment
- * decides if it is set (0: no, anything else: yes). Otherwise the file
- * RDN_GLTHREAD_LIST does: a program is in if a line of it is the
- * program's name as the system has it (Quake3, Doom 3 Demo), or "*".
- * No file, no glthread: it has only been tried with a few programs.
+ * The same before `osmesa` becomes the calling thread's context: the one
+ * that stops being it must have run everything it was told, as a change
+ * of context means to a program.
+ */
+static void
+osmesa_sync_switch(OSMesaContext osmesa)
+{
+   OSMesaContext current = OSMesaGetCurrentContext();
+
+   if (current != osmesa)
+      osmesa_sync(current);
+   osmesa_sync(osmesa);
+}
+
+/*
+ * Which programs run with glthread: all of them but the window server,
+ * which finishes every update before it goes on and so has nothing to
+ * gain, and whose failure costs the desktop.
+ *
+ * RDN_GLTHREAD in a program's environment decides for it (0: no, anything
+ * else: yes). Otherwise the file RDN_GLTHREAD_LIST may, a program a line:
+ * the program's name as the system has it (Quake3, Doom 3 Demo,
+ * WindowServer) turns glthread on for it, the name with a minus before it
+ * turns it off; "*" and "-*" stand for every program not named.
  */
 #define RDN_GLTHREAD_LIST "/Library/Application Support/RadeonNI/glthread"
 
@@ -762,103 +779,35 @@ osmesa_want_glthread(void)
 {
    const char *env = getenv("RDN_GLTHREAD");
    const char *name = util_get_process_name();
+   int named = -1, all = -1;
    char line[256];
-   bool want = false;
    FILE *f;
 
    if (env)
       return strcmp(env, "0") != 0;
    f = fopen(RDN_GLTHREAD_LIST, "r");
-   if (!f)
-      return false;
-   while (!want && fgets(line, sizeof(line), f)) {
-      size_t n = strcspn(line, "\r\n");
+   if (f) {
+      while (fgets(line, sizeof(line), f)) {
+         const char *who = line;
+         bool on = true;
 
-      line[n] = 0;
-      want = !strcmp(line, "*") || (name && !strcmp(line, name));
-   }
-   fclose(f);
-   return want;
-}
-
-/*
- * The list of extensions a program reads with glGetString().
- *
- * Mesa finds out which extensions a context has by reading a structure of
- * one-byte flags (struct gl_extensions) through a pointer to bool
- * (_mesa_extension_supported() in extensions.c). bool has four bytes on
- * 32-bit Darwin PowerPC, so there every flag is looked for at four times
- * its distance, and the list a program gets has little to do with what the
- * context can do: on the Radeon it lacked GL_ARB_vertex_program,
- * GL_ARB_vertex_shader and GL_EXT_stencil_two_side, which the context has
- * and which Mesa itself, asking each flag by name, knows it has. Doom 3
- * then draws with the fixed-function path it keeps for a GeForce 256.
- *
- * This makes the list the way Mesa means to, in Mesa's order (by year,
- * then by name), and puts it where glGetString() looks before it makes
- * its own. glGetStringi() and GL_NUM_EXTENSIONS still go the wrong way;
- * they agree with each other, and programs of Tiger's time do not use
- * them.
- */
-static int
-osmesa_extension_compare(const void *a, const void *b)
-{
-   const struct mesa_extension *ea = *(const struct mesa_extension *const *)a;
-   const struct mesa_extension *eb = *(const struct mesa_extension *const *)b;
-   int d = (int)ea->year - (int)eb->year;
-
-   return d ? d : strcmp(ea->name, eb->name);
-}
-
-static void
-osmesa_extension_string(struct gl_context *ctx)
-{
-   const GLboolean *have = (const GLboolean *)&ctx->Extensions;
-   const struct mesa_extension *list[MESA_EXTENSION_COUNT];
-   unsigned count = 0, i;
-   size_t length = 1;
-   char *s, *p;
-
-   for (i = 0; i < MESA_EXTENSION_COUNT; i++) {
-      const struct mesa_extension *e = &_mesa_extension_table[i];
-
-      if (ctx->Version >= e->version[ctx->API] && have[e->offset]) {
-         list[count++] = e;
-         length += strlen(e->name) + 1;
+         line[strcspn(line, "\r\n")] = 0;
+         if (*who == '-') {
+            on = false;
+            who++;
+         }
+         if (!strcmp(who, "*"))
+            all = on;
+         else if (name && !strcmp(who, name))
+            named = on;
       }
+      fclose(f);
    }
-   s = malloc(length);
-   if (!s)
-      return;
-   qsort(list, count, sizeof(list[0]), osmesa_extension_compare);
-   for (p = s, i = 0; i < count; i++)
-      p += sprintf(p, "%s ", list[i]->name);
-   *p = 0;
-   /* Mesa frees it with the context. */
-   free((void *)ctx->Extensions.String);
-   ctx->Extensions.String = (const GLubyte *)s;
-}
-
-/*
- * Who gets the true list: every program, unless RDN_EXTENSIONS=mesa is in
- * its environment (Mesa's own list then, to compare). The window server
- * has only ever been seen with Mesa's list and what it does with another
- * one is not known, so it keeps that until the file RDN_EXTENSIONS_FILE
- * exists.
- */
-#define RDN_EXTENSIONS_FILE "/Library/Application Support/RadeonNI/true-extensions"
-
-static bool
-osmesa_true_extensions(void)
-{
-   const char *env = getenv("RDN_EXTENSIONS");
-   const char *name = util_get_process_name();
-
-   if (env)
-      return strcmp(env, "mesa") != 0;
-   if (name && !strcmp(name, "WindowServer"))
-      return access(RDN_EXTENSIONS_FILE, F_OK) == 0;
-   return true;
+   if (named >= 0)
+      return named;
+   if (all >= 0)
+      return all;
+   return !name || strcmp(name, "WindowServer") != 0;
 }
 
 GLAPI OSMesaContext GLAPIENTRY
@@ -1024,9 +973,6 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 
    osmesa->st->frontend_context = osmesa;
 
-   if (osmesa_true_extensions())
-      osmesa_extension_string(osmesa->st->ctx);
-
    /*
     * Two processors: let the second one do Mesa's work for each call
     * (state validation, the draws) while the program goes on.
@@ -1091,7 +1037,7 @@ GLAPI GLboolean GLAPIENTRY
 OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
                   GLsizei width, GLsizei height)
 {
-   osmesa_sync(osmesa);
+   osmesa_sync_switch(osmesa);
    enum pipe_format color_format;
 
    if (!osmesa && !buffer) {
@@ -1332,7 +1278,7 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
                          GLsizei stride, GLuint offset, GLint x, GLint y,
                          GLsizei width, GLsizei height)
 {
-   osmesa_sync(osmesa);
+   osmesa_sync_switch(osmesa);
    enum pipe_format color_format;
    struct osmesa_buffer *osbuffer;
 

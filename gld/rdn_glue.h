@@ -59,6 +59,13 @@ extern int rdn_origin_x, rdn_origin_y;
  * pieces of rdn_async_piece bytes instead. 0: nothing to do.
  */
 extern long rdn_async_limit, rdn_async_piece;
+/*
+ * The current context runs with glthread and its picture is copied to
+ * memory the program or the engine reads (an off-screen drawable, a
+ * window that is no surface). There glFlush must not return before the
+ * copy is made, which with glthread only glFinish does.
+ */
+extern int rdn_flush_waits;
 
 /* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
 extern int rdn_trace;
