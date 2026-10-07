@@ -324,9 +324,12 @@ framebuffer write is then trapped and the desktop takes minutes to draw.
 The package holds the kext as built in the guest, `install.sh`,
 `uninstall.sh`, a README and, with `--with-vbios`, the VBIOS dump (leave it
 out of anything published). On the Mac: unpack, `sudo ./install.sh`,
-restart. `install.sh` puts the VBIOS into the kext's Info.plist, validates
-the kext with `kextload -t -n`, copies it to `/System/Library/Extensions`
-and invalidates the extension caches.
+restart. The kext reads the VBIOS from the card's ROM (2026-10-06), so the
+dump is not needed; if one is there, `install.sh` puts it into the kext's
+Info.plist as the fallback. Without one it checks in the device tree that
+Open Firmware gave the ROM an address and refuses to install if not. It
+validates the kext with `kextload -t -n`, copies it to
+`/System/Library/Extensions` and invalidates the extension caches.
 
 Rehearsed in the guest on 2026-10-04: after `install.sh` and a restart the
 kext loaded at boot, cold-POSTed the card and the window server used the

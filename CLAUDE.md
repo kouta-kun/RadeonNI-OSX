@@ -208,6 +208,14 @@ been planned in detail.
   performance clocks and the memory controller's microcode, the GART,
   glthread for every program but the window server, the true extension
   list. The G5 has no boot arguments and no switch files that matter.
+- The VBIOS comes from the card's ROM (2026-10-06, journal): on the G5
+  the kext reads the expansion ROM at start, before POST, and the Mac
+  runs with no VBIOS file installed (the kext's `Info.plist` there has no
+  `VBIOS` key; the last kext that carried one is `~/RadeonNI.kext.before-rom`
+  on the G5). The ROM's 64 KB equal `private/vbios.rom`. A file given to
+  `install.sh` is the fallback, tried with `rdn_rom=0`. Under QEMU the
+  file is still the only source. Never happened, so never run: a ROM that
+  does not answer or fails its checksum.
 - The guest currently has `RadeonNIGLDriver.bundle` and
   `RadeonNIGA.plugin` installed in `/System/Library/Extensions`; the
   snapshots do not. They are inert unless the kext is loaded with
@@ -363,11 +371,14 @@ Keep these current as part of the work, and commit small and often.
   with the Quartz Extreme personality `kext.sh` uses under QEMU, plus the
   bundle and the plug-in; without options, phase 1's. The installer's
   bundle and plug-in step has not run anywhere yet.
-- `rdn_romtest=1` as a boot argument on the G5 (`sudo nvram
-  boot-args="rdn_romtest=1"`): the kext reads the expansion ROM and logs
-  whether it equals the injected VBIOS, before and after bringing the
-  card up; it uses nothing of it. Not run yet. Step one of dropping the
-  VBIOS file.
+- `rdn_rom=0` as a boot argument (`sudo nvram boot-args="rdn_rom=0"`):
+  the kext leaves the card's ROM alone and uses the VBIOS image in its
+  personality; it does not start if `install.sh` was given none.
+- `kext/RomProbe`: a kext to load by hand on a running Mac (`make` on
+  Tiger, `kextload` from a root-owned copy, `kextunload -b
+  org.osxgpu.driver.RadeonNIRomProbe`). It reads the card's whole ROM BAR
+  and publishes it as the property `ROM` of its registry entry (`ioreg -c
+  RadeonNIRomProbe -l -w0`), without touching the driver.
 
 ## Architecture
 
@@ -387,9 +398,13 @@ Keep these current as part of the work, and commit small and often.
   the milestone 2 front end.
 - `kext/RadeonNI/` is the Tiger kext, built in the guest by a plain Makefile
   (no Xcode project) that compiles `hw/` into it unchanged. `compat/` holds
-  the two standard headers Kernel.framework lacks. The VBIOS reaches it as a
-  `VBIOS` data property injected into the personality by `scripts/kext.sh
-  load`; it is never part of the built bundle or the repository.
+  the two standard headers Kernel.framework lacks. It reads the VBIOS from
+  the card's expansion ROM (`biosFromRom()`, every word through the
+  kernel's `ml_probe_read()`, which survives a machine check). Where the
+  ROM gives no image, as under QEMU, it uses a `VBIOS` data property
+  injected into the personality by `scripts/kext.sh load` or
+  `g5/install.sh`; that is never part of the built bundle or the
+  repository.
 - `hw/rdn_accel.h` is the acceleration core: `rdn_gpu.c` (3D engine setup),
   `rdn_cp.c` (microcode, ring, fences, indirect buffers), `rdn_selftest.c`.
   Everything the GPU reads is in video memory, written little-endian through
@@ -476,7 +491,7 @@ host configuration is the user-approved `blacklist radeon` file. Tell the user a
 - The VBIOS comes from the PCI expansion ROM, with a load-from-file fallback.
   Never from the x86 legacy address. Under QEMU the kext uses the file,
   because OpenBIOS does not assign the ROM BAR and the user chose not to
-  patch it; the ROM path must be revisited on the real G5 (`docs/PLAN.md`,
+  patch it; on the real G5 it reads the ROM (done 2026-10-06, `docs/PLAN.md`,
   "Deferred to the real G5").
 - Cold POST follows the Linux `radeon` initialisation order.
 - The kext is always built inside the Tiger guest over ssh with Xcode 2.5
