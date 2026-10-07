@@ -76,7 +76,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
             path = os.path.join(folder, entry)
             arc = os.path.relpath(path, base)
             if os.path.isdir(path):
-                info = zipfile.ZipInfo(arc + "/")
+                info = zipfile.ZipInfo.from_file(path, arc + "/")
                 info.external_attr = (0o40755 << 16) | 0x10
                 z.writestr(info, "")
                 continue
