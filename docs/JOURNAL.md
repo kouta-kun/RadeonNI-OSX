@@ -3894,3 +3894,36 @@ With bundle 70946417 and nothing set, started normally, in the world:
 "It all looks good". So the vertex blend mapping and
 `GL_APPLE_flush_buffer_range` are confirmed on the monitor for this game.
 Call of Duty 2 past its menu is still unseen.
+
+## 2026-10-07: Call of Duty 2 runs out of video memory in its first map
+
+The user got past the menu: the game crashed after loading the first map,
+at a null pointer in `_mesa_glthread_upload` under `glDrawRangeElements`
+(`RB_TessXModelSkinned`). The disassembly of our bundle at that address is
+the load from what `new_upload_buffer()` returned: Mesa does not check it.
+The game's standard error (`/Library/Logs/Console/501/console.log` when it
+is started from the Finder) had dozens of `rdn: out of video memory`, 3 to
+22 MB asked each time, 1.3 to 1.4 GB in use, the last one for the 1 MB
+upload buffer.
+
+Why so much: the game imports no `glBindBuffer` at all. It draws from its
+own memory (`glVertexArrayRangeAPPLE`, fences, which Mesa lacks and the
+engine's entries swallow) and only with `glDrawRangeElements`, and
+`CDirect3DDevice::DrawIndexedPrimitive` gives Direct3D's MinVertexIndex and
+NumVertices as the range unless a flag makes it read the indices
+(`GetHighAndLowIndices`). glthread trusts the range and copies that many
+vertices of every array for every draw, each copy above 1 MB in a buffer of
+its own, all alive until the commands are flushed.
+
+Change: the bundle's `glDrawRangeElements` calls `glDrawElements` when the
+range is wider than the number of indices (`gld/gen_dispatch.py`,
+`DRAW_RANGE`), so Mesa reads the indices and copies what they use.
+`RDN_GLD_RANGE=1` passes the range as given. Installed on the G5 (the
+bundle before it is `~/RadeonNIGLDriver.wow5`).
+
+Not verified in the map. `+devmap eldaba` on the command line (the demo's
+only map, `maps/eldaba.d3dbsp`) is not a way in: the user saw the loading
+screen start, the Activision film cut in and the picture stop on one of
+its frames, while the game went on swapping at 960 frames a second. Quit
+with `killall`. Not looked into: it is my way of starting it, not the
+user's.

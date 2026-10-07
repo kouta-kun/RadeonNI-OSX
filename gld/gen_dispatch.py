@@ -403,6 +403,29 @@ MAP_BUFFER = """\tif (access == 0x88B9 && x_map_buffer_range && flushrange) {
 \t}"""
 
 # With the log on, the text of every ARB program and what Mesa said to it.
+# glDrawRangeElements with a range wider than the draw has indices. The
+# range is a promise, not the truth: Call of Duty 2 gives the whole vertex
+# buffer for every draw, 20 MB of it. It draws from its own memory (Apple's
+# vertex array range, no buffer objects), so Mesa copies the range named
+# for every draw and runs out of video memory. Without the range Mesa
+# reads the indices and copies what they use; with buffer objects it reads
+# nothing either way. RDN_GLD_RANGE=1 passes the range on as given.
+DRAW_RANGE = """\tif (end - start >= (GLuint)count && !draw_range_as_given()) {
+\t\tm_draw_elements(mode, count, type, indices);
+\t\treturn;
+\t}"""
+
+DRAW_RANGE_HELP = """
+static int draw_range_as_given(void)
+{
+	static int given = -1;
+
+	if (given < 0)
+		given = getenv("RDN_GLD_RANGE") != NULL;
+	return given;
+}
+"""
+
 PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len);
 
 \tif (own)
@@ -569,6 +592,7 @@ def main():
     out.append('')
     out.append(WEIGHT)
     out.append(MAP_BUFFER_HELP)
+    out.append(DRAW_RANGE_HELP)
     for ret, name, params, names in entries:
         full = 'GLIContext ctx' + (', ' + params if params else '')
         call = 'm_%s(%s)' % (name, ', '.join(names))
@@ -592,6 +616,8 @@ def main():
             out.append('\t\treturn;')
         if name == 'map_buffer':
             out.append(MAP_BUFFER)
+        if name == 'draw_range_elements':
+            out.append(DRAW_RANGE)
         if name == 'get_string':
             out.append('\tif (name == 0x1F03 && flushrange)\t/* GL_EXTENSIONS */')
             out.append('\t\treturn flushrange_extensions(m_get_string(name));')
