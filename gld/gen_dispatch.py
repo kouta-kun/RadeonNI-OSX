@@ -229,6 +229,7 @@ struct var_mirror {
 	unsigned short user;
 	unsigned char gone;	/* let go, but a vertex array object still has it */
 	unsigned char stale;	/* the program freed the memory it was over */
+	unsigned char changed;	/* a flush has found it different from the copy */
 	unsigned used;		/* var_swaps when last flushed or pointed into */
 };
 
@@ -236,6 +237,11 @@ struct var_mirror {
 struct var_vao {
 	struct var_mirror *mirror[VAR_VAO_MIRRORS];
 	unsigned char next;
+	/* The range flushed last with it bound, and the draw count then. */
+	struct var_mirror *in;
+	const char *ptr;
+	size_t len;
+	unsigned at;
 };
 
 static struct {
@@ -255,6 +261,9 @@ static unsigned var_swaps;
 static struct var_mirror *var_dirty[VAR_DIRTY];
 static unsigned var_dirty_count;
 static void var_settle(void *ctx);
+static unsigned var_draws;	/* draws so far */
+static struct var_vao *var_vao(void);
+static void var_point(struct var_mirror *m);
 
 static void var_context(void *ctx)
 {
@@ -744,6 +753,7 @@ static void var_update(void *ctx, struct var_mirror *m, const char *from, const 
 	m->seen += to - from;
 	if (m->seen > (1u << 20)) {
 		if (m->sent > m->seen / 4 * 3) {
+			m->changed = 1;
 			free(m->shadow);
 			m->shadow = NULL;
 			var_update(ctx, m, from, to);
@@ -767,6 +777,7 @@ static void var_update(void *ctx, struct var_mirror *m, const char *from, const 
 			memcpy(m->shadow + (start - m->base), start, stop - start);
 			var.copied += stop - start;
 			m->sent += stop - start;
+			m->changed = 1;
 			start = NULL;
 		}
 		if (p == to)
@@ -826,7 +837,8 @@ static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
 {
 	const char *ptr = pointer;
 	size_t len = (size_t)length;
-	int whole = 0;
+	struct var_mirror *whole = NULL;
+	struct var_vao *v;
 	unsigned i;
 
 	if (length <= 0 || !pointer)
@@ -848,38 +860,82 @@ static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
 			continue;
 		}
 		if (from == ptr && to == ptr + len)
-			whole = 1;
+			whole = m;
 		m->used = var_swaps;
 		var_mark(ctx, m, from, to);
 	}
 	if (!whole)
-		var_create(ctx, ptr, len);
+		whole = var_create(ctx, ptr, len);
+	/* For the draws that come without a flush: var_drawing(). */
+	if (whole && !whole->user && (v = var_vao()) != NULL) {
+		var_point(whole);
+		v->in = whole;
+		v->ptr = ptr;
+		v->len = len;
+		v->at = var_draws;
+	}
 }
 
-/* The bound vertex array object points into the mirror from now on. */
-static void var_point(struct var_mirror *m)
+/*
+ * A draw is coming. A program is to flush what it changed, and Call of
+ * Duty 2 does when it makes a vertex array object for a range; when it
+ * draws from that range again through the same object, with other
+ * vertices written there, it does not, since the GPU read its memory on
+ * the Macs it ran on. So the range the bound object was last flushed over
+ * is looked at again before every draw without a flush of its own, if its
+ * mirror is of memory that has ever been seen to change (the world's 20 MB
+ * are not compared for every draw). Without this the menu flickered after
+ * a map: copies of the map's vertices at the addresses the menu draws
+ * from.
+ */
+static void var_drawing(void *ctx)
 {
-	struct var_vao *v;
+	struct var_vao *v = var.ctx == ctx && var.vao < var.vao_room ? &var.vaos[var.vao] : NULL;
 	unsigned i;
 
-	m->used = var_swaps;
+	if (v && v->in && v->at != var_draws) {
+		for (i = 0; i < VAR_VAO_MIRRORS && v->mirror[i] != v->in; i++)
+			;
+		if (i < VAR_VAO_MIRRORS && v->in->changed && !v->in->gone && !v->in->user &&
+		    v->ptr >= v->in->base && v->ptr + v->len <= v->in->base + v->in->size) {
+			v->in->used = var_swaps;
+			var_mark(ctx, v->in, v->ptr, v->ptr + v->len);
+		}
+	}
+	var_draws++;
+}
+
+/* The bound vertex array object's record; NULL if it cannot have one. */
+static struct var_vao *var_vao(void)
+{
 	if (var.vao >= var.vao_room) {
 		unsigned room = var.vao_room ? var.vao_room : 1024;
 		struct var_vao *more;
 
 		while (room <= var.vao)
 			room *= 2;
-		/* A name beyond reason: the mirror stays for good instead. */
 		if (var.vao > (1u << 20) ||
-		    !(more = realloc(var.vaos, room * sizeof(*more)))) {
-			m->refs++;
-			return;
-		}
+		    !(more = realloc(var.vaos, room * sizeof(*more))))
+			return NULL;
 		memset(more + var.vao_room, 0, (room - var.vao_room) * sizeof(*more));
 		var.vaos = more;
 		var.vao_room = room;
 	}
-	v = &var.vaos[var.vao];
+	return &var.vaos[var.vao];
+}
+
+/* The bound vertex array object points into the mirror from now on. */
+static void var_point(struct var_mirror *m)
+{
+	struct var_vao *v = var_vao();
+	unsigned i;
+
+	m->used = var_swaps;
+	/* A name beyond reason: the mirror stays for good instead. */
+	if (!v) {
+		m->refs++;
+		return;
+	}
 	for (i = 0; i < VAR_VAO_MIRRORS; i++)
 		if (v->mirror[i] == m)
 			return;
@@ -1465,6 +1521,8 @@ def main():
         if name == 'map_buffer':
             out.append(MAP_BUFFER)
         if name in ('draw_range_elements', 'draw_elements', 'draw_arrays'):
+            out.append('\tif (var_on())')
+            out.append('\t\tvar_drawing(ctx);')
             out.append('\tif (__builtin_expect(var_dirty_count, 0))')
             out.append('\t\tvar_settle(ctx);')
             out.append('\tif (__builtin_expect(var_user_taken, 0))')

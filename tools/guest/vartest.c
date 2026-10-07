@@ -17,8 +17,8 @@
  *
  * VARTEST_NO_FLUSH=1: step 4 without the flush either, as a program does
  * that draws through a vertex array object it made for that address
- * before. Blue only when the GPU reads the memory; with copies the old
- * green is right.
+ * before. Blue: the GPU reads the memory, or the copy was looked at again
+ * before the draw because that memory had been seen to change (step 3).
  *
  * Build on the host:
  *   scripts/darwin.sh powerpc-apple-darwin8-gcc -O2 -o build/vartest \

@@ -4225,3 +4225,26 @@ asked for.
 Seen in the last log, in the menu, copies or not: four mirrors of 256
 bytes made every frame (ranges in small malloc blocks at ever new
 addresses) and let go 120 swaps later, 1024 at a time.
+
+## 2026-10-07: copy mode: draws that come without a flush
+
+The user, back on copies with the newest build: no visible flicker in the
+map, "a slight flickering in the menu when exiting from a map".
+
+The game does not keep the extension's rule. `CreateAndSetProgrammableVAO`
+flushes a range when it makes the vertex array object for it; when
+`CVAOPacket::IsCached` finds one for the same (pointer, length) it binds
+it and draws, whatever it has written there since. On the Macs it ran on
+the GPU read its memory, so that worked. A copy holds what was last
+flushed at that address: after a map, the map's vertices where the menu
+draws from. (It is the same gap that the zero-copy mode had with a freed
+address, seen from the other side.)
+
+Changed (`var_drawing`): each vertex array object remembers the range
+last flushed while it was bound; a draw with no flush since the last draw
+marks that range again, so it is compared with the shadow and what
+differs is sent, if the mirror is of memory that a flush has ever found
+changed. That keeps the world's 20 MB ranges out of it. The first change
+of a block made without any flush is still not seen.
+`RDN_VAR=1 VARTEST_NO_FLUSH=1 vartest` step 4 reads blue now (green
+before). Installed on the G5; not yet run in the game.
