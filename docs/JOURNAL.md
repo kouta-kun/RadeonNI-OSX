@@ -3579,3 +3579,47 @@ Apple's engine.
 
 **Not measured:** Quartz Extreme off for comparison; Exposé; larger
 windows; what "a bit slow" (the user, 2026-10-05) was.
+
+## 2026-10-07 — Round 1 for Quartz Extreme and Core Image: written and built, not yet run on the card
+
+**How it was made.** Four subagents in worktrees, in parallel (the user's
+wish), each with one package; all four stopped at the session's usage
+limit with their work part done, and I finished the packages one after
+the other. Branch `qe-ci-round1`.
+
+**What there is now, all off or silent by default:**
+- `tools/guest/qebench.sh`: window moves, drags, Exposé and idle, ten
+  seconds each, with the window server's CPU time, GPU command buffers,
+  a `sample` profile and the 2D plug-in's call counts. `fences now`.
+- The 2D plug-in counts its blitter calls with `/tmp/rdnga.on`
+  (`/tmp/rdnga.stats`); the surface client counts its calls per `control`
+  selector and `flush` options.
+- `tools/guest/ciprobe.m`: CGL pbuffers directly, Core Image on a CGL
+  context of a given renderer, Core Image's software renderer, and a
+  comparison of two pictures.
+- The bundle's log has the thread in every line, dumps for shared
+  contexts and unknown drawables, and, while logging, counts every call
+  of the GL entries Mesa lacks and Apple's engine keeps.
+- Front end: `OSMesaMakeCurrentStore` (a context draws into video memory
+  the caller names: a pbuffer) and `OSMesaTexStoreImage` (that memory as a
+  2D or rectangle texture, with alpha if asked, no copy); share lists
+  checked. `rdn_gltest -P` tests them, and with `RDN_SOFT=1` on Linux runs
+  without the card on softpipe (`mesa/tests/rdn_soft.c`).
+- `rdn_blit_fill()` and `rdn_blit_move()` in `hw/`, the user client
+  methods `RDN_UC_SCREEN_FILL` and `RDN_UC_SCREEN_COPY`, and with
+  `/tmp/rdnga.gpu` the 2D plug-in fills and copies with the GPU.
+  `tools/guest/gablit.c` calls the two methods directly.
+
+**Checked:** `make test` passes, with the new `blit_ops` (54 cases, same
+digest on x86 and PowerPC). `rdn_gltest -P` on softpipe: all five checks
+pass on x86 with glthread on and off, direct and copying, and big-endian
+under `qemu-ppc`. The Tiger bundle builds and `nm -u` names nothing of
+ours. Kext, plug-in, `ciprobe`, `gablit` and `fences` build in the guest
+with Apple's gcc; `ciprobe soft` runs there (Core Image's software
+renderer: 2.5 s the first picture, 347 ms each after, under emulation).
+
+**Not done:** nothing of this has run on the card or been installed on
+the G5. The Tiger build of `rdn_gltest` does not link at -O2 ("bl PPC
+branch out of range", the program is over 16 MB); not looked into, so
+`-P` on r600 waits for that. The bundle side of pbuffers and shared
+contexts is round 2 and needs what `ciprobe` shows first.
