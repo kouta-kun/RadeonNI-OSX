@@ -174,7 +174,8 @@ CLIENT_STATE = {
 # with copies it always has, so they are always finished.
 #
 # For the programs named in RDN_VAR_LIST, one name a line, or with
-# RDN_VAR=1 in the environment (0: not even if named). Never asked for by
+# RDN_VAR=1 in the environment (0: not even if named). A "+" before the
+# name, or RDN_VAR=2: without the copies where that can be (VAR_USERS). Never asked for by
 # name by Call of Duty 2: it takes the range for granted and looks for
 # GL_APPLE_vertex_array_object, GL_APPLE_fence and GL_APPLE_element_array
 # before it calls any of this, so those are named too (it never calls the
@@ -182,8 +183,7 @@ CLIENT_STATE = {
 VAR_HELP = """
 #define RDN_VAR_LIST "/Library/Application Support/RadeonNI/vertexrange"
 
-extern size_t malloc_size(const void *ptr);
-
+/* 0: not ours; 1: with copies; 2: without, where that can be (below). */
 static int var_on(void)
 {
 	static int on = -1;
@@ -197,17 +197,20 @@ static int var_on(void)
 	if (!name || !strcmp(name, "WindowServer") || !m_gen_buffers || !m_buffer_sub_data)
 		return on;
 	if ((env = getenv("RDN_VAR")) != NULL)
-		on = atoi(env) != 0;
+		on = atoi(env) < 0 ? 0 : atoi(env) > 2 ? 2 : atoi(env);
 	else if ((f = fopen(RDN_VAR_LIST, "r")) != NULL) {
 		while (fgets(line, sizeof(line), f)) {
 			line[strcspn(line, "\\r\\n")] = 0;
 			if (!strcmp(line, name))
 				on = 1;
+			else if (line[0] == '+' && !strcmp(line + 1, name))
+				on = 2;
 		}
 		fclose(f);
 	}
 	if (on)
-		rdn_log("GL_APPLE_vertex_array_range and GL_APPLE_fence: ours, for %s", name);
+		rdn_log("GL_APPLE_vertex_array_range and GL_APPLE_fence: ours, for %s%s", name,
+			on == 2 ? ", the GPU reading the program's memory where it can" : "");
 	return on;
 }
 
@@ -219,6 +222,12 @@ struct var_mirror {
 	char *shadow;		/* what the buffer object has, if memory allowed */
 	const char *dirty, *dirty_end;	/* flushed, not yet brought up to date */
 	unsigned long seen, sent;	/* bytes compared with the shadow, and sent */
+	/*
+	 * No copy: the buffer object is over the program's memory itself
+	 * (GL_AMD_pinned_memory), and `user` is its place in var_user + 1.
+	 */
+	unsigned char user;
+	unsigned char gone;	/* let go, but a vertex array object still has it */
 	unsigned used;		/* var_swaps when last flushed or pointed into */
 };
 
@@ -237,7 +246,7 @@ static struct {
 	GLuint vao;			/* the one bound */
 	const char *range;		/* glVertexArrayRangeAPPLE's last */
 	size_t range_size;
-	unsigned long bytes, copied;
+	unsigned long bytes, copied, freed;
 } var;
 static unsigned var_swaps;
 /* The mirrors with something flushed that they have not been given yet. */
@@ -340,6 +349,175 @@ static struct var_mirror *var_find(const char *ptr, size_t len)
 	return NULL;
 }
 
+/*
+ * Without a copy. A block of the program's memory that is page aligned (a
+ * large malloc block is) goes behind the GART as it is, and the GPU reads
+ * what the program wrote: no copy at a flush, and nothing a flush is
+ * needed for. What that asks for:
+ * - The mirror is of physical pages, not of addresses. When the program
+ *   frees the block, the next thing malloc puts at that address is other
+ *   memory, so the zone's free and realloc are watched and such a mirror
+ *   is let go before anything is looked up again. Its pages stay wired,
+ *   with what the program last wrote, until the GPU has drawn from them
+ *   (the winsys waits before it unbinds).
+ * - The GPU reads when it draws, not when the program says draw. A program
+ *   that overwrites memory it has drawn from waits for a fence first, so
+ *   glFinishFenceAPPLE is a real wait here (glFinish, when anything was
+ *   drawn since the fence was set). glTestFenceAPPLE stays true: Call of
+ *   Duty 2 uses it only to pace its frames.
+ * Open: nothing bounds how far the GPU is behind, and the game takes a
+ * fence two frames old for finished without asking.
+ */
+#define VAR_USERS 64
+#define VAR_USER_LEAST 65536
+static struct { volatile vm_address_t base; volatile int freed; } var_user[VAR_USERS];
+static volatile int var_user_freed;
+static malloc_zone_t *var_zone;
+static void (*var_zone_free)(malloc_zone_t *zone, void *ptr);
+static void *(*var_zone_realloc)(malloc_zone_t *zone, void *ptr, size_t size);
+
+/* Any thread, inside malloc: only looks and sets flags. */
+static void var_freeing(void *ptr)
+{
+	unsigned i;
+
+	if (!ptr || ((vm_address_t)ptr & 4095))
+		return;
+	for (i = 0; i < VAR_USERS; i++)
+		if (var_user[i].base == (vm_address_t)ptr) {
+			var_user[i].freed = 1;
+			var_user_freed = 1;
+		}
+}
+
+static void var_hook_free(malloc_zone_t *zone, void *ptr)
+{
+	var_freeing(ptr);
+	var_zone_free(zone, ptr);
+}
+
+static void *var_hook_realloc(malloc_zone_t *zone, void *ptr, size_t size)
+{
+	var_freeing(ptr);
+	return var_zone_realloc(zone, ptr, size);
+}
+
+/* Let a mirror go; it is no longer in the list. */
+static void var_drop(struct var_mirror *m)
+{
+	m_delete_buffers(1, &m->buffer);
+	var.bytes -= m->size;
+	if (m->user) {
+		var_user[m->user - 1].base = 0;
+		var_user[m->user - 1].freed = 0;
+	}
+	free(m->shadow);
+	m->shadow = NULL;
+	if (m->refs)
+		m->gone = 1;
+	else
+		free(m);
+}
+
+static void var_unref(struct var_mirror *m)
+{
+	if (!--m->refs && m->gone)
+		free(m);
+}
+
+/* The program freed memory the GPU was reading: those mirrors go. */
+static void var_reap(void)
+{
+	unsigned i, n = 0;
+
+	var_user_freed = 0;
+	for (i = 0; i < var.count; i++) {
+		struct var_mirror *m = var.mirrors[i];
+
+		if (m->user && var_user[m->user - 1].freed) {
+			var.freed++;
+			var_drop(m);
+			continue;
+		}
+		var.mirrors[n++] = m;
+	}
+	var.count = n;
+}
+
+/*
+ * A buffer object over the block itself, if this program is to have such
+ * and the block allows it. 0 if not; the caller makes a copy then.
+ */
+static GLuint var_pin(const char *base, size_t size)
+{
+	static int have = -1;
+	GLuint buffer = 0;
+	unsigned slot, i;
+
+	if (var_on() != 2 || size < VAR_USER_LEAST ||
+	    ((vm_address_t)base & 4095) || (size & 4095))
+		return 0;
+	if (have < 0) {
+		const char *list = (const char *)m_get_string(0x1F03);
+
+		have = list && strstr(list, "GL_AMD_pinned_memory") && m_get_error && m_finish;
+		rdn_log("vertex array range: the GPU %s read the program's memory",
+			have ? "can" : "cannot");
+	}
+	if (!have)
+		return 0;
+	for (slot = 0; slot < VAR_USERS && var_user[slot].base; slot++)
+		;
+	if (slot == VAR_USERS)
+		return 0;
+	if (!var_zone) {
+		malloc_zone_t *zone = malloc_zone_from_ptr(base);
+
+		if (!zone)
+			return 0;
+		var_zone_free = zone->free;
+		var_zone_realloc = zone->realloc;
+		zone->free = var_hook_free;
+		zone->realloc = var_hook_realloc;
+		var_zone = zone;
+		rdn_log("vertex array range: watching what malloc zone %p frees", (void *)zone);
+	} else if (malloc_zone_from_ptr(base) != var_zone)
+		return 0;
+	for (i = 0; i < 8 && m_get_error(); i++)
+		;
+	m_gen_buffers(1, &buffer);
+	m_bind_buffer(0x9160, buffer);	/* GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD */
+	m_buffer_data(0x9160, (GLsizeiptrARB)size, base, 0x88E8);
+	m_bind_buffer(0x9160, 0);
+	if (m_get_error()) {
+		/* No room behind the GART, most likely. */
+		m_delete_buffers(1, &buffer);
+		return 0;
+	}
+	var_user[slot].freed = 0;
+	var_user[slot].base = (vm_address_t)base;
+	return buffer | ((GLuint)(slot + 1) << 24);
+}
+
+/* Fences, when the GPU reads the program's memory. */
+static unsigned var_fence_seq, var_fence_done, var_fence_at[4096];
+static unsigned long var_fence_waits;
+
+static void var_fence_set(GLuint fence)
+{
+	var_fence_at[fence & 4095] = ++var_fence_seq;
+}
+
+static void var_fence_finish(GLuint fence)
+{
+	if (var_on() != 2 || var_fence_at[fence & 4095] <= var_fence_done)
+		return;
+	m_finish();
+	var_fence_done = var_fence_seq;
+	if (!(++var_fence_waits & (var_fence_waits - 1)))
+		rdn_log("vertex array range: %lu fences waited for so far", var_fence_waits);
+}
+
 /* Mirrors nothing points into and nothing has used for a while go. */
 static void var_sweep(void)
 {
@@ -353,10 +531,7 @@ static void var_sweep(void)
 		struct var_mirror *m = var.mirrors[i];
 
 		if (!m->refs && var_swaps - m->used > 120) {
-			m_delete_buffers(1, &m->buffer);
-			var.bytes -= m->size;
-			free(m->shadow);
-			free(m);
+			var_drop(m);
 			continue;
 		}
 		var.mirrors[n++] = m;
@@ -392,21 +567,28 @@ static struct var_mirror *var_create(void *ctx, const char *ptr, size_t len)
 	m->base = base;
 	m->size = size;
 	m->used = var_swaps;
-	m->shadow = malloc(size);
-	if (m->shadow)
-		memcpy(m->shadow, base, size);
-	m_gen_buffers(1, &m->buffer);
-	m_bind_buffer(0x8892, m->buffer);
-	t_buffer_data(ctx, 0x8892, (GLsizeiptrARB)size, base, 0x88E8);
-	m_bind_buffer(0x8892, 0);
+	if (block && (m->buffer = var_pin(base, size)) != 0) {
+		m->user = m->buffer >> 24;
+		m->buffer &= 0xffffff;
+	} else {
+		m->shadow = malloc(size);
+		if (m->shadow)
+			memcpy(m->shadow, base, size);
+		m_gen_buffers(1, &m->buffer);
+		m_bind_buffer(0x8892, m->buffer);
+		t_buffer_data(ctx, 0x8892, (GLsizeiptrARB)size, base, 0x88E8);
+		m_bind_buffer(0x8892, 0);
+		var.copied += size;
+	}
 	var.mirrors[var.count++] = m;
 	var.bytes += size;
-	var.copied += size;
 	if (__builtin_expect(rdn_logging, 0))
-		rdn_log("vertex array range: mirror %u of %p, %lu bytes (%s; asked %p, %lu): %u mirrors, %lu KB",
+		rdn_log("vertex array range: mirror %u of %p, %lu bytes (%s%s; asked %p, %lu): %u mirrors, %lu KB, %lu KB copied, %lu freed under us",
 			m->buffer, (const void *)base, (unsigned long)size,
 			block ? "the malloc block" : "the range",
-			(const void *)ptr, (unsigned long)len, var.count, var.bytes >> 10);
+			m->user ? ", not copied" : "",
+			(const void *)ptr, (unsigned long)len, var.count, var.bytes >> 10,
+			var.copied >> 10, var.freed);
 	return m;
 }
 
@@ -488,6 +670,8 @@ static void var_settle(void *ctx)
 
 static void var_mark(void *ctx, struct var_mirror *m, const char *from, const char *to)
 {
+	if (m->user)
+		return;
 	if (m->dirty && from <= m->dirty_end && to >= m->dirty) {
 		if (from < m->dirty)
 			m->dirty = from;
@@ -506,6 +690,8 @@ static void var_range(void *ctx, GLsizei length, const GLvoid *pointer)
 {
 	var_context(ctx);
 	var_settle(ctx);
+	if (__builtin_expect(var_user_freed, 0))
+		var_reap();
 	var.range = length > 0 ? pointer : NULL;
 	var.range_size = length > 0 ? (size_t)length : 0;
 }
@@ -520,6 +706,8 @@ static void var_flush(void *ctx, GLsizei length, const GLvoid *pointer)
 	if (length <= 0 || !pointer)
 		return;
 	var_context(ctx);
+	if (__builtin_expect(var_user_freed, 0))
+		var_reap();
 	for (i = 0; i < var.count; i++) {
 		struct var_mirror *m = var.mirrors[i];
 		const char *from = ptr > m->base ? ptr : m->base;
@@ -565,7 +753,7 @@ static void var_point(struct var_mirror *m)
 			return;
 	i = v->next++ % VAR_VAO_MIRRORS;
 	if (v->mirror[i])
-		v->mirror[i]->refs--;
+		var_unref(v->mirror[i]);
 	v->mirror[i] = m;
 	m->refs++;
 }
@@ -584,6 +772,8 @@ static int var_pointer(void *ctx, const GLvoid **pointer)
 	var_context(ctx);
 	if (var_dirty_count)
 		var_settle(ctx);
+	if (__builtin_expect(var_user_freed, 0))
+		var_reap();
 	if (!p || (bound && *bound))
 		return 0;
 	m = var_find(p, 1);
@@ -617,7 +807,7 @@ static void var_delete(void *ctx, GLsizei n, const GLuint *ids)
 
 			for (i = 0; i < VAR_VAO_MIRRORS; i++)
 				if (v->mirror[i])
-					v->mirror[i]->refs--;
+					var_unref(v->mirror[i]);
 			memset(v, 0, sizeof(*v));
 		}
 		if (ids[k] == var.vao)
@@ -643,12 +833,12 @@ VAR_OWN = {
     'vertex_array_parameteri_EXT': '\t(void)pname;\n\t(void)param;',
     'gen_fences_APPLE': '\tvar_fences(n, fences);',
     'delete_fences_APPLE': '\t(void)n;\n\t(void)fences;',
-    'set_fence_APPLE': '\t(void)fence;',
+    'set_fence_APPLE': '\tvar_fence_set(fence);',
     'is_fence_APPLE': '\treturn fence != 0;',
     'test_fence_APPLE': '\t(void)fence;\n\treturn 1;',
-    'finish_fence_APPLE': '\t(void)fence;',
+    'finish_fence_APPLE': '\tvar_fence_finish(fence);',
     'test_object_APPLE': '\t(void)object;\n\t(void)name;\n\treturn 1;',
-    'finish_object_APPLE': '\t(void)object;\n\t(void)name;',
+    'finish_object_APPLE': '\t(void)object;\n\t(void)name;\n\tif (var_on() == 2)\n\t\tm_finish();',
 }
 
 # Array pointers that may point into a mirror.
@@ -1098,7 +1288,7 @@ def main():
 
     out = ['/* Generated by gen_dispatch.py from the SDK\'s gliDispatch.h. */',
            '#include <stddef.h>', '#include <stdio.h>', '#include <stdlib.h>',
-           '#include <string.h>', '#include <sys/time.h>', '#include <mach/mach.h>',
+           '#include <string.h>', '#include <sys/time.h>', '#include <mach/mach.h>', '#include <malloc/malloc.h>',
            '#include <OpenGL/CGLContext.h>',
            '#include "rdn_dispatch.h"', '']
     index = dict((e[1], i) for i, e in enumerate(entries))

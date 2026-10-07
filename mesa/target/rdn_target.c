@@ -154,7 +154,7 @@ rdn_subdata_copy(void)
       return false;
    while (fgets(line, sizeof(line), f)) {
       line[strcspn(line, "\r\n")] = 0;
-      if (!strcmp(line, name))
+      if (!strcmp(line[0] == '+' ? line + 1 : line, name))
          on = true;
    }
    fclose(f);
