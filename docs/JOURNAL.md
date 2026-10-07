@@ -4069,3 +4069,25 @@ Changed, installed, not yet run:
   and the GPU copies it from there, so it goes through no queue. Only
   built for Tiger so far; the Linux builds of the target have not been
   rebuilt with it.
+
+## 2026-10-07: Call of Duty 2 with the direct glBufferSubData and no shadow for computed vertices
+
+Run by the user in the map, `RDN_FPS=1`: 37 to 50 frames a second where
+this sample was taken ("it looks about the same", another place in the map
+than the run before, so the two rates do not compare). No out of video
+memory, and the user reported nothing wrong with the animated models.
+
+`sample`, 8 s, the game's thread: the waits for glthread's queue are gone
+(7 % before, 1.5 % now for all waits), the skinned models' path is 11 %
+inclusive (25 % before), and what is left of ours in it is one copy,
+`_mesa_glthread_upload` 10.6 %. The game's own frame is 46 % and its
+renderer 50 %. Mesa's thread waits 67 % of the time. So the game's thread
+is the limit and nearly all of it is the game.
+
+The one copy left is the vertices the game computes every frame. Apple's
+drivers have none: the GPU reads the program's memory. The same could be
+had here by binding the game's memory behind the GART (the kext's bind
+call takes any page-aligned memory of the program) and giving Mesa buffer
+objects over it (r600 has `resource_from_user_memory`; our winsys says
+`has_userptr = false`); the fences would have to be real then. Not
+started.
