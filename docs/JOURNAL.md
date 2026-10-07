@@ -3849,3 +3849,41 @@ error every five seconds (new, for this). Bundle 1c5555c7 plus the
 counter on the G5; `/Library/Application Support/RadeonNI/mapbuffer`
 there says `discard World of Warcraft`. Not seen: the world with it.
 The default for programs not named is still Mesa's wait.
+
+## 2026-10-07 — GL_APPLE_flush_buffer_range from the bundle; discard was wrong in the world
+
+**discard in the world** (the user, then readback): the ground at some
+angles a flat dark blue, models said to be corrupted too; trees,
+buildings and characters right in the grab. So the game does not rewrite
+all of every buffer it maps. Neither guess (`unsync`, `discard`) fits
+all of its buffers; the switch file is removed from the G5 again.
+`RDN_MAPBUFFER` stays as a tool, off.
+
+**The extension instead** (the user's choice). The game looks its two
+functions up with `CFBundleGetFunctionPointerForName` on the bundle
+`com.apple.opengl`, found in three steps:
+1. A library with the two functions inserted with `DYLD_INSERT_LIBRARIES`
+   and the name added to the list of extensions: the game gets the list
+   and calls nothing. It does not search the program's images.
+2. The same library interposing `CFBundleGetFunctionPointerForName`
+   (dyld's `__interpose` works on 10.4.11) and answering the two names:
+   the game calls `glBufferParameteriAPPLE(GL_ARRAY_BUFFER, 0x8a12, 0)`
+   and `(…, 0x8a13, 0)` for two buffers, then maps them and names what it
+   wrote, each range after the last (0+6272, 6272+7424, 13696+5504, …).
+   165 frames a second at the login screen, picture right.
+3. No library: the bundle hooks that lookup itself, the way it already
+   hooks `CGLSetCurrentContext` (`gld/rdn_hook.c`), and has the two
+   functions (`gld/gen_dispatch.py`, flushrange). A plain launch:
+
+| Login screen, 1920x1080 | frames a second | CPU |
+|---|---|---|
+| as installed, nothing set | 165 | 106 % |
+| `RDN_GLTHREAD=0` | 168 | 102 % |
+| `RDN_NO_FLUSHRANGE=1` | 30 | 34 % |
+
+In Mesa the two parameters are `glMapBufferRange`'s unsynchronized and
+explicit flush bits, and the flush is `glFlushMappedBufferRange`. Every
+program but the window server gets the extension in its list
+(`~/gl/glext` shows it). Bundle 70946417 on the G5. Not seen: the world.
+Only buffers the game marks skip the wait; its other maps wait as before.
+The library of steps 1 and 2 is not kept.

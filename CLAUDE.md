@@ -225,16 +225,21 @@ been planned in detail.
   calls ("kept:"): look there first when a game misses draws.
   `RDN_GLD_KEPT=first-last` wraps only some of those entries.
   `~/gl/aglfull` asks AGL for a full-screen context step by step.
-- `glMapBuffer` (2026-10-07, journal): Mesa waits for the GPU when a
-  program maps a buffer it has just drawn from. World of Warcraft does
-  that 1500 times a second (30 frames a second at its login screen).
-  `RDN_MAPBUFFER=discard` in a program's environment, or a line `discard
-  Name` in `/Library/Application Support/RadeonNI/mapbuffer`, gives
-  `glMapBuffer(GL_WRITE_ONLY)` new storage instead (188 there); `unsync`
-  maps the buffer as it is and corrupted the game's interface. On for
-  World of Warcraft on the G5 by that file; Mesa's wait for everything
-  else. `RDN_FPS=1` prints frames a second on standard error. When a
-  program is slow and uses little CPU, look for this in a `sample`.
+- `GL_APPLE_flush_buffer_range` (2026-10-07, journal): Mesa waits for the
+  GPU when a program maps a buffer it has just drawn from, and World of
+  Warcraft does that 1500 times a second (30 frames a second at its login
+  screen). The extension is how a program says not to wait; Tiger's OpenGL
+  lacks its two functions, and the game looks them up in the framework's
+  bundle by name. The bundle answers that lookup itself (a second hook in
+  `gld/rdn_hook.c`), has the functions and names the extension for every
+  program but the window server: 165 frames a second there, by readback;
+  the world not seen. `RDN_NO_FLUSHRANGE=1` turns it off.
+  `RDN_MAPBUFFER=discard|unsync` (or a line in
+  `/Library/Application Support/RadeonNI/mapbuffer`) makes every
+  `glMapBuffer(GL_WRITE_ONLY)` not wait, for programs without the
+  extension; both corrupted World of Warcraft and it is off everywhere.
+  `RDN_FPS=1` prints frames a second on standard error. When a program is
+  slow and uses little CPU, look for the wait in a `sample`.
 - A6 has not started; A7 has (GART).
 - What is on by default since 2026-10-06, all decided by the user: the
   performance clocks and the memory controller's microcode, the GART,

@@ -222,7 +222,12 @@ static int map_mode(void)
 #define MAP_CTXS 8
 #define MAP_SIZES 4096
 static struct { void *ctx; GLuint bound[2]; } map_ctxs[MAP_CTXS];
-static struct { void *ctx; GLuint name; GLsizeiptrARB size; } map_sizes[MAP_SIZES];
+static struct {
+	void *ctx;
+	GLuint name;
+	GLsizeiptrARB size;
+	unsigned char nowait, noflush;	/* GL_APPLE_flush_buffer_range */
+} map_sizes[MAP_SIZES];
 
 static GLuint *map_bound(void *ctx, GLenum target)
 {
@@ -259,6 +264,8 @@ static void map_note_size(void *ctx, GLenum target, GLsizeiptrARB size)
 	if (!bound || !*bound)
 		return;
 	i = map_slot(ctx, *bound);
+	if (map_sizes[i].ctx != ctx || map_sizes[i].name != *bound)
+		map_sizes[i].nowait = map_sizes[i].noflush = 0;
 	map_sizes[i].ctx = ctx;
 	map_sizes[i].name = *bound;
 	map_sizes[i].size = size;
@@ -274,9 +281,118 @@ static GLsizeiptrARB map_known_size(void *ctx, GLenum target)
 	i = map_slot(ctx, *bound);
 	return map_sizes[i].ctx == ctx && map_sizes[i].name == *bound ? map_sizes[i].size : 0;
 }
+
+/*
+ * GL_APPLE_flush_buffer_range. Tiger's OpenGL has neither of its two
+ * functions; a program that knows the extension looks them up by name,
+ * and the bundle answers that lookup itself (rdn_hook.c,
+ * flushrange_function below). World of Warcraft does, and without the
+ * extension it maps buffers the GPU is drawing from 1500 times a second,
+ * each a wait in Mesa (30 frames a second at its login screen, 165 with).
+ *
+ * The program says for a buffer that mapping it need not wait for the GPU
+ * (GL_BUFFER_SERIALIZED_MODIFY_APPLE false) and that it will name what it
+ * wrote itself (GL_BUFFER_FLUSHING_UNMAP_APPLE false,
+ * glFlushMappedBufferRangeAPPLE); in Mesa those are glMapBufferRange's
+ * unsynchronized and explicit flush. The functions come without a
+ * context: the one of the thread's last OpenGL call is meant.
+ * RDN_NO_FLUSHRANGE=1 in a program's environment: no such extension.
+ */
+static int flushrange;
+static unsigned long flushrange_calls[2];
+static void (*x_flush_mapped_buffer_range)(GLenum target, GLintptr offset,
+					   GLsizeiptr length);
+
+static void flushrange_parameteri(GLenum target, GLenum pname, GLint param)
+{
+	GLuint *bound = map_bound(rdn_current_rend, target);
+	unsigned i;
+
+	if (!bound || !*bound)
+		return;
+	i = map_slot(rdn_current_rend, *bound);
+	if (map_sizes[i].ctx != rdn_current_rend || map_sizes[i].name != *bound) {
+		map_sizes[i].ctx = rdn_current_rend;
+		map_sizes[i].name = *bound;
+		map_sizes[i].size = 0;
+		map_sizes[i].nowait = map_sizes[i].noflush = 0;
+	}
+	if (pname == 0x8A12)		/* GL_BUFFER_SERIALIZED_MODIFY_APPLE */
+		map_sizes[i].nowait = !param;
+	else if (pname == 0x8A13)	/* GL_BUFFER_FLUSHING_UNMAP_APPLE */
+		map_sizes[i].noflush = !param;
+	if (rdn_logging && flushrange_calls[0]++ < 16)
+		rdn_log("glBufferParameteriAPPLE(0x%x, 0x%x, %d) for buffer %u",
+			(unsigned)target, (unsigned)pname, (int)param, (unsigned)*bound);
+}
+
+static void flushrange_flush(GLenum target, GLintptr offset, GLsizeiptr size)
+{
+	GLuint *bound = map_bound(rdn_current_rend, target);
+	unsigned i;
+
+	if (!bound || !*bound || !x_flush_mapped_buffer_range)
+		return;
+	i = map_slot(rdn_current_rend, *bound);
+	if (map_sizes[i].ctx == rdn_current_rend && map_sizes[i].name == *bound &&
+	    map_sizes[i].noflush)
+		x_flush_mapped_buffer_range(target, offset, size);
+	if (rdn_logging && flushrange_calls[1]++ < 16)
+		rdn_log("glFlushMappedBufferRangeAPPLE(0x%x, %ld, %ld) for buffer %u",
+			(unsigned)target, (long)offset, (long)size, (unsigned)*bound);
+}
+
+/* What glMapBufferRange is to be asked for the bound buffer, or 0. */
+static unsigned flushrange_bits(void *ctx, GLenum target)
+{
+	GLuint *bound = map_bound(ctx, target);
+	unsigned i;
+
+	if (!bound || !*bound)
+		return 0;
+	i = map_slot(ctx, *bound);
+	if (map_sizes[i].ctx != ctx || map_sizes[i].name != *bound ||
+	    (!map_sizes[i].nowait && !map_sizes[i].noflush))
+		return 0;
+	return 0x2 | (map_sizes[i].nowait ? 0x20 : 0) | (map_sizes[i].noflush ? 0x10 : 0);
+}
+
+/* A program looks a function up by name in a bundle (rdn_hook.c). */
+static void *flushrange_function(const char *name)
+{
+	if (!strcmp(name, "glBufferParameteriAPPLE"))
+		return (void *)flushrange_parameteri;
+	if (!strcmp(name, "glFlushMappedBufferRangeAPPLE"))
+		return (void *)flushrange_flush;
+	return NULL;
+}
+
+/* The list of extensions with ours at its end. */
+static const GLubyte *flushrange_extensions(const GLubyte *mesa)
+{
+	static const char more[] = " GL_APPLE_flush_buffer_range";
+	static char *list;
+
+	if (!list && mesa) {
+		list = malloc(strlen((const char *)mesa) + sizeof(more));
+		if (list) {
+			strcpy(list, (const char *)mesa);
+			strcat(list, more);
+			rdn_log("GL_APPLE_flush_buffer_range: named in the list of extensions");
+		}
+	}
+	return list ? (const GLubyte *)list : mesa;
+}
 """
 
-MAP_BUFFER = """\tif (access == 0x88B9 && x_map_buffer_range && map_mode()) {
+MAP_BUFFER = """\tif (access == 0x88B9 && x_map_buffer_range && flushrange) {
+\t\tunsigned bits = flushrange_bits(ctx, target);
+\t\tGLint size = (GLint)map_known_size(ctx, target);
+
+\t\tif (bits && size > 0)
+\t\t\treturn x_map_buffer_range(target, 0, size, bits);
+\t}
+\tif (access == 0x88B9 && x_map_buffer_range && map_mode()) {
 \t\tGLint size = (GLint)map_known_size(ctx, target);
 
 \t\tif (size <= 0)
@@ -476,15 +592,18 @@ def main():
             out.append('\t\treturn;')
         if name == 'map_buffer':
             out.append(MAP_BUFFER)
+        if name == 'get_string':
+            out.append('\tif (name == 0x1F03 && flushrange)\t/* GL_EXTENSIONS */')
+            out.append('\t\treturn flushrange_extensions(m_get_string(name));')
         if name == 'bind_buffer':
-            out.append('\tif (map_mode()) {')
+            out.append('\tif (map_mode() || flushrange) {')
             out.append('\t\tGLuint *bound = map_bound(ctx, target);')
             out.append('')
             out.append('\t\tif (bound)')
             out.append('\t\t\t*bound = buffer;')
             out.append('\t}')
         if name == 'buffer_data':
-            out.append('\tif (map_mode())')
+            out.append('\tif (map_mode() || flushrange)')
             out.append('\t\tmap_note_size(ctx, target, size);')
         if name in CLIENT_STATE:
             out.append('\tif (array == 0x86AD) {')
@@ -543,6 +662,10 @@ def main():
     out.append('\tunsigned i, found = 0;')
     out.append('')
     out.append('\tx_map_buffer_range = lookup("glMapBufferRange");')
+    out.append('\tx_flush_mapped_buffer_range = lookup("glFlushMappedBufferRange");')
+    out.append('\tflushrange = x_map_buffer_range && x_flush_mapped_buffer_range &&')
+    out.append('\t\tstrcmp(getprogname(), "WindowServer") && !getenv("RDN_NO_FLUSHRANGE") &&')
+    out.append('\t\trdn_hook_function_lookup(flushrange_function);')
     out.append('\tfor (i = 0; i < sizeof(lookups) / sizeof(lookups[0]); i++) {')
     out.append('\t\t*lookups[i].mesa = lookup(lookups[i].name);')
     out.append('\t\tif (*lookups[i].mesa)')

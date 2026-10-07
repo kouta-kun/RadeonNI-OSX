@@ -115,6 +115,11 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
 - The last entry of the SDK's dispatch table, `buffer_parameteri_APPLE`, is
   not a function in 10.4.11's engine: it keeps data there and follows it.
   Never write that word.
+- Tiger's libGL exports no `glBufferParameteriAPPLE` and no
+  `glFlushMappedBufferRangeAPPLE`. A program can still be given
+  `GL_APPLE_flush_buffer_range` if it looks the functions up by name:
+  World of Warcraft does, with `CFBundleGetFunctionPointerForName` on
+  `com.apple.opengl`, and the bundle hooks that call (`gld/rdn_hook.c`).
 - CGL removes `kCGLPFAAccelerated` and the renderer ID from the attribute
   list before the plug-in sees it, and decides acceptance from the flags in
   the returned pixel format.

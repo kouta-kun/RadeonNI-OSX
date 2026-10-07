@@ -49,6 +49,12 @@ void rdn_mesa_early_all(void *cgl_ctx);
 int rdn_windows_top_down(void);
 /* rdn_hook.c: call `after` whenever a context has been made current. */
 void rdn_hook_set_current(void (*after)(void *cgl_ctx));
+/*
+ * rdn_hook.c: let `own` answer a program's lookups of functions by name
+ * in a bundle (a function, or NULL for a name that is not ours). Returns 0
+ * when the program cannot be hooked.
+ */
+int rdn_hook_function_lookup(void *(*own)(const char *name));
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
 /*
  * Where the current context's window coordinates start on Mesa's drawable,
