@@ -2,11 +2,16 @@
  * fences: is the GPU executing commands right now?
  *
  *   fences [seconds]
+ *   fences now
  *
  * Asks the kext's accelerator which fence its command processor has
  * reached, waits (default 5 s) and asks again. Every command buffer a
  * client submits ends in one fence, so the difference is how many the
  * card completed meanwhile: zero when nothing draws with it.
+ *
+ * "now" prints the fence reached at this moment, a bare number, and does
+ * not wait: for a script that takes the difference over a time of its own
+ * (tools/guest/qebench.sh).
  *
  * Build in the guest, next to a copy of hw/rdn_user.h:
  *   gcc -Wall -o fences fences.c -framework IOKit -framework CoreFoundation
@@ -17,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
@@ -61,6 +67,11 @@ int main(int argc, char **argv)
 	if (!service || IOServiceOpen(service, mach_task_self(), RDN_UC_TYPE, &conn)) {
 		fprintf(stderr, "cannot open the accelerator\n");
 		return 1;
+	}
+	if (argc > 1 && !strcmp(argv[1], "now")) {
+		printf("%u\n", current());
+		IOServiceClose(conn);
+		return 0;
 	}
 	a = current();
 	sleep(seconds);

@@ -6,6 +6,8 @@
  */
 
 #include <IOKit/IOLib.h>
+#include <libkern/libkern.h>
+#include <stdarg.h>
 
 #include "RadeonNIAccel.h"
 #include "RadeonNISurface.h"
@@ -15,6 +17,31 @@ OSDefineMetaClassAndStructors(RadeonNISurfaceClient, IOUserClient)
 
 /* Enough of the log to see the pattern, not every frame for ever. */
 #define MAX_NOTES 400
+
+/* The counts as text: room for every table full. */
+#define COUNTS_TEXT 2048
+
+/* In the order of eIOAccelSurfaceMethods. */
+static const char *const methodNames[kIOAccelNumSurfaceMethods] = {
+	"readLockOptions", "readUnlockOptions", "getState", "writeLockOptions",
+	"writeUnlockOptions", "read", "setShapeBacking", "setIDMode", "setScale",
+	"setShape", "flush", "queryLock", "readLock", "readUnlock", "writeLock",
+	"writeUnlock", "control", "setShapeBackingAndLength",
+};
+
+/* Add to the text at *len, never beyond size; what does not fit is left out. */
+static void append(char *text, UInt32 size, UInt32 *len, const char *fmt, ...)
+{
+	va_list ap;
+
+	if (*len + 1 >= size)
+		return;
+	va_start(ap, fmt);
+	vsnprintf(text + *len, size - *len, fmt, ap);
+	va_end(ap);
+	while (text[*len])
+		(*len)++;
+}
 
 bool RadeonNISurfaceClient::initWithTask(task_t owningTask, void *securityID,
 					 UInt32 type)
@@ -93,6 +120,7 @@ IOReturn RadeonNISurfaceClient::clientClose(void)
 {
 	IOLog("RadeonNI: surface client %p (window %lu) closed after %lu calls\n",
 	      this, (unsigned long)fWid, (unsigned long)fCalls);
+	publishCounts(true);
 	unlockRead();
 	/*
 	 * The window server's and the program's clients share the surface
@@ -109,22 +137,171 @@ IOReturn RadeonNISurfaceClient::clientDied(void)
 	return clientClose();
 }
 
-void RadeonNISurfaceClient::note(const char *what, UInt32 a, UInt32 b, UInt32 c,
+void RadeonNISurfaceClient::note(UInt32 method, UInt32 a, UInt32 b, UInt32 c,
 				 UInt32 d)
 {
+	UInt32 n;
+
+	fMethodCalls[method]++;
 	if (fCalls++ < MAX_NOTES)
 		IOLog("RadeonNI: surface %lu: %s(0x%lx, 0x%lx, 0x%lx, 0x%lx)\n",
-		      (unsigned long)fWid, what, (unsigned long)a, (unsigned long)b,
-		      (unsigned long)c, (unsigned long)d);
+		      (unsigned long)fWid, methodNames[method], (unsigned long)a,
+		      (unsigned long)b, (unsigned long)c, (unsigned long)d);
+	/*
+	 * The properties are also written here, in case nothing reads them
+	 * the way serializeProperties() sees: at every power of two calls up
+	 * to 256, then every 256.
+	 */
+	n = fCalls;
+	if (n <= 256 ? !(n & (n - 1)) : !(n & 255))
+		publishCounts(false);
 }
 
-void RadeonNISurfaceClient::noteRegion(const char *what, IOAccelDeviceRegion *rgn,
+void RadeonNISurfaceClient::noteRegion(UInt32 method, IOAccelDeviceRegion *rgn,
 				       IOByteCount size)
 {
 	if (fCalls < MAX_NOTES && rgn && size >= sizeof(IOAccelDeviceRegion))
 		IOLog("RadeonNI: surface %lu:   %s region: %lu rects, bounds %d,%d %dx%d\n",
-		      (unsigned long)fWid, what, (unsigned long)rgn->num_rects,
+		      (unsigned long)fWid, methodNames[method],
+		      (unsigned long)rgn->num_rects,
 		      rgn->bounds.x, rgn->bounds.y, rgn->bounds.w, rgn->bounds.h);
+}
+
+/*
+ * The tables only grow, and a count is one word: two threads of a client
+ * in here at once can lose a count or enter a value twice, nothing worse.
+ */
+void RadeonNISurfaceClient::countControl(UInt32 selector, UInt32 arg)
+{
+	UInt32 i, j, n = fControlCount;
+
+	for (i = 0; i < n && fControl[i].selector != selector; i++)
+		;
+	if (i == n) {
+		if (n >= kControlSelectors) {
+			fControlOther++;
+			return;
+		}
+		fControl[i].selector = selector;
+		fControlCount = n + 1;
+	}
+	fControl[i].calls++;
+	n = fControl[i].argCount;
+	for (j = 0; j < n && fControl[i].args[j].arg != arg; j++)
+		;
+	if (j == n) {
+		if (n >= kControlArgs) {
+			fControl[i].otherArgs++;
+			return;
+		}
+		fControl[i].args[j].arg = arg;
+		fControl[i].argCount = n + 1;
+	}
+	fControl[i].args[j].calls++;
+}
+
+void RadeonNISurfaceClient::countFlush(UInt32 mask, UInt32 options)
+{
+	UInt32 i, n = fFlushCount;
+
+	for (i = 0; i < n && (fFlush[i].mask != mask || fFlush[i].options != options); i++)
+		;
+	if (i == n) {
+		if (n >= kFlushKinds) {
+			fFlushOther++;
+			return;
+		}
+		fFlush[i].mask = mask;
+		fFlush[i].options = options;
+		fFlushCount = n + 1;
+	}
+	fFlush[i].calls++;
+}
+
+/*
+ * Write the counts as three strings, into the registry and, when the
+ * client closes, into the log. Nothing is done when nothing was counted
+ * since the last time.
+ */
+void RadeonNISurfaceClient::publishCounts(bool log)
+{
+	UInt32 all = fCalls + fPrivateAsked, len, i, j;
+	char *text;
+
+	if (!all || (!log && all == fPublished))
+		return;
+	text = (char *)IOMalloc(COUNTS_TEXT);
+	if (!text)
+		return;
+	fPublished = all;
+
+	len = 0;
+	text[0] = 0;
+	append(text, COUNTS_TEXT, &len, "window %lu: %lu in all",
+	       (unsigned long)fWid, (unsigned long)fCalls);
+	for (i = 0; i < kIOAccelNumSurfaceMethods; i++)
+		if (fMethodCalls[i])
+			append(text, COUNTS_TEXT, &len, ", %s %lu", methodNames[i],
+			       (unsigned long)fMethodCalls[i]);
+	if (fPrivateAsked)
+		append(text, COUNTS_TEXT, &len, ", private methods asked for %lu",
+		       (unsigned long)fPrivateAsked);
+	setProperty("RadeonNICalls", text);
+	if (log)
+		IOLog("RadeonNI: surface calls: %s\n", text);
+
+	if (fControlCount) {
+		len = 0;
+		text[0] = 0;
+		append(text, COUNTS_TEXT, &len, "window %lu:", (unsigned long)fWid);
+		for (i = 0; i < fControlCount; i++) {
+			append(text, COUNTS_TEXT, &len, "%s selector %lu (%lu):",
+			       i ? ";" : "", (unsigned long)fControl[i].selector,
+			       (unsigned long)fControl[i].calls);
+			for (j = 0; j < fControl[i].argCount; j++)
+				append(text, COUNTS_TEXT, &len, "%s 0x%lx %lu",
+				       j ? "," : "",
+				       (unsigned long)fControl[i].args[j].arg,
+				       (unsigned long)fControl[i].args[j].calls);
+			if (fControl[i].otherArgs)
+				append(text, COUNTS_TEXT, &len, ", other arguments %lu",
+				       (unsigned long)fControl[i].otherArgs);
+		}
+		if (fControlOther)
+			append(text, COUNTS_TEXT, &len, "; other selectors %lu",
+			       (unsigned long)fControlOther);
+		setProperty("RadeonNIControl", text);
+		if (log)
+			IOLog("RadeonNI: surface control: %s\n", text);
+	}
+
+	if (fFlushCount) {
+		len = 0;
+		text[0] = 0;
+		append(text, COUNTS_TEXT, &len, "window %lu:", (unsigned long)fWid);
+		for (i = 0; i < fFlushCount; i++)
+			append(text, COUNTS_TEXT, &len, "%s mask 0x%lx options 0x%lx: %lu",
+			       i ? ";" : "", (unsigned long)fFlush[i].mask,
+			       (unsigned long)fFlush[i].options,
+			       (unsigned long)fFlush[i].calls);
+		if (fFlushOther)
+			append(text, COUNTS_TEXT, &len, "; other %lu",
+			       (unsigned long)fFlushOther);
+		setProperty("RadeonNIFlush", text);
+		if (log)
+			IOLog("RadeonNI: surface flush: %s\n", text);
+	}
+	IOFree(text, COUNTS_TEXT);
+}
+
+/*
+ * ioreg and IORegistryEntryCreateCFProperties() come through here, so the
+ * counts they show are the counts of that moment.
+ */
+bool RadeonNISurfaceClient::serializeProperties(OSSerialize *s) const
+{
+	((RadeonNISurfaceClient *)this)->publishCounts(false);
+	return super::serializeProperties(s);
 }
 
 IOExternalMethod *RadeonNISurfaceClient::getTargetAndMethodForIndex(
@@ -188,6 +365,7 @@ IOExternalMethod *RadeonNISurfaceClient::getTargetAndMethodForIndex(
 	};
 
 	if (index >= kIOAccelNumSurfaceMethods) {
+		fPrivateAsked++;
 		IOLog("RadeonNI: surface %lu: private method %lu asked for\n",
 		      (unsigned long)fWid, (unsigned long)index);
 		return 0;
@@ -202,20 +380,20 @@ IOReturn RadeonNISurfaceClient::readLockOptions(UInt32 options,
 {
 	IOReturn ret = lockForRead(info, size);
 
-	note("readLockOptions", options, ret, 0, 0);
+	note(kIOAccelSurfaceReadLockOptions, options, ret, 0, 0);
 	return ret;
 }
 
 IOReturn RadeonNISurfaceClient::readUnlockOptions(UInt32 options)
 {
-	note("readUnlockOptions", options, 0, 0, 0);
+	note(kIOAccelSurfaceReadUnlockOptions, options, 0, 0, 0);
 	unlockRead();
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNISurfaceClient::getState(UInt32 *state)
 {
-	note("getState", 0, 0, 0, 0);
+	note(kIOAccelSurfaceGetState, 0, 0, 0, 0);
 	*state = kIOAccelSurfaceStateIdleBit;
 	return kIOReturnSuccess;
 }
@@ -223,20 +401,20 @@ IOReturn RadeonNISurfaceClient::getState(UInt32 *state)
 IOReturn RadeonNISurfaceClient::writeLockOptions(UInt32 options,
 	IOAccelSurfaceInformation *info, IOByteCount *size)
 {
-	note("writeLockOptions", options, 0, 0, 0);
+	note(kIOAccelSurfaceWriteLockOptions, options, 0, 0, 0);
 	return kIOReturnUnsupported;
 }
 
 IOReturn RadeonNISurfaceClient::writeUnlockOptions(UInt32 options)
 {
-	note("writeUnlockOptions", options, 0, 0, 0);
+	note(kIOAccelSurfaceWriteUnlockOptions, options, 0, 0, 0);
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNISurfaceClient::read(IOAccelSurfaceReadData *data, void *out,
 				     IOByteCount inSize, IOByteCount *outSize)
 {
-	note("read", data ? data->x : 0, data ? data->y : 0, data ? data->w : 0,
+	note(kIOAccelSurfaceRead, data ? data->x : 0, data ? data->y : 0, data ? data->w : 0,
 	     data ? data->h : 0);
 	return kIOReturnUnsupported;
 }
@@ -244,8 +422,8 @@ IOReturn RadeonNISurfaceClient::read(IOAccelSurfaceReadData *data, void *out,
 IOReturn RadeonNISurfaceClient::setShapeBacking(UInt32 options, UInt32 fbIndex,
 	UInt32 backing, UInt32 rowBytes, IOAccelDeviceRegion *rgn, IOByteCount size)
 {
-	note("setShapeBacking", options, fbIndex, backing, rowBytes);
-	noteRegion("setShapeBacking", rgn, size);
+	note(kIOAccelSurfaceSetShapeBacking, options, fbIndex, backing, rowBytes);
+	noteRegion(kIOAccelSurfaceSetShapeBacking, rgn, size);
 	return kIOReturnSuccess;
 }
 
@@ -253,22 +431,22 @@ IOReturn RadeonNISurfaceClient::setIDMode(UInt32 wid, UInt32 mode)
 {
 	fWid = wid;
 	fMode = mode;
-	note("setIDMode", wid, mode, 0, 0);
+	note(kIOAccelSurfaceSetIDMode, wid, mode, 0, 0);
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNISurfaceClient::setScale(UInt32 options,
 	IOAccelSurfaceScaling *scaling, IOByteCount size)
 {
-	note("setScale", options, size, 0, 0);
+	note(kIOAccelSurfaceSetScale, options, size, 0, 0);
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNISurfaceClient::setShape(UInt32 options, UInt32 fbIndex,
 	IOAccelDeviceRegion *rgn, IOByteCount size)
 {
-	note("setShape", options, fbIndex, size, 0);
-	noteRegion("setShape", rgn, size);
+	note(kIOAccelSurfaceSetShape, options, fbIndex, size, 0);
+	noteRegion(kIOAccelSurfaceSetShape, rgn, size);
 	/* The structure is declared with one rectangle and holds num_rects. */
 	fSetShape = true;
 	if (rgn && size >= sizeof(IOAccelDeviceRegion) - sizeof(IOAccelBounds) &&
@@ -288,13 +466,14 @@ IOReturn RadeonNISurfaceClient::flush(UInt32 fbMask, UInt32 options)
 
 	if (fAccel && fWid && (fbMask & 1))
 		ret = fAccel->flushSurface(fWid);
-	note("flush", fbMask, options, ret, 0);
+	countFlush(fbMask, options);
+	note(kIOAccelSurfaceFlush, fbMask, options, ret, 0);
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNISurfaceClient::queryLock(void)
 {
-	note("queryLock", 0, 0, 0, 0);
+	note(kIOAccelSurfaceQueryLock, 0, 0, 0, 0);
 	return kIOReturnSuccess;
 }
 
@@ -303,13 +482,13 @@ IOReturn RadeonNISurfaceClient::readLock(IOAccelSurfaceInformation *info,
 {
 	IOReturn ret = lockForRead(info, size);
 
-	note("readLock", ret, 0, 0, 0);
+	note(kIOAccelSurfaceReadLock, ret, 0, 0, 0);
 	return ret;
 }
 
 IOReturn RadeonNISurfaceClient::readUnlock(void)
 {
-	note("readUnlock", 0, 0, 0, 0);
+	note(kIOAccelSurfaceReadUnlock, 0, 0, 0, 0);
 	unlockRead();
 	return kIOReturnSuccess;
 }
@@ -317,20 +496,21 @@ IOReturn RadeonNISurfaceClient::readUnlock(void)
 IOReturn RadeonNISurfaceClient::writeLock(IOAccelSurfaceInformation *info,
 					  IOByteCount *size)
 {
-	note("writeLock", 0, 0, 0, 0);
+	note(kIOAccelSurfaceWriteLock, 0, 0, 0, 0);
 	return kIOReturnUnsupported;
 }
 
 IOReturn RadeonNISurfaceClient::writeUnlock(void)
 {
-	note("writeUnlock", 0, 0, 0, 0);
+	note(kIOAccelSurfaceWriteUnlock, 0, 0, 0, 0);
 	return kIOReturnSuccess;
 }
 
 IOReturn RadeonNISurfaceClient::control(UInt32 selector, UInt32 arg,
 					UInt32 *result)
 {
-	note("control", selector, arg, 0, 0);
+	countControl(selector, arg);
+	note(kIOAccelSurfaceControl, selector, arg, 0, 0);
 	*result = 0;
 	return kIOReturnSuccess;
 }
@@ -339,7 +519,7 @@ IOReturn RadeonNISurfaceClient::setShapeBackingAndLength(UInt32 options,
 	UInt32 fbIndex, UInt32 backing, UInt32 rowBytes, UInt32 length,
 	IOAccelDeviceRegion *rgn, IOByteCount size)
 {
-	note("setShapeBackingAndLength", options, fbIndex, backing, rowBytes);
-	noteRegion("setShapeBackingAndLength", rgn, size);
+	note(kIOAccelSurfaceSetShapeBackingAndLength, options, fbIndex, backing, rowBytes);
+	noteRegion(kIOAccelSurfaceSetShapeBackingAndLength, rgn, size);
 	return kIOReturnSuccess;
 }
