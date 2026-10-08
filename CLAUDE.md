@@ -206,6 +206,13 @@ been planned in detail.
   Mesa's buffers and is resolved on the way to the screen; pixel format
   record word 9 carries sample buffers and samples. Doom 3 at ultra with
   4 samples: 20.9 and 21.7 fps, the GeForce 6600 LE 5.0 and 3.6.
+- Piglit (2026-10-08, `docs/PIGLIT.md`): 4,869 of 4,963 GL 2.1 tests pass
+  on the G5. Fixed from it: big-endian packed formats in r600 (`mesa/patches/
+  0006`), query results as little-endian dwords (0007), a real back buffer
+  (`OSMesaDoubleBuffer`, `OSMesaSwapBuffers[Async]`, patch 0008 for glthread;
+  `RDN_GLD_NO_BACKBUFFER=1` keeps the old single buffer; the window server is
+  never double-buffered). After a change to presentation grab the screen
+  before measuring (`scripts/mac.sh g5 grab`): a frame rate proves nothing.
 - Where the two games stand (2026-10-06, end of day, G5, 1920x1080):
   Doom 3 demo 48 and 51 fps on the saves `bench` and `bench2` (ARB2
   path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.
