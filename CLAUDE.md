@@ -347,6 +347,8 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
   measured on 2026-10-07 (Quartz Extreme is real; Core Image filters on the
   CPU and its picture comes out wrong, and why), what was built, what is
   next.
+- `docs/CORE-IMAGE-TODO.md`: a plan for hardware Core Image (A6), written
+  2026-10-08 for another agent to carry out; nothing started.
 - `docs/EXTENDED-DESKTOP-TODO.md`: the expected steps for two monitors as
   two displays (a plan from 2026-10-07; nothing started).
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
