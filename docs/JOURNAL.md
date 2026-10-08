@@ -4879,3 +4879,29 @@ window server restart.
 On the G5 now: bundle 7439dfcb (the test debris of this round is out of
 it only in part: the mach_msg first-of-a-kind log and the present log run
 only with the bundle's log on).
+
+## 2026-10-08: Core Image Fun House
+
+**The user:** in Core Image Fun House the window shows an effect only after
+another window has been moved over it.
+
+Two causes, both in the path of a program's own window (a surface of the
+window server's):
+1. Fun House is single-buffered and ends an update with `glFlush`; the
+   window server was told of a new picture only by a buffer swap
+   (`rdn_swap`), never by a flush. Now `glFlush` and `glFinish` of a
+   surface context that has not swapped finish the picture and tell the
+   window server (`rdn_flush_surface`, the same two calls a swap makes). A
+   double-buffered program is as before (its context swaps).
+2. Adding a Gaussian Blur turned the window black: Core Image keeps about
+   a dozen pbuffers of 15 MB (1820x1035 `GL_RGBA16`, 68 made, 4 destroyed
+   in a few seconds) and the pbuffers' stores came from the 222 MB heap
+   that every window surface and the CPU-visible aperture share; "pbuffer
+   1820x1035: no video memory" 30000 times. The stores now come from the
+   video memory beyond the aperture first (`rdn_target_vram_alloc_hidden`,
+   `RDN_UC_ALLOC_HIDDEN`, 768 MB, GPU only), the heap if that is full.
+
+After: Color Invert and Gaussian Blur (radius 10) show at once on a
+1693x961 image, 0 allocation failures, a dozen pbuffers live (181 MB).
+Tried by clicks (`drag`) and grabs: Color Invert, Gaussian Blur. Other
+filters of its list not tried; Quartz Composer, Preview not tried.

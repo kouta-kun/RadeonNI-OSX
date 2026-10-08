@@ -36,6 +36,12 @@ bool rdn_target_surface_region(uint32_t id, int32_t bounds[4],
  * is none.
  */
 bool rdn_target_vram_alloc(uint32_t bytes, uint32_t *offset);
+/*
+ * The same from the video memory beyond the aperture, which only the GPU
+ * reaches (rdn_target_vram_map gives NULL for it): for pbuffers. False if
+ * there is none; the caller then asks for the aperture's. Freed the same way.
+ */
+bool rdn_target_vram_alloc_hidden(uint32_t bytes, uint32_t *offset);
 void rdn_target_vram_free(uint32_t offset);
 /*
  * Where the CPU finds such memory, with all the GPU has finished writing

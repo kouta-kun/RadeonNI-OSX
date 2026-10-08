@@ -69,6 +69,18 @@ rdn_target_vram_alloc(uint32_t bytes, uint32_t *offset)
    return true;
 }
 
+bool
+rdn_target_vram_alloc_hidden(uint32_t bytes, uint32_t *offset)
+{
+   uint64_t o;
+
+   if (!the_device || !the_device->alloc_hidden ||
+       the_device->alloc_hidden(the_device, bytes, 4096, &o))
+      return false;
+   *offset = (uint32_t)o;
+   return true;
+}
+
 void
 rdn_target_vram_free(uint32_t offset)
 {

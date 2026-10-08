@@ -296,7 +296,7 @@ static void (*mesa_finish_fn)(void);
 
 void rdn_mesa_pbuffer_destroyed(void *record)
 {
-	int i;
+	int i, found = 0;
 
 	for (i = 0; i < MAX_CONTEXTS; i++) {
 		struct context *c = &contexts[i];
@@ -314,6 +314,7 @@ void rdn_mesa_pbuffer_destroyed(void *record)
 
 		if (p->key != record)
 			continue;
+		found = 1;
 		slot = &retired_pbuffers[retired_next++ % RETIRED_PBUFFERS];
 		if (slot->key) {
 			if (!mesa_finish_fn)
@@ -324,6 +325,16 @@ void rdn_mesa_pbuffer_destroyed(void *record)
 		}
 		*slot = *p;
 		memset(p, 0, sizeof(*p));
+	}
+	if (rdn_logging) {
+		unsigned live = 0, bytes = 0;
+
+		for (i = 0; i < MAX_PBUFFERS; i++)
+			if (pbuffers[i].key) {
+				live++;
+				bytes += pbuffers[i].row_bytes * pbuffers[i].height;
+			}
+		rdn_log("pbuffer %p destroyed (ours: %d); %u live, %u MB", record, found, live, bytes >> 20);
 	}
 }
 
@@ -405,7 +416,8 @@ static struct pbuffer *pbuffer_for(const uint32_t *r)
 	row_bytes = ((width + 63) & ~63u) * per_pixel;
 	bytes = row_bytes * ((height + 63) & ~63u);
 	bytes = (bytes + 4095) & ~4095u;
-	if (!rdn_target_vram_alloc(bytes, &free_slot->offset)) {
+	if (!rdn_target_vram_alloc_hidden(bytes, &free_slot->offset) &&
+	    !rdn_target_vram_alloc(bytes, &free_slot->offset)) {
 		rdn_log("pbuffer %ux%u: no video memory", (unsigned)width, (unsigned)height);
 		return NULL;
 	}
@@ -1610,6 +1622,23 @@ static int surface_direct(void)
 	if (known < 0)
 		known = getenv("RDN_GLD_DIRECT_SWAP") != NULL;
 	return known;
+}
+
+void rdn_flush_surface(void *rend)
+{
+	int i;
+
+	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].rend == rend &&
+		    contexts[i].type == DRAWABLE_SURFACE) {
+			if (contexts[i].swaps == 0 && contexts[i].bound) {
+				/* As for a swap: the picture is complete, then the window server knows. */
+				rdn_mesa_present(contexts[i].gld_ctx);
+				rdn_surface_flush(contexts[i].connection, contexts[i].window,
+						  contexts[i].surface);
+			}
+			return;
+		}
 }
 
 int rdn_swap(void *rend)

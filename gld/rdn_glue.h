@@ -87,6 +87,13 @@ void rdn_mesa_pbuffer_destroyed(void *pbuffer);
  * and `timeout` is called if they pass with no message.
  */
 void rdn_hook_mach_msg(unsigned (*idle)(void), void (*timeout)(void));
+/*
+ * glFlush and glFinish of a program's window (a surface of the window
+ * server's) that has not swapped: a single-buffered window shows what is
+ * drawn at a flush, and the window server is only told of a new picture
+ * by rdn_swap otherwise. Core Image Fun House draws that way.
+ */
+void rdn_flush_surface(void *rend);
 /* The pbuffer records are the window server's (size in words 8 and 9). */
 void rdn_mesa_pbuffer_layout(int window_server);
 int rdn_mesa_is_pbuffer(void *gld_ctx);

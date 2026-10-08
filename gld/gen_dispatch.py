@@ -2123,6 +2123,8 @@ def main():
             out.append('')
             continue
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
+        if name in ('flush', 'finish'):
+            out.append('\trdn_flush_surface(ctx);')
         if name in WATCHED:
             out.append('\tif (__builtin_expect(rdn_watch, 0))')
             out.append('\t\trdn_watch_%s(%s);' % (name, ', '.join(names)))
