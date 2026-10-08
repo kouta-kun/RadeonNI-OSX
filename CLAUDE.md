@@ -391,6 +391,8 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
   2026-10-08 for another agent to carry out; nothing started.
 - `docs/EXTENDED-DESKTOP-TODO.md`: the expected steps for two monitors as
   two displays (a plan from 2026-10-07; nothing started).
+- `docs/MEMORY-EVICTION.md`: video memory, the GART and why we have no eviction
+  (how other systems page, what `large-tex` showed, what to check first).
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
   Treat `[I]` as a hypothesis; fix the document when reality differs.
 
