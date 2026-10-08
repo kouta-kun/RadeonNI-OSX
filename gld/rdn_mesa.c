@@ -1770,8 +1770,17 @@ void rdn_mesa_present(void *gld_ctx)
 		rdn_make_current(c->rend);
 	if (c->rend != rdn_current_rend || !c->bound)
 		return;
-	if (c->dbl)
-		OSMesaSwapBuffers(c->mesa);
+	if (c->dbl) {
+		/*
+		 * A full-screen program does not wait for its picture: the swap
+		 * is queued behind the frame in glthread's thread. A surface is
+		 * read by the window server at once, so that swap is waited for.
+		 */
+		if (c->type == DRAWABLE_SCREEN && !rdn_window_server && !swap_finish())
+			OSMesaSwapBuffersAsync(c->mesa);
+		else
+			OSMesaSwapBuffers(c->mesa);
+	}
 	/*
 	 * A program that has the whole screen need not wait for its picture:
 	 * the copy to the screen is queued behind the drawing, and the

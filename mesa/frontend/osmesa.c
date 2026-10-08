@@ -1933,10 +1933,56 @@ OSMesaDoubleBuffer(GLboolean yes)
  * the front buffer becomes a copy of it (back-to-front copy: the back buffer
  * keeps its picture). Anything else is flushed as before.
  */
+static void osmesa_swap_now(OSMesaContext osmesa);
+
 GLAPI void GLAPIENTRY
 OSMesaSwapBuffers(OSMesaContext osmesa)
 {
    osmesa_sync(osmesa);
+   osmesa_swap_now(osmesa);
+}
+
+
+static void
+osmesa_swap_callback(void *arg)
+{
+   osmesa_swap_now((OSMesaContext)arg);
+}
+
+/*
+ * As OSMesaSwapBuffers, without waiting for glthread: the swap runs in
+ * its thread after the frame's last call, and the program goes on with
+ * the next frame. The caller must not touch what the swap shows (a
+ * surface the window server reads) before the swap is over; a full-screen
+ * program needs nothing. Without glthread it is the same as
+ * OSMesaSwapBuffers.
+ */
+GLAPI void GLAPIENTRY
+OSMesaSwapBuffersAsync(OSMesaContext osmesa)
+{
+   struct gl_context *ctx;
+   void (*flush)(void);
+
+   if (!osmesa || !osmesa->st)
+      return;
+   ctx = osmesa->st->ctx;
+   flush = (void (*)(void))OSMesaGetProcAddress("glFlush");
+   if (flush && ctx->GLThread.enabled &&
+       osmesa->current_buffer && osmesa->current_buffer->has_back &&
+       osmesa->current_buffer->direct &&
+       _mesa_glthread_set_done_callback(ctx, osmesa_swap_callback, osmesa)) {
+      /* The call is the batch's last, and the batch goes now. */
+      flush();
+      _mesa_glthread_flush_batch(ctx);
+      return;
+   }
+   OSMesaSwapBuffers(osmesa);
+}
+
+
+static void
+osmesa_swap_now(OSMesaContext osmesa)
+{
    struct osmesa_buffer *osbuffer;
    struct pipe_resource *back, *front;
    struct pipe_context *pipe;

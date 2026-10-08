@@ -5012,3 +5012,32 @@ forward, and left .rej files; regenerate a patch whenever the tree changes
 under it. Regression runs: `ours4` 4,852 pass; the bundle on the G5 is the
 build with both patches (`~/RadeonNIGLDriver.rgb9`).
 Read of the remaining failures: see docs/PIGLIT.md.
+
+## 2026-10-08: back buffer (branch `back-buffer`), the measurement
+
+The frontend had one colour buffer (`vis->buffer_mask` front only) and every
+glFlush showed it. Now a double-buffered window or full-screen context
+(`kCGLPFADoubleBuffer`, not the window server) gets a back buffer:
+`OSMesaDoubleBuffer`, `OSMesaSwapBuffers`, `OSMesaSwapBuffersAsync`;
+`RDN_GLD_NO_BACKBUFFER=1` keeps the old single buffer. piglit: drawbuffer-
+modes, front-invalidate-back, swapbuffers-behavior, read-front (both),
+fbo-sys-blit, fbo-sys-sub-blit, fcc-front-buffer-distraction now pass.
+Two bugs on the way: the draw buffer stayed GL_FRONT (Mesa chose it at the
+first make-current, on a drawable with no back buffer); and Mesa validates
+again when the front buffer is first needed and the frontend replaced the
+back buffer's texture with an empty one (the textures are kept now).
+Timedemos, same bundle, `RDN_GLD_NO_BACKBUFFER=1` against not (Quake 3 `four`
+1920x1080, 3 runs; Doom 3 `bench`, 2 runs):
+
+| | single buffer | back buffer, swap waits for glthread | back buffer, async swap |
+|---|---|---|---|
+| Quake 3 | 148.5 | 119.9 | 147.5 to 148.1 |
+| Doom 3 | 48.6 / 48.2 | 33.8 | 48.2 / 47.0 |
+
+A swap that drains glthread (`osmesa_sync`) removes the overlap of the
+program's thread and Mesa's: -19 % and -30 %; with glthread off the two modes
+are equal (119 against 120). `mesa/patches/0008-glthread-done-callback.patch`
+lets the swap run in glthread's thread after the frame; a full-screen swap is
+queued, a window's (read by the window server at once) still waits. The
+result is neutral within 0 to 2.5 %. Not yet seen by eye in the games; the
+window server is untouched. Full piglit re-run on the branch still to do.

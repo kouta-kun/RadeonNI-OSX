@@ -312,6 +312,10 @@ OSMesaDoubleBuffer( GLboolean yes );
 GLAPI void GLAPIENTRY
 OSMesaSwapBuffers( OSMesaContext ctx );
 
+/* The same without waiting for glthread's thread to run the frame (full-screen drawables). */
+GLAPI void GLAPIENTRY
+OSMesaSwapBuffersAsync( OSMesaContext ctx );
+
 /*
  * osx-gpu: with glthread, the most bytes glBufferData or glBufferSubData
  * can be given in one call without the program's thread waiting for the
