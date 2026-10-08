@@ -4928,3 +4928,25 @@ server's, so the caller sees the error. Whether this is what Fun House hit
 was not confirmed (the clicks I send to the app became unreliable after the
 window moved; no log of the failing case was caught). The bundle on the G5
 has the change (fd75a5f6), logs off.
+
+## 2026-10-08: all of Core Image's built-in filters
+
+`ciprobe list` (100 names) and a shell loop (`CIPROBE_N=2`, each filter
+a process for the soft and for the card render, compared; the table is
+`docs/ci-filters-2026-10-08.txt`): all 100 render on the card, none fails,
+crashes or says "not tilable". Greatest difference from the CPU picture
+within 8 of 255 for 89; for the rest, pixels over 8 out of 196608:
+CIBumpDistortion 13, CIGlassDistortion 2, CITriangleTile 255,
+CICircleSplashDistortion 270, CIEdgeWork 517, CIParallelogramTile 2418,
+CIVortexDistortion 11856, CITwirlDistortion 13159 (all on the edges of
+sharp features, by eye), CIRandomGenerator 129358 (noise; the pattern
+differs and has the same character), CISpotLight 146505 (the card's is
+brighter and bluer; its program uses POW and RSQ; which side is right was
+not decided).
+Soak: 40 window server filters in a row (Gaussian blur): window server
+alive, Core Image still reported, video memory allocations and a Core
+Image render still work. Preview opens an image fine. Not tried:
+Quartz Composer and its screen savers, iChat effects, floating point
+pbuffers, hours of use. The crash log of DashboardClient from 05:24 is
+from a window server restart (a client dies when its server does), not
+from the driver.

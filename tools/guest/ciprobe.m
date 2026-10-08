@@ -16,6 +16,8 @@
  *   ciprobe soft [filter]
  *       The same picture through Core Image's software renderer into a
  *       bitmap. Saves ciprobe-soft.ppm.
+ *   ciprobe list
+ *       The names of Core Image's built-in filters, one a line.
  *   ciprobe compare a.ppm b.ppm
  *       Greatest and mean difference per channel, and how many pixels
  *       differ by more than 8 in some channel.
@@ -649,6 +651,14 @@ int main(int argc, char **argv)
 	       (unsigned)pthread_mach_thread_np(pthread_self()), mode);
 	if (strcmp(mode, "soft") && argc > arg && argv[arg][0] >= '0' && argv[arg][0] <= '9')
 		renderer = strtol(argv[arg++], NULL, 0);
+	if (!strcmp(mode, "list")) {
+		NSArray *names = [CIFilter filterNamesInCategory:kCICategoryBuiltIn];
+		unsigned i;
+
+		for (i = 0; i < [names count]; i++)
+			printf("%s\n", [[names objectAtIndex:i] UTF8String]);
+		return 0;
+	}
 	if (!strcmp(mode, "pbuffer")) {
 		int ok = pbuffer_test(renderer, GL_TEXTURE_2D, 256, 256,
 				      "ciprobe-pbuffer-2d.ppm");
