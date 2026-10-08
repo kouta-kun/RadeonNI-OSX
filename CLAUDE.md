@@ -206,6 +206,13 @@ been planned in detail.
   Mesa's buffers and is resolved on the way to the screen; pixel format
   record word 9 carries sample buffers and samples. Doom 3 at ultra with
   4 samples: 20.9 and 21.7 fps, the GeForce 6600 LE 5.0 and 3.6.
+- Modes (2026-10-08, `docs/HOTPLUG.md`): the kext builds the mode list from the
+  EDID (54 modes at three depths on the Mi Monitor, 640x480 to 1920x1080);
+  Doom 3 starts in 800x600 and enters a map, and a 640x480/800x600/1024x768
+  desktop is clean once the device re-reads the screen's pitch. Display sleep
+  and hot-plug code is in the kext, not yet tried. `cgmode set ... seconds`
+  holds a mode (it is put back when the program ends). Never `killall` a game
+  on the G5: the user may be playing it.
 - Piglit (2026-10-08, `docs/PIGLIT.md`): 4,869 of 4,963 GL 2.1 tests pass
   on the G5. Fixed from it: big-endian packed formats in r600 (`mesa/patches/
   0006`), query results as little-endian dwords (0007), a real back buffer

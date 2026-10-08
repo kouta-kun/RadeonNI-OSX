@@ -5102,3 +5102,13 @@ at 640x480, 800x600 and 1024x768 show a clean desktop. Display sleep and
 hot-plug have not been tried; the dmesg ring is full of `setShape` lines, so
 the kext's own start-up lines are gone; read /var/log/system.log or lower the
 surface logging first.
+
+Doom 3 from the Finder, no saved config (the folder had been removed): it
+started in 800x600 (`r_mode 4`, in the list now), showed its menu, and the
+user saw it enter a map. An earlier run, also from the Finder, crashed on
+entering a map (about 16:07, no crash report; not reproduced; the test run
+that followed and the user's next one both entered the map). My test scripts
+ran `killall "Doom 3 Demo"` while the user was starting the game and probably
+killed one of their runs: never kill games on the G5 in a script; start them
+with an environment of their own and quit only what the script started (by
+the pid it saw).
