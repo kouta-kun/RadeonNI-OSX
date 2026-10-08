@@ -117,3 +117,29 @@ cable to the DVI-I connector (with its adapter): the picture comes up there.
 `docker run --rm -v $PWD:$PWD -w $PWD/kext/RadeonNI osx-gpu-darwin8
 powerpc-apple-darwin8-g++ -fsyntax-only -fpermissive ...` (the flags in
 `kext/RadeonNI/Makefile`; the SDK's headers need `-fpermissive` with GCC 14).
+
+## Open: Quake 3's menu (2026-10-08, evening)
+
+Quake 3 (Aspyr's 1.32 port in ~/Desktop/Quake 3) starts, plays the id logo
+and then shows only its menu background, or a black screen, and no menu items
+or cursor; the process runs at 100 % CPU in its event loop and the GPU
+completes about 90 command buffers a second. The user says the menu worked at
+some point (before today). What was ruled out, by runs started over ssh and
+quit by pid:
+
+- The back buffer: same with `RDN_GLD_NO_BACKBUFFER=1`.
+- Today's Mesa and bundle changes: the oldest saved bundle
+  (`~/RadeonNIGLDriver.before-packed`) gives the same.
+- The refresh rate of the mode: Quartz gives a program that asks for a size
+  without a rate the last mode of that size, so Quake 3 got 640x480 at 75 Hz
+  and 1080p at 50 Hz. The list now keeps every rate and puts the one nearest
+  60 Hz last in each size (`order_for_quartz()` in `hw/rdn_mode.c`); Quake 3
+  got 640x480 at 60 Hz and the menu is still empty. Doom 3 starts and enters a
+  map.
+- The kext's hot-plug polling and the connection callback were not ruled out;
+  the polling never reported an unplug.
+
+Not done: restart with the kext from before today's mode work
+(`~/RadeonNI.kext.before-modes`) to see whether the menu comes back at 1080p;
+a log of Quake 3's GL calls in the menu (`/tmp/rdngld.on`).
+Never kill Quake 3 or Doom 3 by name on the G5: use the pid.
