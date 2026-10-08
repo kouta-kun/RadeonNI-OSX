@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <IOKit/IOKitLib.h>
 
 #include "rdn_device.h"
@@ -167,6 +168,39 @@ static void gart_release_idle(struct darwin_device *d)
 		vm_deallocate(mach_task_self(), (vm_address_t)c->cpu, c->size);
 		c->cpu = NULL;
 		d->gart_bytes -= c->size;
+	}
+}
+
+/*
+ * A mode set changes the screen's size and pitch. The window server's
+ * program does not open the device again, so ask the kext, at most once
+ * in 20 ms (this is called at every GL context switch of the window
+ * server).
+ */
+static void dev_screen_refresh(struct rdn_device *dev)
+{
+	struct darwin_device *d = (struct darwin_device *)dev;
+	struct rdn_user_info info;
+	IOByteCount size = sizeof(info);
+	static uint64_t last;
+	uint64_t now = mach_absolute_time();
+	static mach_timebase_info_data_t tb;
+
+	if (!tb.denom)
+		mach_timebase_info(&tb);
+	if (last && (now - last) * tb.numer / tb.denom < 20000000ull)
+		return;
+	last = now;
+	if (IOConnectMethodScalarIStructureO(d->conn, RDN_UC_GET_INFO, 0, &size, &info) ||
+	    info.version != RDN_USER_VERSION)
+		return;
+	if (info.fb_bits_per_pixel == 32) {
+		d->base.screen.offset = info.fb_offset;
+		d->base.screen.width = info.fb_width;
+		d->base.screen.height = info.fb_height;
+		d->base.screen.pitch_pixels = info.fb_pitch_pixels;
+	} else {
+		d->base.screen.width = 0;
 	}
 }
 
@@ -581,6 +615,7 @@ struct rdn_device *rdn_device_open(void)
 	d->base.sync_for_cpu = dev_sync_for_cpu;
 	d->base.destroy = dev_destroy;
 	d->base.surface_region = dev_surface_region;
+	d->base.screen_refresh = dev_screen_refresh;
 	d->base.surface_buffer = dev_surface_buffer;
 	d->base.surface_list = dev_surface_list;
 	d->base.surface_locked = dev_surface_locked;

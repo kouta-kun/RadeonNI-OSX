@@ -120,6 +120,12 @@ struct rdn_device {
    void (*sync_for_cpu)(struct rdn_device *dev);
 
    /*
+    * Optional: read the screen's size, place and pitch again (a mode set
+    * changes them; `screen` is kept as the device last read it).
+    */
+   void (*screen_refresh)(struct rdn_device *dev);
+
+   /*
     * Optional: the shape on the screen of the window system's surface
     * `id`. False if unknown.
     */

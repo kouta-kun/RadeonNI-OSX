@@ -1158,6 +1158,22 @@ void rdn_make_current(void *rend)
 	for (i = 0; i < MAX_CONTEXTS; i++)
 		if (contexts[i].gld_ctx && contexts[i].rend == rend)
 			c = &contexts[i];
+	/*
+	 * A mode set changes the screen the window server's contexts draw
+	 * on (size and pitch; the device asks the kext at most every 20 ms):
+	 * attach it again, or the picture goes into the old shape.
+	 */
+	if (c && c->type == DRAWABLE_SCREEN && rdn_window_server) {
+		volatile uint32_t *px;
+		uint32_t w, h, p;
+
+		if (rdn_target_screen(&px, &w, &h, &p) &&
+		    (w != c->screen_width || h != c->screen_height || p != c->screen_pitch)) {
+			rdn_log("the screen is now %ux%u, pitch %u: attached again", (unsigned)w,
+				(unsigned)h, (unsigned)p);
+			rdn_mesa_attach_screen(c->gld_ctx, c->surface);
+		}
+	}
 	if (!c) {
 		rdn_log("GL call on engine context %p, which is not ours", rend);
 		return;

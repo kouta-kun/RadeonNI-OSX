@@ -4,7 +4,10 @@
  * uses, and put the cursor on a display.
  *
  *   cgmode list
- *   cgmode set <display-index> <width> <height> <bits-per-pixel>
+ *   cgmode set <display-index> <width> <height> <bits-per-pixel> [seconds]
+ *                                       (the mode is put back when the
+ *                                       program ends: give it seconds to
+ *                                       stay)
  *   cgmode cursor <display-index>       move the cursor to its centre
  *   cgmode main <display-index>         make it the main display (menu
  *                                       bar, Dock, new windows)
@@ -18,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <ApplicationServices/ApplicationServices.h>
 
 static long num(CFDictionaryRef d, CFStringRef key)
@@ -97,7 +101,7 @@ int main(int argc, char **argv)
 	}
 	i = atoi(argv[2]);
 
-	if (!strcmp(argv[1], "set") && argc == 6) {
+	if (!strcmp(argv[1], "set") && (argc == 6 || argc == 7)) {
 		boolean_t exact = 0;
 		CFDictionaryRef mode = CGDisplayBestModeForParameters(displays[i],
 			atoi(argv[5]), atoi(argv[3]), atoi(argv[4]), &exact);
@@ -107,10 +111,19 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		err = CGDisplaySwitchToMode(displays[i], mode);
-		printf("switch returned %d; now %lux%lu, %lu bpp\n", (int)err,
+		printf("switch returned %d; now %lux%lu, %lu bpp, %lu bytes a row, base %p\n", (int)err,
 		       (unsigned long)CGDisplayPixelsWide(displays[i]),
 		       (unsigned long)CGDisplayPixelsHigh(displays[i]),
-		       (unsigned long)CGDisplayBitsPerPixel(displays[i]));
+		       (unsigned long)CGDisplayBitsPerPixel(displays[i]),
+		       (unsigned long)CGDisplayBytesPerRow(displays[i]),
+		       CGDisplayBaseAddress(displays[i]));
+		/*
+		 * The mode lasts as long as this program does: with a number of
+		 * seconds as the last argument it stays that long (the mode of
+		 * a program that has gone is put back at once).
+		 */
+		if (!err && argc == 7)
+			sleep((unsigned)atoi(argv[6]));
 		return err ? 1 : 0;
 	}
 

@@ -27,6 +27,8 @@ PUBLIC bool
 rdn_target_screen(volatile uint32_t **pixels, uint32_t *width,
                   uint32_t *height, uint32_t *pitch)
 {
+   if (the_device && the_device->screen_refresh)
+      the_device->screen_refresh(the_device);
    if (!the_device || !the_device->screen.width)
       return false;
    *pixels = (volatile uint32_t *)((uint8_t *)the_device->aperture +
