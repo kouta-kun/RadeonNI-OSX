@@ -320,6 +320,19 @@ static int read_record(const struct context *c, struct drawable *d)
 	memset(d, 0, sizeof(*d));
 	if (!r || (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
 		return 0;
+	if (c->type == DRAWABLE_OFFSCREEN) {
+		/*
+		 * CGLSetOffScreen's record is the program's own: width,
+		 * height, row bytes and base in its first four words. The
+		 * engine's later words (REC_*) are not filled for it.
+		 */
+		d->width = r[0];
+		d->height = r[1];
+		d->rowbytes = r[2];
+		d->base = (void *)(uintptr_t)r[3];
+		return d->base && d->width && d->height &&
+		       d->rowbytes >= d->width * 4;
+	}
 	d->width = r[REC_WIDTH];
 	d->height = r[REC_HEIGHT];
 	d->rowbytes = (r[REC_ROW] >> 16) * (r[REC_ROW] & 0xffff);
@@ -612,6 +625,24 @@ void rdn_make_current(void *rend)
 	if (!c->mesa)
 		return;
 	async_data(c->mesa);
+	if (rdn_trace) {
+		int ok = read_record(c, &d);
+
+		rdn_log("make current: context %p type 0x%lx record %p: %s, %ux%u base %p row %u",
+			c->gld_ctx, c->type, (const void *)c->record,
+			ok ? "drawable" : "no drawable", (unsigned)d.width,
+			(unsigned)d.height, d.base, (unsigned)d.rowbytes);
+		if (c->record) {
+			int k;
+
+			for (k = 0; k < 32; k += 8)
+				rdn_log("  record+%02x: %08x %08x %08x %08x %08x %08x %08x %08x",
+					k * 4, c->record[k], c->record[k + 1],
+					c->record[k + 2], c->record[k + 3],
+					c->record[k + 4], c->record[k + 5],
+					c->record[k + 6], c->record[k + 7]);
+		}
+	}
 	if (!read_record(c, &d)) {
 		/*
 		 * No drawable yet: programs load textures and build display

@@ -4475,3 +4475,33 @@ ripple, filters in the window server and in programs that use Core Image
 and Motion, which want such a card to start) several times faster than
 the CPU does them. Nothing for the games. It needs pbuffers, a floating
 point one among them, and a renderer identity Core Image knows.
+
+## 2026-10-08: A6 stages 0 and 1 (docs/CORE-IMAGE-TODO.md)
+
+**Stage 0, reproduced** on the G5 with the bundle built from `main`
+(md5 9f7f487f, the same as the installed one; copy kept as
+`~/RadeonNIGLDriver.before-ci`). `appletest` all passed, `earlyext` as
+before. `ciprobe soft`: 8.2 ms a render (the plan said 12), checksum
+83e28896. `ciprobe gl 0x21a00` with the two switches and the full trace:
+three `gldCreateContext`, the second and third sharing with 0x280ea00,
+two attached with type 0, no `program:` lines. Same as the journal.
+
+**Stage 1, the "16x16" bug was not a size.** `glprobe draw 0x21a00` left
+the program's buffer all zero. A trace line in `rdn_make_current()`
+(`rdn_trace` only) showed `read_record()` failing at every call: for
+`CGLSetOffScreen` (type 0x35) the third argument's record is the
+program's own, `{width, height, rowbytes, base}` in words 0 to 3 (as
+`docs/GLD-INTERFACE.md` says), and `read_record()` read the window
+layout (words 4, 5, 11, 27) for both. Words 4 to 11 of the off-screen
+record are not filled. The context therefore stayed bound to the 16x16
+dummy for good, drawing and reading back there, and the program's memory
+was never written. `appletest` passed because it reads pixels back
+through `glReadPixels`, which came from the dummy; `ciprobe` reads the
+buffer itself, so it saw nothing (196352 of 196608 pixels different).
+
+**Fixed** in `read_record()`: off-screen records use words 0 to 3. After
+it: `glprobe draw` fills all 96x64 with green; `appletest` all passed;
+`vartest` as before; `ciprobe gl 0x21a00` without switches (Core Image
+on the CPU, drawn through us) compares equal to `ciprobe soft`: 0 of
+196608 pixels differ by more than 8, checksum 83e28896 both; 13.0 ms a
+render against 8.2.
