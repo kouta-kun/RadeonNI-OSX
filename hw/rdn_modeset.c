@@ -1205,3 +1205,63 @@ unlock:
 		return r ? r : v;
 	}
 }
+
+
+/*
+ * Hot-plug lines of both connectors, as evergreen_hpd_init() does. Not
+ * part of rdn_display_init(): its register accesses are compared with
+ * Linux's trace, which has none of these.
+ */
+void rdn_output_hpd_enable(struct rdn_card *card)
+{
+	rdn_dp_hpd_init(card, &outputs[RDN_OUTPUT_DP]);
+	rdn_dp_hpd_init(card, &outputs[RDN_OUTPUT_DVI]);
+}
+
+/*
+ * Is a display on the selected output? The state of its hot-plug line
+ * (evergreen_hpd_sense()); rdn_output_hpd_enable() must have run.
+ */
+bool rdn_output_connected(struct rdn_card *card)
+{
+	return rdn_dp_sense(card, card_output(card));
+}
+
+/*
+ * Display power management off: stop the picture and the signal, the way
+ * Linux does for DPMS off (radeon_atom_encoder_dpms_dig() and
+ * atombios_crtc_dpms()): on DisplayPort the video stream off, the
+ * transmitter off and the sink into its D3 power state; the CRTC blanked
+ * and stopped. The pixel clock and the display engine keep running.
+ * rdn_modeset() brings everything back, link training included. `mode` is
+ * the mode that is set.
+ */
+int rdn_output_disable(struct rdn_card *card, const struct rdn_mode *mode,
+		       bool hdmi)
+{
+	const struct rdn_output *out = card_output(card);
+	bool dp = output_is_dp(card);
+	int encoder_mode = dp ? ATOM_ENCODER_MODE_DP :
+		hdmi ? ATOM_ENCODER_MODE_HDMI : ATOM_ENCODER_MODE_DVI;
+	int r;
+
+	if (dp)
+		dig_encoder_setup(card, mode, ATOM_ENCODER_CMD_DP_VIDEO_OFF,
+				  encoder_mode);
+	r = dig_transmitter_setup(card, mode, ATOM_TRANSMITTER_ACTION_DISABLE, 0);
+	if (dp && card->dp.sink) {
+		static const uint8_t d3 = 2;	/* DP_SET_POWER_D3 */
+
+		rdn_dp_dpcd_write(card, out, 0x600, &d3, 1);
+	} else if (!dp) {
+		hdmi_enable(card, false);
+	}
+	lock_crtc(card, ATOM_ENABLE);
+	blank_crtc(card, ATOM_ENABLE);
+	enable_crtc_memreq(card, ATOM_DISABLE);
+	enable_crtc(card, ATOM_DISABLE);
+	lock_crtc(card, ATOM_DISABLE);
+	card->crtc_on = false;
+	rdn_log(card->os, RDN_LOG_INFO, "%s: output off", out->name);
+	return r;
+}

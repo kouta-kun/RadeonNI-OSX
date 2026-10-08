@@ -391,6 +391,9 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
   2026-10-08 for another agent to carry out; nothing started.
 - `docs/EXTENDED-DESKTOP-TODO.md`: the expected steps for two monitors as
   two displays (a plan from 2026-10-07; nothing started).
+- `docs/HOTPLUG.md`: the mode list from the EDID (Quake 3 and Doom 3's
+  640x480), display sleep and wake, hot-plug polling; written 2026-10-08, not
+  yet run on the G5.
 - `docs/MEMORY-EVICTION.md`: video memory, the GART and why we have no eviction
   (how other systems page, what `large-tex` showed, what to check first).
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.

@@ -14,6 +14,9 @@
 #define RADEONNI_H
 
 #include <IOKit/graphics/IOFramebuffer.h>
+#include <IOKit/IOLocks.h>
+#include <IOKit/IOWorkLoop.h>
+#include <IOKit/IOTimerEventSource.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
 extern "C" {
@@ -68,6 +71,12 @@ public:
 		IOSelect attribute, UInt32 value);
 	virtual IOReturn getAttributeForConnection(IOIndex connectIndex,
 		IOSelect attribute, UInt32 *value);
+	virtual IOReturn setAttribute(IOSelect attribute, UInt32 value);
+	virtual IOReturn registerForInterruptType(IOSelect interruptType,
+		IOFBInterruptProc proc, OSObject *target, void *ref,
+		void **interruptRef);
+	virtual IOReturn unregisterInterrupt(void *interruptRef);
+	virtual IOReturn setInterruptState(void *interruptRef, UInt32 state);
 	virtual IOReturn connectFlags(IOIndex connectIndex,
 		IODisplayModeID displayMode, IOOptionBits *flags);
 	virtual bool hasDDCConnect(IOIndex connectIndex);
@@ -133,6 +142,36 @@ private:
 	/* Colour table for 8 bpp, and the gamma ramp for the direct depths. */
 	struct rdn_lut_entry fClut[256];
 	struct rdn_lut_entry fGamma[256];
+
+	/*
+	 * Display power management and hot-plug (docs/HOTPLUG.md). fLock
+	 * serialises mode sets: the window server's, the display's wake and
+	 * the monitor's return. fOutputOn is false while the OS has the
+	 * display asleep; fConnected follows the hot-plug line, polled twice
+	 * a second (there are no interrupts yet).
+	 */
+	IOLock *fLock;
+	bool fOutputOn;
+	bool fConnected;
+	bool fHotplug;		/* poll the line (boot-arg rdn_hotplug=0 turns it off) */
+	bool fDpms;		/* act on power requests (boot-arg rdn_dpms=0: no) */
+	bool fCaptured;		/* a program has the display: no notices */
+	UInt32 fPowerMax;
+	int fSenseLast, fSenseSteady;
+	IOWorkLoop *fPollLoop;
+	IOTimerEventSource *fPollTimer;
+	IOFBInterruptProc fConnectProc;
+	OSObject *fConnectTarget;
+	void *fConnectRef;
+	bool fConnectOn;
+
+	IOReturn programModeLocked(IODisplayModeID id, IOIndex depth);
+	void setOutputPower(bool on);
+	void startHotplug();
+	void stopHotplug();
+	void pollHotplug();
+	void monitorReturned();
+	static void pollTimerFired(OSObject *owner, IOTimerEventSource *sender);
 
 	bool loadBios();
 	bool biosFromRom();

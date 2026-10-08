@@ -419,6 +419,18 @@ bool RadeonNI::useHDMI()
 
 IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 {
+	IOReturn r;
+
+	if (fLock)
+		IOLockLock(fLock);
+	r = programModeLocked(id, depth);
+	if (fLock)
+		IOLockUnlock(fLock);
+	return r;
+}
+
+IOReturn RadeonNI::programModeLocked(IODisplayModeID id, IOIndex depth)
+{
 	const struct rdn_mode *mode = modeForID(id);
 	int r;
 
@@ -435,6 +447,7 @@ IOReturn RadeonNI::programMode(IODisplayModeID id, IOIndex depth)
 	fCurrentMode = id;
 	fCurrentDepth = depth;
 	fModeSet = true;
+	fOutputOn = true;
 	/* The mode set leaves the cursor's registers to us. */
 	if (fHWCursor && fCursorLoaded)
 		rdn_cursor_set(&fCard, CURSOR_OFFSET, fCursorX, fCursorY,
@@ -454,6 +467,11 @@ bool RadeonNI::start(IOService *provider)
 	fDevice = OSDynamicCast(IOPCIDevice, provider);
 	if (!fDevice)
 		return false;
+
+	fLock = IOLockAlloc();
+	fOutputOn = true;
+	fConnected = true;
+	fPowerMax = 0;
 
 	IOLog("RadeonNI: device %04x:%04x, command %04x\n",
 	      fDevice->configRead16(kIOPCIConfigVendorID),
@@ -502,6 +520,17 @@ bool RadeonNI::start(IOService *provider)
 	}
 	IOLog("RadeonNI: framebuffer started\n");
 
+	{
+		int arg = 1;
+
+		fHotplug = !(PE_parse_boot_arg("rdn_hotplug", &arg) && !arg);
+		arg = 1;
+		fDpms = !(PE_parse_boot_arg("rdn_dpms", &arg) && !arg);
+		IOLog("RadeonNI: display power management %s, hot-plug polling %s\n",
+		      fDpms ? "on" : "off (rdn_dpms=0)", fHotplug ? "on" : "off (rdn_hotplug=0)");
+	}
+	startHotplug();
+
 	fHWCursor = getProperty("HWCursor") == kOSBooleanTrue;
 	/*
 	 * The accelerator is announced only when the personality asks for
@@ -531,10 +560,15 @@ void RadeonNI::cleanUp()
 		fRegMap = 0;
 	}
 	fRegs = 0;
+	if (fLock) {
+		IOLockFree(fLock);
+		fLock = 0;
+	}
 }
 
 void RadeonNI::stop(IOService *provider)
 {
+	stopHotplug();
 	if (fAccel) {
 		fAccel->retire(provider);
 		fAccel->release();
@@ -940,10 +974,66 @@ IOItemCount RadeonNI::getConnectionCount(void)
 	return 1;
 }
 
+/*
+ * What the OS sends is logged: this is the part of IOGraphics that is least
+ * documented (docs/HOTPLUG.md). Display sleep arrives as the power
+ * attribute, or as the syncs of the connection switched off (DPMS), or as
+ * the connection's power; each ends in setOutputPower().
+ */
 IOReturn RadeonNI::setAttributeForConnection(IOIndex connectIndex,
 	IOSelect attribute, UInt32 value)
 {
-	return super::setAttributeForConnection(connectIndex, attribute, value);
+	switch (attribute) {
+	case kConnectionSyncEnable:
+		IOLog("RadeonNI: connection syncs 0x%lx\n", (unsigned long)value);
+		/* The bits name the syncs that are off. */
+		if (fDpms)
+			setOutputPower(!(value & (kIOHSyncDisable | kIOVSyncDisable)));
+		return kIOReturnSuccess;
+	case kConnectionPower:
+		IOLog("RadeonNI: connection power %lu\n", (unsigned long)value);
+		if (fDpms)
+			setOutputPower(value != 0);
+		return kIOReturnSuccess;
+	case kConnectionPostWake:
+		/* The system woke: the monitor may have changed. */
+		IOLog("RadeonNI: connection post-wake\n");
+		fSenseSteady = 0;
+		return kIOReturnSuccess;
+	default:
+		return super::setAttributeForConnection(connectIndex, attribute, value);
+	}
+}
+
+IOReturn RadeonNI::setAttribute(IOSelect attribute, UInt32 value)
+{
+	switch (attribute) {
+	case kIOPowerAttribute:
+		/*
+		 * IOFramebuffer's power states: the highest is "on", every other
+		 * is a display that is not used. The value of "on" is learned as
+		 * the largest seen, so that a first request is never taken for off.
+		 */
+		if (value > fPowerMax)
+			fPowerMax = value;
+		IOLog("RadeonNI: power attribute %lu (on is %lu)\n", (unsigned long)value,
+		      (unsigned long)fPowerMax);
+		if (!fDpms)
+			return super::setAttribute(attribute, value);
+		if (value >= fPowerMax) {
+			setOutputPower(true);
+			handleEvent(kIOFBNotifyDidPowerOn);
+		} else {
+			handleEvent(kIOFBNotifyWillPowerOff);
+			setOutputPower(false);
+		}
+		return kIOReturnSuccess;
+	case kIOCapturedAttribute:
+		fCaptured = value != 0;
+		return kIOReturnSuccess;
+	default:
+		return super::setAttribute(attribute, value);
+	}
 }
 
 IOReturn RadeonNI::getAttributeForConnection(IOIndex connectIndex,
@@ -976,7 +1066,7 @@ IOReturn RadeonNI::connectFlags(IOIndex connectIndex,
 
 bool RadeonNI::hasDDCConnect(IOIndex connectIndex)
 {
-	return fEdidLen > 0;
+	return fConnected && fEdidLen > 0;
 }
 
 /* Blocks are numbered from 1. The EDID was read when the driver started. */
@@ -996,4 +1086,217 @@ IOReturn RadeonNI::getDDCBlock(IOIndex connectIndex, UInt32 blockNumber,
 	bcopy(fEdid + offset, data, n);
 	*length = n;
 	return kIOReturnSuccess;
+}
+
+
+/*
+ * Display power management and hot-plug.
+ */
+
+/* The picture and the signal off, or back (a mode set, with link training). */
+void RadeonNI::setOutputPower(bool on)
+{
+	if (!fLock)
+		return;
+	IOLockLock(fLock);
+	if (fModeSet && on != fOutputOn) {
+		if (on) {
+			IOReturn r = programModeLocked(fCurrentMode, fCurrentDepth);
+
+			IOLog("RadeonNI: output back on: %d\n", (int)r);
+		} else {
+			int r = rdn_output_disable(&fCard, modeForID(fCurrentMode), useHDMI());
+
+			fOutputOn = false;
+			IOLog("RadeonNI: output off: %d\n", r);
+		}
+	}
+	IOLockUnlock(fLock);
+}
+
+void RadeonNI::pollTimerFired(OSObject *owner, IOTimerEventSource *sender)
+{
+	RadeonNI *self = OSDynamicCast(RadeonNI, owner);
+
+	if (!self)
+		return;
+	self->pollHotplug();
+	sender->setTimeoutMS(500);
+}
+
+void RadeonNI::startHotplug()
+{
+	if (!fHotplug || fPollTimer)
+		return;
+	/* The lines of both connectors, as the first thing the poll reads. */
+	rdn_output_hpd_enable(&fCard);
+	IOSleep(100);
+	/*
+	 * A connector whose line reads low while the display answered over DDC
+	 * has no usable hot-plug line (an analog cable, an adapter without it):
+	 * polling it would call the display unplugged.
+	 */
+	if (!rdn_output_connected(&fCard)) {
+		IOLog("RadeonNI: %s: the hot-plug line reads low although the display answered: "
+		      "not polled\n", fCard.output->name);
+		return;
+	}
+	fSenseLast = fConnected ? 1 : 0;
+	fSenseSteady = 0;
+	fPollLoop = IOWorkLoop::workLoop();
+	if (!fPollLoop)
+		return;
+	fPollTimer = IOTimerEventSource::timerEventSource(this, pollTimerFired);
+	if (!fPollTimer || fPollLoop->addEventSource(fPollTimer) != kIOReturnSuccess) {
+		if (fPollTimer) {
+			fPollTimer->release();
+			fPollTimer = 0;
+		}
+		fPollLoop->release();
+		fPollLoop = 0;
+		return;
+	}
+	fPollTimer->setTimeoutMS(500);
+}
+
+void RadeonNI::stopHotplug()
+{
+	if (fPollTimer) {
+		fPollTimer->cancelTimeout();
+		if (fPollLoop)
+			fPollLoop->removeEventSource(fPollTimer);
+		fPollTimer->release();
+		fPollTimer = 0;
+	}
+	if (fPollLoop) {
+		fPollLoop->release();
+		fPollLoop = 0;
+	}
+}
+
+/*
+ * Every half second: has the hot-plug line of the selected output changed,
+ * and stayed so for a second (a monitor that wakes pulls the line low for a
+ * moment). Unplugged: nothing is torn down, the desktop stays and the
+ * connection says it has no DDC. Plugged in: read the EDID again.
+ */
+void RadeonNI::pollHotplug()
+{
+	int sense;
+
+	if (!fLock || !fModeSet)
+		return;
+	IOLockLock(fLock);
+	sense = rdn_output_connected(&fCard) ? 1 : 0;
+	if (sense != fSenseLast) {
+		fSenseLast = sense;
+		fSenseSteady = 0;
+	} else if (sense != (fConnected ? 1 : 0) && ++fSenseSteady >= 2) {
+		fSenseSteady = 0;
+		if (sense) {
+			monitorReturned();
+		} else {
+			fConnected = false;
+			IOLog("RadeonNI: %s: the monitor was unplugged\n", fCard.output->name);
+			if (fConnectProc && fConnectOn && !fCaptured)
+				(*fConnectProc)(fConnectTarget, fConnectRef);
+		}
+	}
+	IOLockUnlock(fLock);
+}
+
+/*
+ * A monitor is on the line again, the same one or another, and maybe on the
+ * other connector: find it, read its EDID, make the mode list, and set the
+ * mode of the same size (or the preferred one) with the link trained anew.
+ * Called with fLock held.
+ */
+void RadeonNI::monitorReturned()
+{
+	UInt8 edid[RDN_EDID_MAX_SIZE];
+	struct rdn_mode modes[kMaxModes];
+	UInt32 count, i, bytes, keep = 0, id = 1;
+	int len;
+	bool changed;
+
+	IOLog("RadeonNI: the monitor is back\n");
+	len = rdn_output_detect(&fCard, edid);
+	if (len < 0) {
+		IOLog("RadeonNI: no EDID yet (%d); will try again\n", len);
+		return;
+	}
+	changed = len != fEdidLen || bcmp(edid, fEdid, len) != 0;
+	if (changed) {
+		count = (UInt32)rdn_edid_modes(edid, len, modes, kMaxModes);
+		for (i = 0; i < count; i++) {
+			struct rdn_fb fb;
+
+			/* The window server maps the surface once, at its size. */
+			describeFb(&modes[i], kDepth32, &fb);
+			bytes = fb.pitch_pixels * 4 * fb.height;
+			if (bytes <= fSurfaceBytes)
+				modes[keep++] = modes[i];
+		}
+		if (!keep) {
+			IOLog("RadeonNI: the new monitor has no mode that fits\n");
+			return;
+		}
+		/* The mode of the size on screen now, else the preferred one. */
+		for (i = 0; i < keep; i++)
+			if (fModeSet && modes[i].hdisplay == fModes[fCurrentMode - 1].hdisplay &&
+			    modes[i].vdisplay == fModes[fCurrentMode - 1].vdisplay) {
+				id = i + 1;
+				break;
+			}
+		bcopy(edid, fEdid, len);
+		fEdidLen = len;
+		bcopy(modes, fModes, keep * sizeof(modes[0]));
+		fModeCount = keep;
+		setProperty("EDID", fEdid, fEdidLen);
+		setProperty("Output", fCard.output->name);
+		IOLog("RadeonNI: another monitor: %lu modes, %s\n", (unsigned long)keep,
+		      fCard.output->name);
+	} else {
+		id = fCurrentMode;
+	}
+	fConnected = true;
+	if (programModeLocked(id, fCurrentDepth) != kIOReturnSuccess)
+		IOLog("RadeonNI: the mode set after the monitor came back failed\n");
+	if (fConnectProc && fConnectOn && !fCaptured)
+		(*fConnectProc)(fConnectTarget, fConnectRef);
+}
+
+IOReturn RadeonNI::registerForInterruptType(IOSelect interruptType,
+	IOFBInterruptProc proc, OSObject *target, void *ref, void **interruptRef)
+{
+	if (interruptType == kIOFBConnectInterruptType) {
+		fConnectProc = proc;
+		fConnectTarget = target;
+		fConnectRef = ref;
+		fConnectOn = true;
+		*interruptRef = (void *)&fConnectProc;
+		IOLog("RadeonNI: the OS wants connection changes\n");
+		return kIOReturnSuccess;
+	}
+	return super::registerForInterruptType(interruptType, proc, target, ref,
+					       interruptRef);
+}
+
+IOReturn RadeonNI::unregisterInterrupt(void *interruptRef)
+{
+	if (interruptRef == (void *)&fConnectProc) {
+		fConnectProc = 0;
+		fConnectOn = false;
+		return kIOReturnSuccess;
+	}
+	return super::unregisterInterrupt(interruptRef);
+}
+
+IOReturn RadeonNI::setInterruptState(void *interruptRef, UInt32 state)
+{
+	if (interruptRef == (void *)&fConnectProc) {
+		fConnectOn = state == kEnabledInterruptState;
+		return kIOReturnSuccess;
+	}
+	return super::setInterruptState(interruptRef, state);
 }

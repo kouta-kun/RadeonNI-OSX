@@ -100,6 +100,21 @@ int rdn_display_init(struct rdn_card *card);
 int rdn_modeset(struct rdn_card *card, const struct rdn_mode *mode,
 		const struct rdn_fb *fb, bool hdmi);
 
+/* Enable the hot-plug lines of both connectors (after rdn_display_init()). */
+void rdn_output_hpd_enable(struct rdn_card *card);
+
+/* Is a display on the selected output (its hot-plug line)? */
+bool rdn_output_connected(struct rdn_card *card);
+
+/*
+ * Display power management off for the selected output: the picture and
+ * the signal stop (on DisplayPort the sink goes to its D3 power state). The
+ * way back is rdn_modeset() with the same mode, which trains the link
+ * again. `hdmi` as for rdn_modeset().
+ */
+int rdn_output_disable(struct rdn_card *card, const struct rdn_mode *mode,
+		       bool hdmi);
+
 /*
  * Write `count` entries of the colour table of CRTC 0 starting at `start`.
  * The table maps 8-bit indices (8 bpp) or channel values (16 and 32 bpp) to
