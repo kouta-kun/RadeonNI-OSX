@@ -1,15 +1,30 @@
-r600: big-endian packed formats (565, 4444, 5551, 2101010) sampled with the wrong hardware format and swizzle
+r600: big-endian packed formats (565, 4444, 5551, 2101010) used the wrong hardware format and swizzle
 
-On a big-endian host the format tables describe packed formats whose channels
-are not whole bytes in reverse channel order, while the hardware reads the
-word, after the 8IN16/8IN32 swap, as a little-endian word. r600 chose the
-hardware format and the swizzle from the reversed description. Use the
-little-endian view of such formats in r600_translate_texformat, and swap
-5_5_5_1 and 10_10_10_2 as well. Found by piglit (teximage-colors) on a
-Power Mac G5.
+On a big-endian host Mesa describes the packed formats whose channels are
+not whole bytes in reverse channel order (first channel in the top bits),
+while the hardware reads the word, after the 8IN16/8IN32 swap, as a
+little-endian word. r600 chose the hardware format and the swizzle from the
+reversed description. Use the little-endian view of such formats in
+r600_translate_texformat, r600_translate_colorformat and
+r600_translate_colorswap, and swap 5_5_5_1 and 10_10_10_2 as well. Found by
+piglit (teximage-colors) on a Power Mac G5; tools/guest/packedtest.c.
 
---- a/src/gallium/drivers/r600/r600_state_common.c	2026-10-08 14:02:06.223862961 -0300
-+++ b/src/gallium/drivers/r600/r600_state_common.c	2026-10-08 14:02:06.224824677 -0300
+diff -ruN a/src/gallium/drivers/r600/r600_pipe_common.h b/src/gallium/drivers/r600/r600_pipe_common.h
+--- a/src/gallium/drivers/r600/r600_pipe_common.h
++++ b/src/gallium/drivers/r600/r600_pipe_common.h
+@@ -832,6 +832,9 @@
+ 						const struct pipe_surface *templ);
+ void r600_destroy_surface_custom(struct pipe_surface *);
+ unsigned r600_translate_colorswap(enum pipe_format format, bool do_endian_swap);
++const struct util_format_description *
++r600_packed_le_view(const struct util_format_description *desc,
++		    struct util_format_description *copy);
+ void r600_texture_alloc_cmask_separate(struct r600_common_screen *rscreen,
+ 					struct r600_texture *rtex);
+ void r600_init_screen_texture_functions(struct r600_common_screen *rscreen);
+diff -ruN a/src/gallium/drivers/r600/r600_state_common.c b/src/gallium/drivers/r600/r600_state_common.c
+--- a/src/gallium/drivers/r600/r600_state_common.c
++++ b/src/gallium/drivers/r600/r600_state_common.c
 @@ -3256,6 +3256,46 @@
  }
  
@@ -25,7 +40,7 @@ Power Mac G5.
 + * 4444, 565 and the rest the wrong swizzle (piglit teximage-colors).
 + * Formats of whole bytes (8888) are in memory order and stay as they are.
 + */
-+static const struct util_format_description *
++const struct util_format_description *
 +r600_packed_le_view(const struct util_format_description *desc,
 +		    struct util_format_description *copy)
 +{
@@ -74,7 +89,18 @@ Power Mac G5.
  
  	/* Depth and stencil swizzling is handled separately. */
  	if (desc->colorspace != UTIL_FORMAT_COLORSPACE_ZS) {
-@@ -3789,6 +3830,7 @@
+@@ -3671,7 +3712,9 @@
+ uint32_t r600_translate_colorformat(enum amd_gfx_level chip, enum pipe_format format,
+ 						bool do_endian_swap)
+ {
+-	const struct util_format_description *desc = util_format_description(format);
++	struct util_format_description le_desc;
++	const struct util_format_description *desc =
++		r600_packed_le_view(util_format_description(format), &le_desc);
+ 	int channel = util_format_get_first_non_void_channel(format);
+ 	bool is_float;
+ 
+@@ -3789,6 +3832,7 @@
  
  		case V_0280A0_COLOR_5_6_5:
  		case V_0280A0_COLOR_1_5_5_5:
@@ -82,7 +108,7 @@ Power Mac G5.
  		case V_0280A0_COLOR_4_4_4_4:
  		case V_0280A0_COLOR_16_FLOAT:
  		case V_0280A0_COLOR_16:
-@@ -3805,6 +3847,7 @@
+@@ -3805,6 +3849,7 @@
  
  		case V_0280A0_COLOR_10_11_11_FLOAT:
  		case V_0280A0_COLOR_2_10_10_10:
@@ -90,3 +116,22 @@ Power Mac G5.
  		case V_0280A0_COLOR_8_24:
  		case V_0280A0_COLOR_24_8:
  		case V_0280A0_COLOR_32_FLOAT:
+diff -ruN a/src/gallium/drivers/r600/r600_texture.c b/src/gallium/drivers/r600/r600_texture.c
+--- a/src/gallium/drivers/r600/r600_texture.c
++++ b/src/gallium/drivers/r600/r600_texture.c
+@@ -1589,7 +1589,14 @@
+ 
+ unsigned r600_translate_colorswap(enum pipe_format format, bool do_endian_swap)
+ {
+-	const struct util_format_description *desc = util_format_description(format);
++	struct util_format_description le_desc;
++	const struct util_format_description *orig = util_format_description(format);
++	const struct util_format_description *desc = r600_packed_le_view(orig, &le_desc);
++
++	/* The little-endian view of a packed format is the one the hardware
++	 * sees after the swap, so the big-endian cases below do not apply. */
++	if (desc != orig)
++		do_endian_swap = false;
+ 
+ #define HAS_SWIZZLE(chan,swz) (desc->swizzle[chan] == PIPE_SWIZZLE_##swz)
+ 

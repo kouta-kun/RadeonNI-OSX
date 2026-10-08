@@ -124,6 +124,17 @@ int main(int argc, char **argv)
 			glEnd();
 			glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, nat);
 		}
+		if (t[i].native) {
+			uint8_t back[4] = { 0 };
+
+			glTexImage2D(GL_TEXTURE_2D, 0, t[i].native, 1, 1, 0, t[i].format, t[i].type, src);
+			glGetTexImage(GL_TEXTURE_2D, 0, t[i].format, t[i].type, back);
+			if (memcmp(back, src, t[i].bits / 8)) {
+				printf("%-22s round trip as the same type FAILED: sent %02x%02x%02x%02x got %02x%02x%02x%02x\n",
+				       t[i].name, src[0], src[1], src[2], src[3], back[0], back[1], back[2], back[3]);
+				bad++;
+			}
+		}
 		b1 = differs(got, t[i].want);
 		b2 = differs(drawn, t[i].want);
 		/* A texel without alpha reads back with alpha 1 on the quad. */
