@@ -1,0 +1,92 @@
+r600: big-endian packed formats (565, 4444, 5551, 2101010) sampled with the wrong hardware format and swizzle
+
+On a big-endian host the format tables describe packed formats whose channels
+are not whole bytes in reverse channel order, while the hardware reads the
+word, after the 8IN16/8IN32 swap, as a little-endian word. r600 chose the
+hardware format and the swizzle from the reversed description. Use the
+little-endian view of such formats in r600_translate_texformat, and swap
+5_5_5_1 and 10_10_10_2 as well. Found by piglit (teximage-colors) on a
+Power Mac G5.
+
+--- a/src/gallium/drivers/r600/r600_state_common.c	2026-10-08 14:02:06.223862961 -0300
++++ b/src/gallium/drivers/r600/r600_state_common.c	2026-10-08 14:02:06.224824677 -0300
+@@ -3256,6 +3256,46 @@
+ }
+ 
+ /* texture format translate */
++/*
++ * On a big-endian host Mesa describes the packed formats whose channels
++ * are not whole bytes (565, 4444, 5551, 2101010) with the channel order
++ * and swizzle reversed, first channel in the top bits. The hardware reads
++ * the word after the 8IN16/8IN32 swap as a little-endian word, so it
++ * needs the little-endian description: its format is chosen from the
++ * channels in order from the lowest bits, and its swizzle names them that
++ * way. Without it 5551 and 2101010 got the wrong hardware format and
++ * 4444, 565 and the rest the wrong swizzle (piglit teximage-colors).
++ * Formats of whole bytes (8888) are in memory order and stay as they are.
++ */
++static const struct util_format_description *
++r600_packed_le_view(const struct util_format_description *desc,
++		    struct util_format_description *copy)
++{
++	unsigned i, n = 0;
++	bool sub_byte = false;
++
++	if (!UTIL_ARCH_BIG_ENDIAN || desc->layout != UTIL_FORMAT_LAYOUT_PLAIN ||
++	    desc->is_array || (desc->block.bits != 16 && desc->block.bits != 32))
++		return desc;
++	for (i = 0; i < 4; i++) {
++		if (desc->channel[i].size) {
++			n++;
++			if (desc->channel[i].size % 8)
++				sub_byte = true;
++		}
++	}
++	if (!sub_byte || n < 2)
++		return desc;
++
++	*copy = *desc;
++	for (i = 0; i < n; i++)
++		copy->channel[i] = desc->channel[n - 1 - i];
++	for (i = 0; i < 4; i++)
++		if (desc->swizzle[i] < n)
++			copy->swizzle[i] = n - 1 - desc->swizzle[i];
++	return copy;
++}
++
+ uint32_t r600_translate_texformat(struct pipe_screen *screen,
+ 				  enum pipe_format format,
+ 				  const unsigned char *swizzle_view,
+@@ -3265,6 +3305,7 @@
+ 	struct r600_screen *rscreen = (struct r600_screen *)screen;
+ 	uint32_t result = 0, word4 = 0, yuv_format = 0;
+ 	const struct util_format_description *desc;
++	struct util_format_description le_desc;
+ 	bool uniform = true;
+ 	bool is_srgb_valid = false;
+ 	const unsigned char swizzle_xxxx[4] = {0, 0, 0, 0};
+@@ -3294,7 +3335,7 @@
+ 	if (format == PIPE_FORMAT_R4A4_UNORM && do_endian_swap)
+ 		format = PIPE_FORMAT_A4R4_UNORM;
+ 
+-	desc = util_format_description(format);
++	desc = r600_packed_le_view(util_format_description(format), &le_desc);
+ 
+ 	/* Depth and stencil swizzling is handled separately. */
+ 	if (desc->colorspace != UTIL_FORMAT_COLORSPACE_ZS) {
+@@ -3789,6 +3830,7 @@
+ 
+ 		case V_0280A0_COLOR_5_6_5:
+ 		case V_0280A0_COLOR_1_5_5_5:
++		case V_0280A0_COLOR_5_5_5_1:
+ 		case V_0280A0_COLOR_4_4_4_4:
+ 		case V_0280A0_COLOR_16_FLOAT:
+ 		case V_0280A0_COLOR_16:
+@@ -3805,6 +3847,7 @@
+ 
+ 		case V_0280A0_COLOR_10_11_11_FLOAT:
+ 		case V_0280A0_COLOR_2_10_10_10:
++		case V_0280A0_COLOR_10_10_10_2:
+ 		case V_0280A0_COLOR_8_24:
+ 		case V_0280A0_COLOR_24_8:
+ 		case V_0280A0_COLOR_32_FLOAT:
