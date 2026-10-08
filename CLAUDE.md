@@ -296,8 +296,12 @@ been planned in detail.
   when the window server starts, keeps the name in (for A6).
   `~/gl/wsfilter` (`tools/guest/wsfilter.c`) puts a Core Image filter on
   a window the way the Dock does for Dashboard's ripple and prints the
-  window server's states. Takes effect when the window server restarts;
-  on the G5 that had not happened yet when this was written.
+  window server's states. The window server asks for the list before its
+  context's table is Mesa's, when OpenGL's own engine still answers, so
+  the bundle also clears the engine's bit for the name at
+  `gldCreateContext` (`docs/GLD-INTERFACE.md`; `~/gl/earlyext` shows a
+  context's list at that moment). On the G5: "Core Image: Not Supported",
+  Quartz Extreme in use, by System Profiler and readback.
 - The Tiger device layer binds at most 512 MB behind the GART for one
   program (`GART_MOST_BYTES`): with about 860 MB bound the kext's bind
   call never returned and the process could not be killed (G5 restarted;

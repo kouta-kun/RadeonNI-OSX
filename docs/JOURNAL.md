@@ -4436,10 +4436,38 @@ there when the window server starts, keeps the name in, for when A6 is
 worked on. Checked with a copy of `appletest` named `WindowServer`: the
 name is gone, and back with the file.
 
-**Not yet seen:** the window server on the G5 still runs a bundle from
-before this, so System Profiler still says "Supported" until it restarts
-(the user's to allow). Bundle 2b6f92b4 is installed; the one from before
-the extension work is still `~/RadeonNIGLDriver.before-ext`.
+**That was not enough.** With the user's go-ahead the window server was
+restarted with that bundle: still "Core Image: Supported", state 0xf
+still 1. The window server asks its context for the list right after
+`cglsCreateContext`, through the context's table, before the bundle has
+given that table to Mesa (in the window server that happens when a
+drawable is attached). `tools/guest/earlyext.c` asks at that moment: the
+renderer is "Apple Software Renderer" and the list has 52 names, with
+`GL_ARB_fragment_program`. A second try, taking the name out of what
+`gldGetString` returns, did nothing either (another restart): the engine
+asks the plug-in for the renderer's name only and makes the list itself.
+
+How it makes it, read in `GLEngine`'s `glGetString_Exec`: a fixed part,
+then one name for each bit set in three words at 0x124 of the record
+that `gldCreateContext`'s fifth argument points to (inside the engine's
+context; the software renderer fills it in). Bit 15 of the first word is
+`GL_ARB_fragment_program` (49 `GL_APPLE_float_pixels`, 50
+`GL_APPLE_pixel_buffer`). Cleared from `earlyext` on Apple's software
+renderer, the name goes: 52 names, then 51.
+
+**Changed, the third build:** for the window server the bundle clears
+that bit when `gldCreateContext` has returned (`forward()` in
+`gld/RadeonNIGLDriver.c`, `rdn_ws_no_core_image()`), and Mesa's list
+leaves the name out as before. A copy of `earlyext` named `WindowServer`
+gets neither list with the name, and both with the file.
+
+**On the G5, after the third restart of the window server:** System
+Profiler says "Core Image: Not Supported" and "Quartz Extreme:
+Supported"; states 0xd, 0xe and 0xf read 0; `qe`: Quartz Extreme in use;
+desktop, a Finder window and Chess right by readback; no crash log;
+Quake 3 as fast as before. Bundle 9f7f487f is installed; the one from
+before the extension work is still `~/RadeonNIGLDriver.before-ext`. The
+user has not looked yet.
 
 **What Core Image on the card would gain,** for the record: Dashboard's
 ripple, filters in the window server and in programs that use Core Image

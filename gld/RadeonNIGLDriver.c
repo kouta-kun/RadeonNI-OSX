@@ -897,6 +897,42 @@ static int in_window_server(void)
 }
 #endif
 
+#ifdef RDN_MESA
+/*
+ * The window server takes GL_ARB_fragment_program in its list to mean
+ * that Core Image works on the display: that one name is what System
+ * Profiler prints as "Core Image: Supported" (CGSServerOperationState
+ * 0xf) and what makes the Dock ask for Dashboard's ripple. It does not
+ * work: Core Image does not use a renderer it does not know, and a filter
+ * put on a window changes nothing on the screen (tools/guest/wsfilter.c).
+ * So the window server is not told the name, and reports no Core Image.
+ * Fragment programs themselves stay as they are, for it and for every
+ * program. RDN_CI_FILE, there when the window server starts: the name
+ * stays in.
+ *
+ * The window server asks twice. First right after it has made its
+ * context, before the table is Mesa's (tools/guest/earlyext.c shows that
+ * moment): OpenGL's engine answers then, with a list it makes itself from
+ * a bit for each extension, in the record gldCreateContext's fifth
+ * argument points to and the software renderer fills in. So that bit is
+ * cleared when the context has been made (forward()). Later questions get
+ * Mesa's list, which leaves the name out as well (gen_dispatch.py).
+ */
+#define RDN_CI_FILE "/Library/Application Support/RadeonNI/coreimage"
+/* The words of extension bits in that record, and the bit. */
+#define ENGINE_FEATURES			0x124
+#define ENGINE_FEATURE_FRAGMENT_PROGRAM	0x8000ul
+
+int rdn_ws_no_core_image(void)
+{
+	static int no = -1;
+
+	if (no < 0)
+		no = in_window_server() && access(RDN_CI_FILE, F_OK) != 0;
+	return no;
+}
+#endif
+
 /* Changes made to what the software renderer answered. */
 static long adjust(int idx, long a, long b, long c, long d, long ret)
 {
@@ -1226,6 +1262,17 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		ret = real[idx](a, b, c, d, e, f, g, h);
 	if (restore_id)
 		*(long *)b = RDN_RENDERER_ID;
+#ifdef RDN_MESA
+	/* No Core Image to report: the engine's own list (rdn_ws_no_core_image). */
+	if (idx == IDX_gldCreateContext && ret == 0 && e && rdn_ws_no_core_image()) {
+		unsigned long *features = (unsigned long *)(e + ENGINE_FEATURES);
+
+		if (logf)
+			fprintf(logf, TAG "   extension bits %08lx: GL_ARB_fragment_program's cleared\n",
+				TAG_ARGS, *features);
+		*features &= ~ENGINE_FEATURE_FRAGMENT_PROGRAM;
+	}
+#endif
 	/*
 	 * The window server's own request is one the software renderer
 	 * answers with no format (seen: window, the three private

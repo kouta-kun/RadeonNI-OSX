@@ -135,6 +135,19 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
 - Apple's renderers answer 0 with no error when a vertex program is asked
   for the counts only fragment programs have (`glGetProgramivARB`, 0x8805
   to 0x8810); Mesa gives an error and no answer. Core Image asks.
+- A context that has just been made answers through the table OpenGL
+  filled in itself, until the bundle gives the table to Mesa (at the
+  program's first `gld*` call or when it makes the context current; in
+  the window server only when a drawable is attached). Until then
+  `GL_RENDERER` is "Apple Software Renderer" and `GL_EXTENSIONS` is a list
+  the engine makes: the plug-in is asked (`gldGetString`) for the
+  renderer's name only. The list is a fixed part and one name for each
+  bit set in three words at 0x124 of the record `gldCreateContext`'s
+  fifth argument points to. Bit 15 is `GL_ARB_fragment_program`, 16
+  `GL_ARB_fragment_shader`, 25 texture rectangles, 49
+  `GL_APPLE_float_pixels`, 50 `GL_APPLE_pixel_buffer`
+  (`tools/guest/earlyext.c`, 2026-10-08). The window server decides
+  "Core Image" from that early list.
 - CGL removes `kCGLPFAAccelerated` and the renderer ID from the attribute
   list before the plug-in sees it, and decides acceptance from the flags in
   the returned pixel format.

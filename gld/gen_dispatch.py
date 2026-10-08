@@ -1655,39 +1655,13 @@ static const char *const ext_default[] = {
 @DEFAULTS@	NULL
 };
 
-/*
- * The window server takes GL_ARB_fragment_program in its list to mean
- * that Core Image works on the display: that one name is what System
- * Profiler prints as "Core Image: Supported" (CGSServerOperationState
- * 0xf) and what makes the Dock ask for Dashboard's ripple. It does not
- * work: Core Image does not use a renderer it does not know, and a filter
- * put on a window changes nothing on the screen (tools/guest/wsfilter.c).
- * So the window server is not told the name, and reports no Core Image.
- * Fragment programs themselves stay as they are, for it and for every
- * program. The file RDN_CI_FILE, there when the window server starts:
- * the name stays in.
- */
-#define RDN_CI_FILE "/Library/Application Support/RadeonNI/coreimage"
-
-static int ext_no_core_image(void)
-{
-	static int no = -1;
-
-	if (no < 0) {
-		const char *name = getprogname();
-
-		no = name && !strcmp(name, "WindowServer") && access(RDN_CI_FILE, F_OK) != 0;
-	}
-	return no;
-}
-
 static int ext_ours(void)
 {
 	static int ours = -1;
 
 	if (ours < 0)
 		ours = flushrange || var_on() || (apple_on() && ext_default[0]) ||
-		       getenv("RDN_EXT_ADD") != NULL || ext_no_core_image();
+		       getenv("RDN_EXT_ADD") != NULL || rdn_ws_no_core_image();
 	return ours;
 }
 
@@ -1764,7 +1738,8 @@ static const GLubyte *ext_list(const GLubyte *mesa)
 		if (end > add)
 			ext_add(list, add, end - add);
 	}
-	if (ext_no_core_image()) {
+	/* Not for the window server (RadeonNIGLDriver.c, rdn_ws_no_core_image). */
+	if (rdn_ws_no_core_image()) {
 		ext_drop(list, "GL_ARB_fragment_program");
 		rdn_log("the window server is not told of GL_ARB_fragment_program (no Core Image)");
 	}

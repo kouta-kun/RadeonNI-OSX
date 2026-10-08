@@ -99,6 +99,12 @@ extern int rdn_trace;
 int rdn_trace_wanted(const char *name);
 
 /*
+ * The window server is not to find GL_ARB_fragment_program in its list
+ * (RadeonNIGLDriver.c).
+ */
+int rdn_ws_no_core_image(void);
+
+/*
  * The context draws on the card's screen, inside the shape of the window
  * server's surface `surface` (the whole screen if the kernel does not know
  * the surface). For the window server's compositing context. False if the

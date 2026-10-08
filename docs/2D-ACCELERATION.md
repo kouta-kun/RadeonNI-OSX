@@ -84,7 +84,10 @@ The gate **[V, 2026-10-08]**: the window server sets that state
 the strength of it. A filter put on a window that way changes nothing on
 the screen (`tools/guest/wsfilter.c`, three grabs). Since 2026-10-08 the
 bundle keeps that name from the window server, so nothing is reported
-that is not there; the file
+that is not there: System Profiler says "Core Image: Not Supported" on
+the G5. The window server asks before its context's table is Mesa's, so
+the name has to go from the list OpenGL's engine makes as well
+(`docs/GLD-INTERFACE.md`). The file
 `/Library/Application Support/RadeonNI/coreimage` brings it back.
 
 ### Why it filters on the CPU [V, 2026-10-07, later the same day]
