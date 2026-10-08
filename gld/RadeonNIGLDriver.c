@@ -250,6 +250,9 @@ static void setup(void)
 			rdn_hook_tex_image_pbuffer(rdn_mesa_tex_image_pbuffer);
 		if (logf)
 			rdn_hook_cgl_log();
+	} else if (rdn_ws_core_image()) {
+		/* Core Image in the window server: cglsTexImagePBuffer. */
+		rdn_hook_cgls_tex_image(rdn_mesa_tex_image_pbuffer_ws);
 	}
 #endif
 }
@@ -936,6 +939,21 @@ int rdn_ws_no_core_image(void)
 		no = in_window_server() && access(RDN_CI_FILE, F_OK) != 0;
 	return no;
 }
+
+/*
+ * The window server with RDN_CI_FILE: Core Image works on the card, and
+ * what it needs of the renderer (A6, docs/CORE-IMAGE-TODO.md) is true
+ * for the window server's contexts: the extension names client storage
+ * and float pixels, a renderer name it knows, pbuffers.
+ */
+int rdn_ws_core_image(void)
+{
+	static int yes = -1;
+
+	if (yes < 0)
+		yes = in_window_server() && access(RDN_CI_FILE, F_OK) == 0;
+	return yes;
+}
 #endif
 
 /* Changes made to what the software renderer answered. */
@@ -1176,6 +1194,18 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			return 1;
 		}
 	}
+	/*
+	 * The window server's Core Image makes contexts that share with its
+	 * own and draws into pbuffers (cglsCreatePBuffer, cglsAttachPBuffer):
+	 * the record is its own pbuffer object, with the size in words 8 and 9.
+	 */
+	if (rdn_ws_core_image() && idx == IDX_gldAttachDrawable && b == 0x5a && c) {
+		rdn_mesa_pbuffer_layout(1);
+		rdn_mesa_attach((void *)a, b, (const void *)c);
+		if (logf)
+			fprintf(logf, TAG "   pbuffer of the window server attached by us -> 2\n", TAG_ARGS);
+		return 2;
+	}
 	if (in_window_server()) {
 		if (idx == IDX_gldAttachDrawable) {
 			/* The record's third word is the surface ID. */
@@ -1188,6 +1218,20 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 				dump("drawable", c, 0x80);
 			}
 			return ret;
+		}
+		if ((idx == IDX_gldInitDispatch || idx == IDX_gldUpdateDispatch) &&
+		    rdn_ws_core_image() && screen_ctx != (void *)a &&
+		    rdn_mesa_is_pbuffer((void *)a)) {
+			/* Core Image's own context: Mesa's, nothing is presented. */
+			if (b)
+				table_fill(b);
+			if (b)
+				rdn_mesa_dispatch((void *)a, (void *)b);
+			if (logf) {
+				fprintf(logf, TAG "   dispatch of a pbuffer context set up by us\n", TAG_ARGS);
+				fflush(logf);
+			}
+			return idx == IDX_gldInitDispatch ? 4 : 0;
 		}
 		if ((idx == IDX_gldInitDispatch || idx == IDX_gldUpdateDispatch) &&
 		    screen_ctx == (void *)a) {

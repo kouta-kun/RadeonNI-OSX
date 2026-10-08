@@ -129,6 +129,19 @@ static long hooked_choose(const long *attrs, void **pix, long *npix)
 	return err;
 }
 
+/* The window server's cglsTexImagePBuffer (CoreGraphics), the same way. */
+static long (*real_cgls_tex_image)(void *ctx, void *pbuffer, long source);
+static int (*cgls_tex_image_handler)(void *ctx, void *pbuffer, long source, long *result);
+
+static long hooked_cgls_tex_image(void *ctx, void *pbuffer, long source)
+{
+	long result;
+
+	if (cgls_tex_image_handler(ctx, pbuffer, source, &result))
+		return result;
+	return real_cgls_tex_image(ctx, pbuffer, source);
+}
+
 static void rebind(const struct mach_header *mh, intptr_t slide)
 {
 	const struct load_command *lc = (const struct load_command *)(mh + 1);
@@ -195,6 +208,10 @@ static void rebind(const struct mach_header *mh, intptr_t slide)
 				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLChoosePixelFormat") &&
 				    pointers[k] != (void *)hooked_choose)
 					pointers[k] = (void *)hooked_choose;
+				if (real_cgls_tex_image &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_cglsTexImagePBuffer") &&
+				    pointers[k] != (void *)hooked_cgls_tex_image)
+					pointers[k] = (void *)hooked_cgls_tex_image;
 				if (real_tex_image &&
 				    !strcmp(strings + symbols[sym].n_un.n_strx, HOOKED_TEX) &&
 				    pointers[k] != (void *)hooked_tex_image)
@@ -284,5 +301,20 @@ void rdn_hook_cgl_log(void)
 		real_create_pbuffer = NULL;
 		return;
 	}
+	watch_images();
+}
+
+void rdn_hook_cgls_tex_image(int (*handler)(void *ctx, void *pbuffer, long source,
+					    long *result))
+{
+	if (real_cgls_tex_image)
+		return;
+	real_cgls_tex_image = (long (*)(void *, void *, long))
+		dlsym(RTLD_DEFAULT, "cglsTexImagePBuffer");
+	if (!real_cgls_tex_image) {
+		rdn_log("no cglsTexImagePBuffer to hook");
+		return;
+	}
+	cgls_tex_image_handler = handler;
 	watch_images();
 }

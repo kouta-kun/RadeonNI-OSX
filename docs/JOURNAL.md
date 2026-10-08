@@ -4645,3 +4645,34 @@ pbuffer context or not).
 `ciprobe pbuffer 0x21a00`, `appletest`, `sharetest`, Quake 3 and Doom 3
 were run again after the bundle changes of this stage: see the list
 below for the bundle on the G5.
+
+## 2026-10-08: A6 stage 5, prepared (nothing run in the real window server yet)
+
+Read in disassembly (CoreGraphics, on the G5): the window server's Core
+Image makes its pbuffers with `cglsCreatePBuffer`, `cglsAttachPBuffer` and
+`cglsTexImagePBuffer`, not CGL's. The pbuffer object is the window
+server's own: surface ID at word 2, texture target at word 3, format at
+word 4, size at words 8 and 9 (CGL's has it at 6 and 7), and its pixel
+format modes are 0x24 for 0x8058 and 0x1908, 0x2b for GL_RGBA16, 0x2c and
+0x2d for the float formats. `cglsAttachPBuffer` creates an `IOAccelSurface`
+for it like for a window and then calls the renderer's attach with type
+0x5a and the object as the record. `cglsTexImagePBuffer` is
+`cglsSetInteger(ctx, 0x3e6, ...)`, the engine's own and not ours, as for
+CGL (0x3e5), so the bundle hooks the symbol the same way
+(`rdn_hook_cgls_tex_image`). Its memory budget needs no mask:
+`fe_cgls_total_vram` is 64 MB.
+
+Everything behind `/Library/Application Support/RadeonNI/coreimage`,
+present when the window server starts (`rdn_ws_core_image()`):
+- the extension list has `GL_APPLE_client_storage` and `GL_APPLE_float_pixels`
+  (and keeps `GL_ARB_fragment_program`, so System Profiler reports Core
+  Image again), `GL_RENDERER` says "ATI Radeon HD 7570";
+- type 0x5a attaches are ours (the window server's record layout), they
+  return 2;
+- contexts attached to a pbuffer get Mesa's dispatch table (their own, not
+  the screen's);
+- `cglsTexImagePBuffer` is ours.
+Without the file nothing changes. A copy of `earlyext` named `WindowServer`
+shows the lists with and without the file as designed (297 names and the
+Radeon name against 293 and Mesa's). Bundle on the G5's disk is
+d9bfb565; the running window server still has 9f7f487f mapped.

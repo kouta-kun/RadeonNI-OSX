@@ -1644,6 +1644,9 @@ static const char *renderer_name(void)
 		name = getenv("RDN_RENDERER");
 		if (name && !*name)
 			name = NULL;
+		/* The window server with Core Image on the card: a name it knows. */
+		if (!name && rdn_ws_core_image())
+			name = "ATI Radeon HD 7570";
 		if (name)
 			rdn_log("GL_RENDERER is \\"%s\\" for this program (RDN_RENDERER)", name);
 	}
@@ -1661,7 +1664,8 @@ static int ext_ours(void)
 
 	if (ours < 0)
 		ours = flushrange || var_on() || (apple_on() && ext_default[0]) ||
-		       getenv("RDN_EXT_ADD") != NULL || rdn_ws_no_core_image();
+		       getenv("RDN_EXT_ADD") != NULL || rdn_ws_no_core_image() ||
+		       rdn_ws_core_image();
 	return ours;
 }
 
@@ -1737,6 +1741,12 @@ static const GLubyte *ext_list(const GLubyte *mesa)
 			;
 		if (end > add)
 			ext_add(list, add, end - add);
+	}
+	/* Core Image on the card in the window server: what it requires. */
+	if (rdn_ws_core_image()) {
+		ext_add(list, "GL_APPLE_client_storage", 23);
+		ext_add(list, "GL_APPLE_float_pixels", 21);
+		rdn_log("the window server is told of GL_APPLE_client_storage and GL_APPLE_float_pixels (Core Image)");
 	}
 	/* Not for the window server (RadeonNIGLDriver.c, rdn_ws_no_core_image). */
 	if (rdn_ws_no_core_image()) {

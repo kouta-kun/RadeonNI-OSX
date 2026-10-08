@@ -65,6 +65,13 @@ void rdn_hook_tex_image_pbuffer(int (*handler)(void *cgl_ctx, void *pbuffer,
 					       long source, long *result));
 /* rdn_hook.c: log CGLCreatePBuffer, CGLSetPBuffer and CGLChoosePixelFormat. */
 void rdn_hook_cgl_log(void);
+/* rdn_hook.c: the same for the window server's cglsTexImagePBuffer. */
+void rdn_hook_cgls_tex_image(int (*handler)(void *ctx, void *pbuffer, long source,
+					    long *result));
+/* The pbuffer records are the window server's (size in words 8 and 9). */
+void rdn_mesa_pbuffer_layout(int window_server);
+int rdn_mesa_is_pbuffer(void *gld_ctx);
+int rdn_mesa_tex_image_pbuffer_ws(void *cgls_ctx, void *pbuffer, long source, long *result);
 /* CGLTexImagePBuffer for a context of ours (rdn_mesa.c). */
 int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *result);
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
@@ -115,6 +122,8 @@ int rdn_trace_wanted(const char *name);
  * (RadeonNIGLDriver.c).
  */
 int rdn_ws_no_core_image(void);
+/* The window server with Core Image on the card (the file, RadeonNIGLDriver.c). */
+int rdn_ws_core_image(void);
 
 /*
  * The context draws on the card's screen, inside the shape of the window

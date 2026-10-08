@@ -155,6 +155,13 @@ struct pbuffer {
 	uint32_t flags, bytes_per_pixel;
 };
 static struct pbuffer pbuffers[MAX_PBUFFERS];
+/* The window server's records have the size in words 8 and 9, not 6 and 7. */
+static int pbuffer_ws;
+
+void rdn_mesa_pbuffer_layout(int window_server)
+{
+	pbuffer_ws = window_server;
+}
 
 void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
@@ -313,7 +320,7 @@ static void pbuffer_pixels(uint32_t format, uint32_t *flags, uint32_t *bytes)
 static struct pbuffer *pbuffer_for(const uint32_t *r)
 {
 	struct pbuffer *p = NULL, *free_slot = NULL;
-	uint32_t width = r[6], height = r[7];
+	uint32_t width = r[pbuffer_ws ? 8 : 6], height = r[pbuffer_ws ? 9 : 7];
 	uint32_t row_bytes, bytes, flags, per_pixel;
 	int i;
 
@@ -412,6 +419,19 @@ int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *
 			(unsigned)r[2], (unsigned)r[3], c->gld_ctx);
 	*result = 0;
 	return 1;
+}
+
+/* The window server's cglsTexImagePBuffer: the same, with its record. */
+int rdn_mesa_tex_image_pbuffer_ws(void *cgls_ctx, void *pbuffer, long source, long *result)
+{
+	int ret;
+
+	rdn_mesa_pbuffer_layout(1);
+	ret = rdn_mesa_tex_image_pbuffer(cgls_ctx, pbuffer, source, result);
+	if (rdn_trace)
+		rdn_log("cglsTexImagePBuffer(%p, %p) -> %s, %ld", cgls_ctx, pbuffer,
+			ret ? "ours" : "left to OpenGL", ret ? *result : 0L);
+	return ret;
 }
 
 /* Read the engine's record; false if there is nothing to draw into. */
@@ -587,6 +607,13 @@ int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,
 		rdn_current_rend = NULL;
 	rdn_log("attach: context %p draws on surface 0x%lx", gld_ctx, surface);
 	return 1;
+}
+
+int rdn_mesa_is_pbuffer(void *gld_ctx)
+{
+	struct context *c = find(gld_ctx);
+
+	return c && c->type == DRAWABLE_PBUFFER;
 }
 
 int rdn_mesa_is_surface(void *gld_ctx)
