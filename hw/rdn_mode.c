@@ -122,42 +122,23 @@ static unsigned mode_hz(const struct rdn_mode *m)
 	return total ? (unsigned)(((uint64_t)m->clock * 1000 + total / 2) / total) : 0;
 }
 
-/* Is there a mode of this size in the list? Programs ask for a size, not a rate. */
-static int size_index(const struct rdn_mode *list, int n, const struct rdn_mode *m)
+static bool have_mode(const struct rdn_mode *list, int n, const struct rdn_mode *m)
 {
 	int i;
 
-	for (i = 0; i < n; i++)
-		if (list[i].hdisplay == m->hdisplay && list[i].vdisplay == m->vdisplay)
-			return i;
-	return -1;
+	for (i = 0; i < n; i++) {
+		unsigned a = mode_hz(&list[i]), b = mode_hz(m);
+
+		if (list[i].hdisplay == m->hdisplay && list[i].vdisplay == m->vdisplay &&
+		    (a > b ? a - b : b - a) <= 1)
+			return true;
+	}
+	return false;
 }
 
-static unsigned hz_away(const struct rdn_mode *m)
-{
-	unsigned hz = mode_hz(m);
-
-	return hz > 60 ? hz - 60 : 60 - hz;
-}
-
-/*
- * One mode of each size. Quartz picks the last of several modes of one
- * size when a program asks for it without a rate (the log showed Quake 3
- * getting 640x480 at 75 Hz and 1920x1080 at 50 Hz while a 60 Hz mode of
- * each size was there), and a program cannot say which it wants. Of the
- * timings of one size the one nearest 60 Hz is kept, in the place of the
- * first; the preferred mode (the first) is never replaced.
- */
 static void add_mode(struct rdn_mode *out, int *n, int max, const struct rdn_mode *m)
 {
-	int at = size_index(out, *n, m);
-
-	if (at >= 0) {
-		if (at > 0 && hz_away(m) < hz_away(&out[at]))
-			out[at] = *m;
-		return;
-	}
-	if (*n >= max)
+	if (*n >= max || have_mode(out, *n, m))
 		return;
 	out[(*n)++] = *m;
 }
@@ -226,7 +207,57 @@ static const struct { uint8_t vic; struct rdn_mode m; } cea_modes[] = {
 	{ 31, { 148500, 1920, 2448, 2492, 2640, 1080, 1084, 1089, 1125, 0 } },
 };
 
-int rdn_edid_modes(const uint8_t *edid, int len, struct rdn_mode *out, int max)
+/*
+ * Quartz gives a program that asks for a size without a rate the last mode
+ * of that size in the list (the log showed Quake 3 getting 640x480 at
+ * 75 Hz and 1920x1080 at 50 Hz while 60 Hz modes of those sizes were
+ * there, and Doom 3's 800x600 at 60 Hz because that mode happened to be the
+ * last). So in each group of modes of one size the one nearest 60 Hz goes
+ * last. Every mode stays: a program that asks for a rate still gets it.
+ * `*pref` is the index of the preferred mode and follows it.
+ */
+static unsigned hz_away(const struct rdn_mode *m)
+{
+	unsigned hz = mode_hz(m);
+
+	return hz > 60 ? hz - 60 : 60 - hz;
+}
+
+static void order_for_quartz(struct rdn_mode *l, int n, int *pref)
+{
+	int i, j, best, last;
+
+	for (i = 0; i < n; i++) {
+		bool first = true;
+
+		for (j = 0; j < i; j++)
+			if (l[j].hdisplay == l[i].hdisplay && l[j].vdisplay == l[i].vdisplay)
+				first = false;
+		if (!first)
+			continue;
+		best = last = i;
+		for (j = i + 1; j < n; j++) {
+			if (l[j].hdisplay != l[i].hdisplay || l[j].vdisplay != l[i].vdisplay)
+				continue;
+			last = j;
+			if (hz_away(&l[j]) < hz_away(&l[best]))
+				best = j;
+		}
+		if (best != last) {
+			struct rdn_mode t = l[best];
+
+			l[best] = l[last];
+			l[last] = t;
+			if (*pref == best)
+				*pref = last;
+			else if (*pref == last)
+				*pref = best;
+		}
+	}
+}
+
+int rdn_edid_modes(const uint8_t *edid, int len, struct rdn_mode *out, int max,
+		   int *preferred)
 {
 	/* Established timings: bit 7 down to bit 0 of bytes 35 and 36; 0 is a size VESA DMT lacks. */
 	static const struct { uint16_t w, h, hz; } est1[8] = {
@@ -326,5 +357,12 @@ int rdn_edid_modes(const uint8_t *edid, int len, struct rdn_mode *out, int max)
 		add_mode(out, &n, max, d);
 	if ((d = dmt_find(1024, 768, 60)) && in_ranges(edid, d))
 		add_mode(out, &n, max, d);
+	{
+		int pref = 0;
+
+		order_for_quartz(out, n, &pref);
+		if (preferred)
+			*preferred = pref;
+	}
 	return n;
 }

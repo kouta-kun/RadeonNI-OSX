@@ -127,6 +127,8 @@ private:
 	bool fForceDVI;
 	struct rdn_mode fModes[kMaxModes];
 	UInt32 fModeCount;
+	/* The id of the monitor's preferred mode: it is not always 1, because of the order modes are listed in. */
+	UInt32 fPreferred;
 	UInt32 fSurfaceBytes;
 
 	/* The hardware cursor: what was last asked for. */

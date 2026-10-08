@@ -52,16 +52,19 @@ int main(int argc, char **argv)
 		}
 		len = fread(edid, 1, sizeof(edid), f);
 		fclose(f);
-		n = rdn_edid_modes(edid, (int)len, list, MAX);
+		int pi = 0;
+
+		n = rdn_edid_modes(edid, (int)len, list, MAX, &pi);
 		printf("%s: %d modes\n", argv[a], n);
 		for (i = 0; i < n; i++)
-			printf("  %2d: %4ux%-4u %3u Hz  %6u kHz%s%s\n", i + 1, list[i].hdisplay,
+			printf("  %2d: %4ux%-4u %3u Hz  %6u kHz%s%s%s\n", i + 1, list[i].hdisplay,
 			       list[i].vdisplay, hz(&list[i]), (unsigned)list[i].clock,
 			       (list[i].flags & RDN_MODE_NHSYNC) ? " -h" : " +h",
-			       (list[i].flags & RDN_MODE_NVSYNC) ? " -v" : " +v");
+			       (list[i].flags & RDN_MODE_NVSYNC) ? " -v" : " +v",
+			       i == pi ? "  (preferred)" : "");
 		if (n < 1 || !rdn_edid_preferred_mode(edid, &pref) ||
-		    memcmp(&pref, &list[0], sizeof(pref))) {
-			printf("FAIL: the preferred timing is not first\n");
+		    memcmp(&pref, &list[pi], sizeof(pref))) {
+			printf("FAIL: the preferred timing is not where it was said to be\n");
 			failures++;
 		}
 		for (i = 0; i < n; i++) {
@@ -76,10 +79,29 @@ int main(int argc, char **argv)
 			}
 			for (j = 0; j < i; j++)
 				if (list[j].hdisplay == m->hdisplay && list[j].vdisplay == m->vdisplay &&
-				    1) {
+				    hz(&list[j]) == hz(m)) {
 					printf("FAIL: modes %d and %d repeat\n", j + 1, i + 1);
 					failures++;
 				}
+		}
+		for (i = 0; i < n; i++) {
+			int last = i, best = i;
+
+			for (j = 0; j < n; j++)
+				if (list[j].hdisplay == list[i].hdisplay &&
+				    list[j].vdisplay == list[i].vdisplay) {
+					if (j > last)
+						last = j;
+					if ((hz(&list[j]) > 60 ? hz(&list[j]) - 60 : 60 - hz(&list[j])) <
+					    (hz(&list[best]) > 60 ? hz(&list[best]) - 60 : 60 - hz(&list[best])))
+						best = j;
+				}
+			if (hz(&list[last]) != hz(&list[best])) {
+				printf("FAIL: the last %ux%u mode is not the nearest to 60 Hz\n",
+				       list[i].hdisplay, list[i].vdisplay);
+				failures++;
+				break;
+			}
 		}
 		if (!has(list, n, 640, 480) || !has(list, n, 800, 600) || !has(list, n, 1024, 768)) {
 			printf("FAIL: 640x480, 800x600 or 1024x768 at 60 Hz is missing\n");

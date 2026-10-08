@@ -363,7 +363,12 @@ bool RadeonNI::bringUp()
 	      fCard.output->displayport ? "DisplayPort" : useHDMI() ? "HDMI" : "DVI",
 	      fForceDVI ? " (rdn_dvi)" : "");
 	/* The monitor's timings, the preferred one first (mode 1), and the sizes programs expect. */
-	fModeCount = (UInt32)rdn_edid_modes(fEdid, fEdidLen, fModes, kMaxModes);
+	{
+		int pref = 0;
+
+		fModeCount = (UInt32)rdn_edid_modes(fEdid, fEdidLen, fModes, kMaxModes, &pref);
+		fPreferred = (UInt32)pref + 1;
+	}
 	for (i = 0; i < fModeCount; i++)
 		IOLog("RadeonNI: mode %lu: %ux%u at %lu kHz\n", (unsigned long)i + 1,
 		      fModes[i].hdisplay, fModes[i].vdisplay, (unsigned long)fModes[i].clock);
@@ -399,7 +404,7 @@ bool RadeonNI::bringUp()
 		fClut[i] = fGamma[i];
 	}
 
-	describeFb(&fModes[0], kDepth32, &fFb);
+	describeFb(&fModes[fPreferred - 1], kDepth32, &fFb);
 	rdn_pattern_draw((volatile uint32_t *)fFbMap->getVirtualAddress(),
 			 fFb.width, fFb.height, fFb.pitch_pixels);
 
@@ -408,7 +413,7 @@ bool RadeonNI::bringUp()
 		IOLog("RadeonNI: display init failed (%d)\n", r);
 		return false;
 	}
-	return programMode(1, kDepth32) == kIOReturnSuccess;
+	return programMode(fPreferred, kDepth32) == kIOReturnSuccess;
 }
 
 bool RadeonNI::useHDMI()
@@ -703,7 +708,7 @@ bool RadeonNI::selftestTarget(struct rdn_accel *accel,
 
 IOReturn RadeonNI::enableController(void)
 {
-	return fModeSet ? kIOReturnSuccess : programMode(1, kDepth32);
+	return fModeSet ? kIOReturnSuccess : programMode(fPreferred, kDepth32);
 }
 
 /*
@@ -787,7 +792,7 @@ IOReturn RadeonNI::getInformationForDisplayMode(IODisplayModeID displayMode,
 	info->maxDepthIndex = kDepthCount - 1;
 	info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag;
 	/* The EDID's first detailed timing is the preferred mode. */
-	if (displayMode == 1)
+	if ((UInt32)displayMode == fPreferred)
 		info->flags |= kDisplayModeDefaultFlag;
 	return kIOReturnSuccess;
 }
@@ -870,7 +875,7 @@ IOReturn RadeonNI::getStartupDisplayMode(IODisplayModeID *displayMode,
 	IOIndex *depth)
 {
 	if (displayMode)
-		*displayMode = 1;
+		*displayMode = fPreferred;
 	if (depth)
 		*depth = kDepth32;
 	return kIOReturnSuccess;
@@ -1215,7 +1220,8 @@ void RadeonNI::monitorReturned()
 {
 	UInt8 edid[RDN_EDID_MAX_SIZE];
 	struct rdn_mode modes[kMaxModes];
-	UInt32 count, i, bytes, keep = 0, id = 1;
+	UInt32 count, i, bytes, keep = 0, id = 1, pref_id = 1;
+	int pref = 0;
 	int len;
 	bool changed;
 
@@ -1227,20 +1233,24 @@ void RadeonNI::monitorReturned()
 	}
 	changed = len != fEdidLen || bcmp(edid, fEdid, len) != 0;
 	if (changed) {
-		count = (UInt32)rdn_edid_modes(edid, len, modes, kMaxModes);
+		count = (UInt32)rdn_edid_modes(edid, len, modes, kMaxModes, &pref);
 		for (i = 0; i < count; i++) {
 			struct rdn_fb fb;
 
 			/* The window server maps the surface once, at its size. */
 			describeFb(&modes[i], kDepth32, &fb);
 			bytes = fb.pitch_pixels * 4 * fb.height;
-			if (bytes <= fSurfaceBytes)
+			if (bytes <= fSurfaceBytes) {
+				if ((int)i == pref)
+					pref_id = keep + 1;
 				modes[keep++] = modes[i];
+			}
 		}
 		if (!keep) {
 			IOLog("RadeonNI: the new monitor has no mode that fits\n");
 			return;
 		}
+		id = pref_id;
 		/* The mode of the size on screen now, else the preferred one. */
 		for (i = 0; i < keep; i++)
 			if (fModeSet && modes[i].hdisplay == fModes[fCurrentMode - 1].hdisplay &&
@@ -1252,6 +1262,7 @@ void RadeonNI::monitorReturned()
 		fEdidLen = len;
 		bcopy(modes, fModes, keep * sizeof(modes[0]));
 		fModeCount = keep;
+		fPreferred = pref_id;
 		setProperty("EDID", fEdid, fEdidLen);
 		setProperty("Output", fCard.output->name);
 		IOLog("RadeonNI: another monitor: %lu modes, %s\n", (unsigned long)keep,

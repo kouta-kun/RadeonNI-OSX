@@ -57,10 +57,14 @@ bool rdn_edid_preferred_mode(const uint8_t *edid, struct rdn_mode *mode);
 /*
  * Every mode an EDID offers (its detailed, established, standard and CEA
  * timings that are progressive, and 640x480, 800x600 and 1024x768 at 60 Hz
- * if the monitor's range limits allow them), the preferred one first, at
- * most `max`. `len` is the EDID's length. Returns the count.
+ * if the monitor's range limits allow them), at most `max`. `len` is the
+ * EDID's length. Of the modes of one size the one nearest 60 Hz is last,
+ * which is the one Quartz gives a program that does not name a rate.
+ * `*preferred` is the index of the monitor's preferred mode (not always the
+ * first). Returns the count.
  */
-int rdn_edid_modes(const uint8_t *edid, int len, struct rdn_mode *out, int max);
+int rdn_edid_modes(const uint8_t *edid, int len, struct rdn_mode *out, int max,
+		   int *preferred);
 
 /* True when the EDID carries an HDMI vendor block in a CEA extension. */
 bool rdn_edid_is_hdmi(const uint8_t *edid, int len);
