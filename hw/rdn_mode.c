@@ -122,23 +122,42 @@ static unsigned mode_hz(const struct rdn_mode *m)
 	return total ? (unsigned)(((uint64_t)m->clock * 1000 + total / 2) / total) : 0;
 }
 
-static bool have_mode(const struct rdn_mode *list, int n, const struct rdn_mode *m)
+/* Is there a mode of this size in the list? Programs ask for a size, not a rate. */
+static int size_index(const struct rdn_mode *list, int n, const struct rdn_mode *m)
 {
 	int i;
 
-	for (i = 0; i < n; i++) {
-		unsigned a = mode_hz(&list[i]), b = mode_hz(m);
-
-		if (list[i].hdisplay == m->hdisplay && list[i].vdisplay == m->vdisplay &&
-		    (a > b ? a - b : b - a) <= 1)
-			return true;
-	}
-	return false;
+	for (i = 0; i < n; i++)
+		if (list[i].hdisplay == m->hdisplay && list[i].vdisplay == m->vdisplay)
+			return i;
+	return -1;
 }
 
+static unsigned hz_away(const struct rdn_mode *m)
+{
+	unsigned hz = mode_hz(m);
+
+	return hz > 60 ? hz - 60 : 60 - hz;
+}
+
+/*
+ * One mode of each size. Quartz picks the last of several modes of one
+ * size when a program asks for it without a rate (the log showed Quake 3
+ * getting 640x480 at 75 Hz and 1920x1080 at 50 Hz while a 60 Hz mode of
+ * each size was there), and a program cannot say which it wants. Of the
+ * timings of one size the one nearest 60 Hz is kept, in the place of the
+ * first; the preferred mode (the first) is never replaced.
+ */
 static void add_mode(struct rdn_mode *out, int *n, int max, const struct rdn_mode *m)
 {
-	if (*n >= max || have_mode(out, *n, m))
+	int at = size_index(out, *n, m);
+
+	if (at >= 0) {
+		if (at > 0 && hz_away(m) < hz_away(&out[at]))
+			out[at] = *m;
+		return;
+	}
+	if (*n >= max)
 		return;
 	out[(*n)++] = *m;
 }

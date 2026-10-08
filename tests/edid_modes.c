@@ -76,7 +76,7 @@ int main(int argc, char **argv)
 			}
 			for (j = 0; j < i; j++)
 				if (list[j].hdisplay == m->hdisplay && list[j].vdisplay == m->vdisplay &&
-				    hz(&list[j]) == hz(m)) {
+				    1) {
 					printf("FAIL: modes %d and %d repeat\n", j + 1, i + 1);
 					failures++;
 				}
