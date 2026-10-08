@@ -4734,3 +4734,57 @@ at 300,300, `WSF_PLAIN=1` = nothing drawn in it): CIColorInvert shows the
 desktop behind it inverted (blue to orange, the Finder window black with
 white text, right way up); CIGaussianBlur blurs the region, CISepiaTone and
 CIPixellate ran. Not seen by the user. Dashboard's ripple not tried yet.
+
+## 2026-10-08: A6 stage 5, end: the first-pass bug, Dashboard, state left on the G5
+
+**The first filter after every window server start came out black**
+(later ones right; with the full GL trace on, also right). A copy of the
+backdrop that finished first (`fence_finish`) changed nothing; reading the
+pbuffer after the Core Image context's draws (debug, with the log on)
+showed 0xffffffff in the middle, i.e. the quad had been drawn without a
+texture; logging the context's state at its first make-current showed the
+rectangle texture binding **0** although the window server had bound
+texture 0x73 there (`glIsTexture(0x73)` was 1). The window server's
+first calls on a new Core Image context come before its drawable is
+attached and carry the screen context's engine context, so they run in
+whichever Mesa context is current (no "not ours" line is logged: the
+engine context is a known one). The new context therefore never had its
+binding; later passes work because that context is the current one when
+those calls are made. Fix: when a window server pbuffer context is first
+made current it takes over the rectangle texture bound in the context that
+was current (`rdn_make_current()`, `inherit`). The trace file can now name
+the functions to trace (`/tmp/rdngld.trace` with names, comma or line
+separated), which is what made the sequence readable without changing the
+timing.
+
+**Dashboard.** `open /Applications/Dashboard.app` shows the widgets over
+the dimmed desktop; the widget bar opens (a click on its plus, with
+`~/gl/drag`); dragging a widget out and releasing makes the other widgets
+ripple for about a second (a grab 1.2 s after the release shows the
+Calculator and the World Clock distorted like water, the next one the
+settled picture). The window server's own log shows two
+`kCGErrorIllegalArgument` lines from the Dock's widget handling
+(`CGXSetWindowListAlpha: Invalid window 0`,
+`CGXRemoveTrackingArea ... not owned by caller`); not looked into, no
+crash log, same window server process. The widget was removed and
+Dashboard dismissed again afterwards (a click outside the widgets).
+
+**Left like this on the G5:**
+- bundle e6b0b54b (`/System/Library/Extensions/RadeonNIGLDriver.bundle`);
+  the one from before this work is `~/RadeonNIGLDriver.before-ci`
+  (9f7f487f); `~/gl` has the new `ciprobe`, `wsfilter` and `sharetest`
+  (`ciprobe.before-mask` is the old one);
+- `/Library/Application Support/RadeonNI/coreimage` present and the
+  window server (pid at the time 6006) started with it, no log files: Core
+  Image runs on the card there ("Core Image: Supported" in System
+  Profiler). To go back: `sudo rm` that file and `sudo killall
+  WindowServer`;
+- no `pbuffer` file, so programs get pbuffers only with `RDN_PBUFFER=1`;
+  nothing else of a program's behaviour changed (Quake 3 148.4, Doom 3
+  `bench` 49.0 frames a second after the last change).
+
+**Not done:** floating point pbuffers (stores exist; nothing drew into
+one), a long run of ripples (the pbuffers' memory is given back with a
+delay by the destroy hooks; no leak check beyond a few filters),
+Core Image in a program with a window, stage 6's questions (which renderer
+name, default or not) and goal 3 (the user's eyes on the ripple).
