@@ -81,6 +81,12 @@ int rdn_mesa_cgls_set_integer(void *ctx, long pname, long *vals, long *result);
  */
 void rdn_hook_destroy_pbuffer(void (*handler)(void *pbuffer));
 void rdn_mesa_pbuffer_destroyed(void *pbuffer);
+/*
+ * rdn_hook.c: `idle` is called whenever any thread calls mach_msg only to wait
+ * for a message; it returns how many milliseconds to wait first (0: none),
+ * and `timeout` is called if they pass with no message.
+ */
+void rdn_hook_mach_msg(unsigned (*idle)(void), void (*timeout)(void));
 /* The pbuffer records are the window server's (size in words 8 and 9). */
 void rdn_mesa_pbuffer_layout(int window_server);
 int rdn_mesa_is_pbuffer(void *gld_ctx);

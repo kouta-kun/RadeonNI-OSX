@@ -23,6 +23,7 @@
 #include <GL/gl.h>
 #include <GL/osmesa.h>
 
+#include <stdio.h>
 #include <unistd.h>
 
 #include "rdn_glue.h"
@@ -781,6 +782,97 @@ void rdn_mesa_detach(void *gld_ctx)
 		rdn_current_rend = NULL;
 }
 
+/*
+ * The window server composes a frame in several passes, each ended by a
+ * glFlush that copies to the screen, and the frame is only whole after the
+ * last: the pass with the filter's backdrop is shown without the widget
+ * that is drawn over it next, for as long as that pass takes (a few
+ * milliseconds: a flicker). So the copies are put off and merged
+ * (OSMesaDeferPresent) and made when a few milliseconds have passed
+ * with the window server's thread waiting for a message (mach_msg with a
+ * timeout, rdn_hook_mach_msg; it has no run loop for a timer), or when it
+ * calls for a message and the copies are older than that. Until that
+ * thread has been seen to wait many times, every flush copies at once as
+ * before.
+ */
+#include <pthread.h>
+
+#include <sys/time.h>
+
+#define DEFER_MS 6
+
+static pthread_t defer_thread;
+static int defer_set, defer_on, defer_pending;
+static unsigned defer_idle_calls;
+static struct timeval defer_first;
+static OSMesaContext defer_ctx;
+
+static void defer_hook(OSMesaContext m)
+{
+	defer_ctx = m;
+	if (!defer_pending) {
+		defer_pending = 1;
+		gettimeofday(&defer_first, NULL);
+	}
+}
+
+static void defer_now(void)
+{
+	int i;
+
+	defer_pending = 0;
+	for (i = 0; defer_ctx && i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].mesa == defer_ctx) {
+			rdn_make_current(contexts[i].rend);
+			OSMesaPresentPending(defer_ctx);
+			break;
+		}
+}
+
+/* The window server's thread is about to wait for a message. */
+static unsigned defer_idle(void)
+{
+	struct timeval now;
+	long age_us;
+
+	if (!defer_set || !pthread_equal(pthread_self(), defer_thread))
+		return 0;
+	if (!defer_on) {
+		/* Seen to go idle between frames, often enough. */
+		if (++defer_idle_calls == 10) {
+			defer_on = 1;
+			OSMesaDeferPresent(GL_TRUE, defer_hook);
+			rdn_log("the window server's thread goes idle: copies to the screen are put off for up to %d ms", DEFER_MS);
+		}
+		return 0;
+	}
+	if (!defer_pending)
+		return 0;
+	gettimeofday(&now, NULL);
+	age_us = (now.tv_sec - defer_first.tv_sec) * 1000000L + (now.tv_usec - defer_first.tv_usec);
+	if (age_us >= DEFER_MS * 1000L) {
+		defer_now();
+		return 0;
+	}
+	return (unsigned)((DEFER_MS * 1000L - age_us + 999) / 1000);
+}
+
+/* The time ran out with no message: the frame is whole. */
+static void defer_timeout(void)
+{
+	if (defer_pending)
+		defer_now();
+}
+
+static void defer_setup(void)
+{
+	if (defer_set || access("/Library/Application Support/RadeonNI/nodefer", F_OK) == 0)
+		return;
+	defer_thread = pthread_self();
+	defer_set = 1;
+	rdn_hook_mach_msg(defer_idle, defer_timeout);
+}
+
 int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 {
 	static int16_t rects[MAX_SCREEN_RECTS][4];
@@ -801,6 +893,8 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 	}
 	c->type = DRAWABLE_SCREEN;
 	c->surface = surface;
+	if (rdn_window_server && rdn_ws_core_image())
+		defer_setup();
 	c->record = NULL;
 	c->bound = 0;
 	c->screen_rects = 0;
@@ -854,10 +948,32 @@ static void missing(const char *name)
 }
 
 /* Mesa's functions looked up, once. False if there is no card to use. */
-extern void (*osmesa_present_log)(int rects);
-static void present_log(int rects)
+extern void (*osmesa_present_log)(int rects, unsigned long sum, const uint8_t *rgb, int w, int h);
+extern int osmesa_present_area[4];
+static void present_log(int rects, unsigned long sum, const uint8_t *rgb, int w, int h)
 {
-	rdn_log("PRESENT to the screen, %d rectangles", rects);
+	static int count = -1;
+	char name[64];
+	FILE *f;
+	int i;
+
+	if (count < 0)
+		count = access("/tmp/rdngld.dump", F_OK) == 0 ? 0 : -2;
+	if (rects < 0) {
+		rdn_log("FLUSH of the screen context, %d rectangles", -rects);
+		return;
+	}
+	rdn_log("PRESENT to the screen, %d copies, sum %lu, frame %d", rects, sum, count >= 0 ? count : -1);
+	if (count < 0 || !rgb || w <= 0 || h <= 0)
+		return;
+	snprintf(name, sizeof(name), "/tmp/rdnframes/%05d.ppm", count++);
+	f = fopen(name, "wb");
+	if (!f)
+		return;
+	fprintf(f, "P6\n%d %d\n255\n", w, h);
+	for (i = 0; i < h; i++)
+		fwrite(rgb + i * 160 * 3, 3, (size_t)w, f);
+	fclose(f);
 }
 
 static int mesa_ready(void)
@@ -877,8 +993,16 @@ static int mesa_ready(void)
 		return 0;
 	if (!resolved) {
 		mesa_finish = (void (*)(void))OSMesaGetProcAddress("glFinish");
-		if (rdn_logging)
+		if (rdn_logging) {
 			osmesa_present_log = present_log;
+			/* Summing a part of every frame (and dumping it) slows a present down: only with /tmp/rdngld.dump. */
+			if (access("/tmp/rdngld.dump", F_OK) == 0) {
+				osmesa_present_area[0] = 560;
+				osmesa_present_area[1] = 380;
+				osmesa_present_area[2] = 640;
+				osmesa_present_area[3] = 330;
+			}
+		}
 		if (rdn_ws_core_image())
 			OSMesaPresentOnSwitch(GL_FALSE);
 		mesa_flush = (void (*)(void))OSMesaGetProcAddress("glFlush");

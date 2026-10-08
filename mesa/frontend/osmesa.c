@@ -167,7 +167,9 @@ struct osmesa_context
    /* OSMesaReadbackRects: the only parts of the color buffer to copy out. */
    GLint num_rects;
    GLint *rects;
-
+   /* Copies to the screen that have been asked for and are waiting (OSMesaDeferPresent). */
+   struct { int sx, sy, w, h, dx, dy; } pend[128];
+   int pend_n;
 };
 
 /*
@@ -387,14 +389,16 @@ osmesa_import_store(struct pipe_screen *screen, enum pipe_texture_target target,
                                        PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
 }
 
-static void
-osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
-                 struct pipe_resource *res, int x, int y, int w, int h)
+/* Debug: told of every copy to the screen (the bundle's log). */
+void (*osmesa_present_log)(int rects, unsigned long sum, const uint8_t *rgb, int w, int h);
+
+static bool
+osmesa_rect_box(struct osmesa_buffer *osbuffer, int x, int y, int w, int h,
+                struct pipe_box *box, int *dx, int *dy)
 {
    int x0 = MAX2(x, 0), y0 = MAX2(y, 0);
    int x1 = MIN2(x + w, (int)osbuffer->width);
    int y1 = MIN2(y + h, (int)osbuffer->height);
-   struct pipe_box box;
 
    /* The part that falls on the target. */
    x0 = MAX2(x0, -osbuffer->target_x);
@@ -402,10 +406,75 @@ osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
    x1 = MIN2(x1, (int)osbuffer->target_width - osbuffer->target_x);
    y1 = MIN2(y1, (int)osbuffer->target_height - osbuffer->target_y);
    if (x1 <= x0 || y1 <= y0)
+      return false;
+   u_box_2d(x0, y0, x1 - x0, y1 - y0, box);
+   *dx = osbuffer->target_x + x0;
+   *dy = osbuffer->target_y + y0;
+   return true;
+}
+
+static void
+osmesa_show_rect(struct pipe_context *pipe, struct osmesa_buffer *osbuffer,
+                 struct pipe_resource *res, int x, int y, int w, int h)
+{
+   struct pipe_box box;
+   int dx, dy;
+
+   if (osmesa_rect_box(osbuffer, x, y, w, h, &box, &dx, &dy))
+      osmesa_copy(pipe, osbuffer->direct_res, dx, dy, res, &box);
+}
+
+/*
+ * The copies to the screen that were put off, now. They are in the screen's
+ * own coordinates, so they stay right if the drawable has moved since.
+ */
+static void
+osmesa_present_pending_now(OSMesaContext osmesa)
+{
+   struct osmesa_buffer *osbuffer = osmesa->current_buffer;
+   struct pipe_context *pipe = osmesa->st->pipe;
+   struct pipe_resource *res;
+   int i;
+
+   if (!osmesa->pend_n)
       return;
-   u_box_2d(x0, y0, x1 - x0, y1 - y0, &box);
-   osmesa_copy(pipe, osbuffer->direct_res, osbuffer->target_x + x0,
-               osbuffer->target_y + y0, res, &box);
+   if (osmesa_present_log)
+      osmesa_present_log(osmesa->pend_n, 0, NULL, 0, 0);
+   res = osbuffer ? osbuffer->textures[ST_ATTACHMENT_FRONT_LEFT] : NULL;
+   if (res && osbuffer->direct_res) {
+      for (i = 0; i < osmesa->pend_n; i++) {
+         struct pipe_box box;
+
+         u_box_2d(osmesa->pend[i].sx, osmesa->pend[i].sy, osmesa->pend[i].w,
+                  osmesa->pend[i].h, &box);
+         osmesa_copy(pipe, osbuffer->direct_res, osmesa->pend[i].dx,
+                     osmesa->pend[i].dy, res, &box);
+      }
+      pipe->flush(pipe, NULL, 0);
+   }
+   osmesa->pend_n = 0;
+}
+
+static bool osmesa_defer_present;
+static void (*osmesa_deferred_hook)(OSMesaContext);
+
+GLAPI void GLAPIENTRY
+OSMesaDeferPresent(GLboolean yes, void (*hook)(OSMesaContext ctx))
+{
+   osmesa_defer_present = yes != GL_FALSE;
+   osmesa_deferred_hook = hook;
+}
+
+static void osmesa_sync(OSMesaContext osmesa);
+
+GLAPI GLboolean GLAPIENTRY
+OSMesaPresentPending(OSMesaContext osmesa)
+{
+   osmesa_sync(osmesa);
+   if (!osmesa || !osmesa->pend_n)
+      return GL_FALSE;
+   osmesa_present_pending_now(osmesa);
+   return GL_TRUE;
 }
 
 
@@ -565,8 +634,8 @@ osmesa_make_current(struct st_context *st, struct pipe_frontend_drawable *fb)
    return ok;
 }
 
-/* Debug: told of every copy to the screen (the bundle's log). */
-void (*osmesa_present_log)(int rects);
+/* Debug: the area whose pixels are summed for it (x, y, w, h; 0 w: none). */
+int osmesa_present_area[4];
 
 static bool
 osmesa_st_framebuffer_flush_front(struct st_context *st,
@@ -606,7 +675,7 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
       if (osmesa_switching && !osmesa_present_on_switch)
          return true;
       if (osmesa_present_log)
-         osmesa_present_log(osmesa->num_rects);
+         osmesa_present_log(-osmesa->num_rects, 0, NULL, 0, 0);
 
       if (getenv("RDN_DEBUG_DIRECT"))
          fprintf(stderr, "flush_front: direct_res %p, %dx%d at %d,%d of %ux%u, %d rects (%d %d %d %d)\n",
@@ -622,6 +691,36 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
          u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
          osmesa_copy(pipe, osbuffer->store_res, 0, 0, res, &box);
       }
+      if (osmesa_defer_present && !osbuffer->store_res &&
+          osmesa->pend_n + (osmesa->num_rects > 0 ? osmesa->num_rects : 1) <= 128) {
+         /* Put off: the rest of the frame is probably on its way. */
+         int n = osmesa->num_rects > 0 ? osmesa->num_rects : 1;
+
+         for (int i = 0; i < n; i++) {
+            struct pipe_box rb;
+            int dx, dy;
+            const GLint *r = osmesa->rects + i * 4;
+            bool ok = osmesa->num_rects > 0 ?
+               osmesa_rect_box(osbuffer, r[0], r[1], r[2], r[3], &rb, &dx, &dy) :
+               osmesa_rect_box(osbuffer, 0, 0, osbuffer->width, osbuffer->height,
+                               &rb, &dx, &dy);
+
+            if (!ok)
+               continue;
+            osmesa->pend[osmesa->pend_n].sx = rb.x;
+            osmesa->pend[osmesa->pend_n].sy = rb.y;
+            osmesa->pend[osmesa->pend_n].w = rb.width;
+            osmesa->pend[osmesa->pend_n].h = rb.height;
+            osmesa->pend[osmesa->pend_n].dx = dx;
+            osmesa->pend[osmesa->pend_n].dy = dy;
+            osmesa->pend_n++;
+         }
+         pipe->flush(pipe, NULL, 0);
+         if (osmesa_deferred_hook)
+            osmesa_deferred_hook(osmesa);
+         return true;
+      }
+      osmesa_present_pending_now(osmesa);
       if (osmesa->num_rects > 0) {
          for (int i = 0; i < osmesa->num_rects; i++) {
             const GLint *r = osmesa->rects + i * 4;
@@ -955,6 +1054,7 @@ osmesa_drop_buffer(OSMesaContext osmesa, bool wait)
 {
    if (!osmesa->current_buffer)
       return;
+   osmesa_present_pending_now(osmesa);
    if (osmesa->current_buffer->store)
       osmesa_leave_store(osmesa, wait);
    osmesa_destroy_buffer(osmesa->current_buffer);
@@ -1466,15 +1566,7 @@ OSMesaTexCopyDrawable(OSMesaContext osmesa, GLenum target, GLint x, GLint y,
     * the window server) draws from the texture next and must not get ahead
     * of it.
     */
-   {
-      struct pipe_fence_handle *fence = NULL;
-
-      pipe->flush(pipe, &fence, 0);
-      if (fence) {
-         screen->fence_finish(screen, pipe, fence, OS_TIMEOUT_INFINITE);
-         screen->fence_reference(screen, &fence, NULL);
-      }
-   }
+   pipe->flush(pipe, NULL, 0);
    ok = st_context_teximage(osmesa->st, target, 0, src->format, dst, false)
         ? GL_TRUE : GL_FALSE;
    pipe_resource_reference(&dst, NULL);

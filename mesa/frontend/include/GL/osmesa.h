@@ -454,6 +454,20 @@ GLAPI void APIENTRY
 OSMesaPresentOnSwitch( GLboolean yes );
 
 
+/*
+ * osx-gpu: with `yes` a context that draws on a screen does not copy to it at
+ * a flush but keeps the places to copy (merging what comes next) and calls
+ * `hook(ctx)` each time, which is to arrange for OSMesaPresentPending soon.
+ * The window server's frames come in several passes with a flush after each.
+ */
+GLAPI void APIENTRY
+OSMesaDeferPresent( GLboolean yes, void (*hook)(OSMesaContext ctx) );
+
+/* osx-gpu: do the copies that were put off; GL_TRUE if there were any. */
+GLAPI GLboolean APIENTRY
+OSMesaPresentPending( OSMesaContext ctx );
+
+
 GLAPI void APIENTRY
 OSMesaShowStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                  GLuint offset, GLsizei width, GLsizei height, GLint x,

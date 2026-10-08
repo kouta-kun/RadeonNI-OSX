@@ -160,6 +160,38 @@ static long hooked_cgls_destroy_pbuffer(void *pbuffer)
 	return real_cgls_destroy_pbuffer(pbuffer);
 }
 
+/*
+ * mach_msg: a thread that is about to wait for a message with no time
+ * limit may be asked to wait only so long first (rdn_hook_mach_msg): `idle`
+ * returns how many milliseconds, 0 for the wait to go on as it was; if
+ * the time runs out `timeout` is called and then the original wait begins.
+ * Any message that comes first is handed on as usual.
+ */
+static mach_msg_return_t (*real_mach_msg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
+					  mach_msg_size_t, mach_port_t, mach_msg_timeout_t, mach_port_t);
+static unsigned (*idle_handler)(void);
+static void (*idle_timeout)(void);
+
+static mach_msg_return_t hooked_mach_msg(mach_msg_header_t *msg, mach_msg_option_t option,
+					 mach_msg_size_t send_size, mach_msg_size_t rcv_size,
+					 mach_port_t rcv_name, mach_msg_timeout_t timeout,
+					 mach_port_t notify)
+{
+	if ((option & MACH_RCV_MSG) && !(option & (MACH_SEND_MSG | MACH_RCV_TIMEOUT))) {
+		unsigned ms = idle_handler();
+
+		if (ms) {
+			mach_msg_return_t r = real_mach_msg(msg, option | MACH_RCV_TIMEOUT, send_size,
+							    rcv_size, rcv_name, ms, notify);
+
+			if (r != MACH_RCV_TIMED_OUT)
+				return r;
+			idle_timeout();
+		}
+	}
+	return real_mach_msg(msg, option, send_size, rcv_size, rcv_name, timeout, notify);
+}
+
 static void rebind(const struct mach_header *mh, intptr_t slide)
 {
 	const struct load_command *lc = (const struct load_command *)(mh + 1);
@@ -226,6 +258,10 @@ static void rebind(const struct mach_header *mh, intptr_t slide)
 				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLChoosePixelFormat") &&
 				    pointers[k] != (void *)hooked_choose)
 					pointers[k] = (void *)hooked_choose;
+				if (real_mach_msg &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_mach_msg") &&
+				    pointers[k] != (void *)hooked_mach_msg)
+					pointers[k] = (void *)hooked_mach_msg;
 				if (real_destroy_pbuffer &&
 				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLDestroyPBuffer") &&
 				    pointers[k] != (void *)hooked_destroy_pbuffer)
@@ -438,5 +474,19 @@ void rdn_hook_destroy_pbuffer(void (*handler)(void *pbuffer))
 	if (!real_destroy_pbuffer && !real_cgls_destroy_pbuffer)
 		return;
 	destroy_pbuffer_handler = handler;
+	watch_images();
+}
+
+void rdn_hook_mach_msg(unsigned (*idle)(void), void (*timeout)(void))
+{
+	if (real_mach_msg)
+		return;
+	real_mach_msg = (mach_msg_return_t (*)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
+					       mach_msg_size_t, mach_port_t, mach_msg_timeout_t,
+					       mach_port_t))dlsym(RTLD_DEFAULT, "mach_msg");
+	if (!real_mach_msg)
+		return;
+	idle_handler = idle;
+	idle_timeout = timeout;
 	watch_images();
 }
