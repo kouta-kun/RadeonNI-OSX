@@ -304,6 +304,14 @@ OSMesaDrawStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
 GLAPI void GLAPIENTRY
 OSMesaSetSamples( GLint samples );
 
+/* The contexts made from now on have a back buffer on drawables made with OSMesaMakeCurrentSurface/Direct. */
+GLAPI void GLAPIENTRY
+OSMesaDoubleBuffer( GLboolean yes );
+
+/* Show the back buffer (a double-buffered drawable); else flush as before. */
+GLAPI void GLAPIENTRY
+OSMesaSwapBuffers( OSMesaContext ctx );
+
 /*
  * osx-gpu: with glthread, the most bytes glBufferData or glBufferSubData
  * can be given in one call without the program's thread waiting for the

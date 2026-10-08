@@ -213,6 +213,7 @@ int rdn_mesa_dispatch(void *gld_ctx, void *engine_table);
 /* Finish the frame and put it into the drawable's buffer. */
 void rdn_mesa_present(void *gld_ctx);
 void rdn_mesa_samples(int samples);
+void rdn_mesa_double(int yes);
 
 /* RadeonNIGLDriver.c: one line into the bundle's log, if it has one. */
 void rdn_log(const char *fmt, ...);

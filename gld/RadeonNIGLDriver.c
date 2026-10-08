@@ -933,6 +933,7 @@ static const long *display_words;
 static int asked_samples;
 /* The last request had kCGLPFAAuxDepthStencil. */
 static int asked_aux_depth_stencil;
+static int asked_double;
 
 static int in_window_server(void)
 {
@@ -1328,6 +1329,7 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 
 		asked_samples = 0;
 		asked_aux_depth_stencil = 0;
+		asked_double = 0;
 
 		while (*in && n < 62) {
 			/*
@@ -1370,6 +1372,9 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 			 */
 			if (*in == 57)
 				asked_aux_depth_stencil = 1;
+			/* kCGLPFADoubleBuffer: passed on, and Mesa gets a back buffer. */
+			if (*in == 5)
+				asked_double = 1;
 			if (*in != 73 && *in != 72)
 				filtered[n++] = *in;
 			in++;
@@ -1377,8 +1382,10 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 		filtered[n] = 0;
 		b = (long)filtered;
 #ifdef RDN_MESA
-		if (!in_window_server())
+		if (!in_window_server()) {
 			rdn_mesa_samples(asked_samples ? asked_samples : 1);
+			rdn_mesa_double(asked_double);
+		}
 #else
 		asked_samples = 0;
 #endif

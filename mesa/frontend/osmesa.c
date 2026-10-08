@@ -135,6 +135,17 @@ struct osmesa_buffer
     * row, not its top one.
     */
    bool store, store_copy, bottom_up;
+   /*
+    * A double-buffered drawable (OSMesaDoubleBuffer, only with
+    * OSMesaMakeCurrentSurface/Direct): the context draws on the back
+    * buffer, a texture of its own, and nothing is shown until
+    * OSMesaSwapBuffers copies it to the surface. The front buffer is a
+    * texture of its own too, made only when the program uses it; it is
+    * then a copy of the back buffer at every swap.
+    */
+   bool has_back;
+   /* Our own reference to the textures of a double-buffered drawable (see validate). */
+   struct pipe_resource *owned[ST_ATTACHMENT_COUNT];
 
    struct osmesa_buffer *next;  /**< next in linked list */
 };
@@ -167,6 +178,10 @@ struct osmesa_context
    /* OSMesaReadbackRects: the only parts of the color buffer to copy out. */
    GLint num_rects;
    GLint *rects;
+   /* The visual of the context has a back buffer (OSMesaDoubleBuffer). */
+   bool double_buffer;
+   /* ... and its draw and read buffers have been set to it (the first time). */
+   bool back_defaults;
    /* Copies to the screen that have been asked for and are waiting (OSMesaDeferPresent). */
    struct { int sx, sy, w, h, dx, dy; } pend[128];
    int pend_n;
@@ -309,6 +324,9 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
  * owner reads, is the resolved picture.
  */
 static unsigned osmesa_samples = 1;
+
+/* OSMesaDoubleBuffer: do contexts made from now on have a back buffer. */
+static bool osmesa_double;
 
 /* Samples the visual of a new context or buffer gets: what the GPU can do. */
 static unsigned
@@ -578,9 +596,12 @@ static void
 osmesa_init_st_visual(struct st_visual *vis,
                       enum pipe_format color_format,
                       enum pipe_format ds_format,
-                      enum pipe_format accum_format)
+                      enum pipe_format accum_format,
+                      bool double_buffer)
 {
    vis->buffer_mask = ST_ATTACHMENT_FRONT_LEFT_MASK;
+   if (double_buffer)
+      vis->buffer_mask |= ST_ATTACHMENT_BACK_LEFT_MASK;
 
    if (ds_format != PIPE_FORMAT_NONE)
       vis->buffer_mask |= ST_ATTACHMENT_DEPTH_STENCIL_MASK;
@@ -634,6 +655,83 @@ osmesa_make_current(struct st_context *st, struct pipe_frontend_drawable *fb)
    return ok;
 }
 
+/*
+ * Show the picture in res (the front buffer, or the back buffer at a swap)
+ * where the drawable is shown: copy it to the caller's memory and to the
+ * device's surface. allow_defer: the copy to the screen may be put off and
+ * merged with others; not for a double-buffered drawable, whose back
+ * buffer is drawn on again as soon as the swap is over.
+ */
+static bool
+osmesa_present_direct(OSMesaContext osmesa, struct osmesa_buffer *osbuffer,
+                      struct pipe_resource *res, bool allow_defer)
+{
+   struct pipe_context *pipe = osmesa->st->pipe;
+   struct pipe_box box;
+
+   if (osmesa_switching && !osmesa_present_on_switch)
+      return true;
+   if (osmesa_present_log)
+      osmesa_present_log(-osmesa->num_rects, 0, NULL, 0, 0);
+
+   if (getenv("RDN_DEBUG_DIRECT"))
+      fprintf(stderr, "flush_front: direct_res %p, %dx%d at %d,%d of %ux%u, %d rects (%d %d %d %d)\n",
+              (void *)osbuffer->direct_res, osbuffer->width, osbuffer->height,
+              osbuffer->target_x, osbuffer->target_y, osbuffer->target_width,
+              osbuffer->target_height, osmesa->num_rects,
+              osmesa->num_rects ? osmesa->rects[0] : 0, osmesa->num_rects ? osmesa->rects[1] : 0,
+              osmesa->num_rects ? osmesa->rects[2] : 0, osmesa->num_rects ? osmesa->rects[3] : 0);
+
+   if (!osbuffer->direct_res)
+      return false;
+   if (osbuffer->store_res) {
+      u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
+      osmesa_copy(pipe, osbuffer->store_res, 0, 0, res, &box);
+   }
+   if (allow_defer && osmesa_defer_present && !osbuffer->store_res &&
+       osmesa->pend_n + (osmesa->num_rects > 0 ? osmesa->num_rects : 1) <= 128) {
+      /* Put off: the rest of the frame is probably on its way. */
+      int n = osmesa->num_rects > 0 ? osmesa->num_rects : 1;
+
+      for (int i = 0; i < n; i++) {
+         struct pipe_box rb;
+         int dx, dy;
+         const GLint *r = osmesa->rects + i * 4;
+         bool ok = osmesa->num_rects > 0 ?
+            osmesa_rect_box(osbuffer, r[0], r[1], r[2], r[3], &rb, &dx, &dy) :
+            osmesa_rect_box(osbuffer, 0, 0, osbuffer->width, osbuffer->height,
+                            &rb, &dx, &dy);
+
+         if (!ok)
+            continue;
+         osmesa->pend[osmesa->pend_n].sx = rb.x;
+         osmesa->pend[osmesa->pend_n].sy = rb.y;
+         osmesa->pend[osmesa->pend_n].w = rb.width;
+         osmesa->pend[osmesa->pend_n].h = rb.height;
+         osmesa->pend[osmesa->pend_n].dx = dx;
+         osmesa->pend[osmesa->pend_n].dy = dy;
+         osmesa->pend_n++;
+      }
+      pipe->flush(pipe, NULL, 0);
+      if (osmesa_deferred_hook)
+         osmesa_deferred_hook(osmesa);
+      return true;
+   }
+   osmesa_present_pending_now(osmesa);
+   if (osmesa->num_rects > 0) {
+      for (int i = 0; i < osmesa->num_rects; i++) {
+         const GLint *r = osmesa->rects + i * 4;
+
+         osmesa_show_rect(pipe, osbuffer, res, r[0], r[1], r[2], r[3]);
+      }
+   } else {
+      osmesa_show_rect(pipe, osbuffer, res, 0, 0, osbuffer->width,
+                       osbuffer->height);
+   }
+   pipe->flush(pipe, NULL, 0);
+   return true;
+}
+
 /* Debug: the area whose pixels are summed for it (x, y, w, h; 0 w: none). */
 int osmesa_present_area[4];
 
@@ -668,72 +766,8 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
       return true;
    }
 
-   if (osbuffer->direct) {
-      struct pipe_context *pipe = osmesa->st->pipe;
-      struct pipe_box box;
-
-      if (osmesa_switching && !osmesa_present_on_switch)
-         return true;
-      if (osmesa_present_log)
-         osmesa_present_log(-osmesa->num_rects, 0, NULL, 0, 0);
-
-      if (getenv("RDN_DEBUG_DIRECT"))
-         fprintf(stderr, "flush_front: direct_res %p, %dx%d at %d,%d of %ux%u, %d rects (%d %d %d %d)\n",
-                 (void *)osbuffer->direct_res, osbuffer->width, osbuffer->height,
-                 osbuffer->target_x, osbuffer->target_y, osbuffer->target_width,
-                 osbuffer->target_height, osmesa->num_rects,
-                 osmesa->num_rects ? osmesa->rects[0] : 0, osmesa->num_rects ? osmesa->rects[1] : 0,
-                 osmesa->num_rects ? osmesa->rects[2] : 0, osmesa->num_rects ? osmesa->rects[3] : 0);
-
-      if (!osbuffer->direct_res)
-         return false;
-      if (osbuffer->store_res) {
-         u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
-         osmesa_copy(pipe, osbuffer->store_res, 0, 0, res, &box);
-      }
-      if (osmesa_defer_present && !osbuffer->store_res &&
-          osmesa->pend_n + (osmesa->num_rects > 0 ? osmesa->num_rects : 1) <= 128) {
-         /* Put off: the rest of the frame is probably on its way. */
-         int n = osmesa->num_rects > 0 ? osmesa->num_rects : 1;
-
-         for (int i = 0; i < n; i++) {
-            struct pipe_box rb;
-            int dx, dy;
-            const GLint *r = osmesa->rects + i * 4;
-            bool ok = osmesa->num_rects > 0 ?
-               osmesa_rect_box(osbuffer, r[0], r[1], r[2], r[3], &rb, &dx, &dy) :
-               osmesa_rect_box(osbuffer, 0, 0, osbuffer->width, osbuffer->height,
-                               &rb, &dx, &dy);
-
-            if (!ok)
-               continue;
-            osmesa->pend[osmesa->pend_n].sx = rb.x;
-            osmesa->pend[osmesa->pend_n].sy = rb.y;
-            osmesa->pend[osmesa->pend_n].w = rb.width;
-            osmesa->pend[osmesa->pend_n].h = rb.height;
-            osmesa->pend[osmesa->pend_n].dx = dx;
-            osmesa->pend[osmesa->pend_n].dy = dy;
-            osmesa->pend_n++;
-         }
-         pipe->flush(pipe, NULL, 0);
-         if (osmesa_deferred_hook)
-            osmesa_deferred_hook(osmesa);
-         return true;
-      }
-      osmesa_present_pending_now(osmesa);
-      if (osmesa->num_rects > 0) {
-         for (int i = 0; i < osmesa->num_rects; i++) {
-            const GLint *r = osmesa->rects + i * 4;
-
-            osmesa_show_rect(pipe, osbuffer, res, r[0], r[1], r[2], r[3]);
-         }
-      } else {
-         osmesa_show_rect(pipe, osbuffer, res, 0, 0, osbuffer->width,
-                          osbuffer->height);
-      }
-      pipe->flush(pipe, NULL, 0);
-      return true;
-   }
+   if (osbuffer->direct)
+      return osmesa_present_direct(osmesa, osbuffer, res, true);
 
    /* Snapshot the color buffer to the user's buffer. */
    bpp = util_format_get_blocksize(osbuffer->visual.color_format);
@@ -797,6 +831,10 @@ osmesa_st_framebuffer_validate(struct st_context *st,
          format = osbuffer->visual.color_format;
          bind = PIPE_BIND_RENDER_TARGET;
       }
+      else if (statts[i] == ST_ATTACHMENT_BACK_LEFT) {
+         format = osbuffer->visual.color_format;
+         bind = PIPE_BIND_RENDER_TARGET;
+      }
       else if (statts[i] == ST_ATTACHMENT_DEPTH_STENCIL) {
          format = osbuffer->visual.depth_stencil_format;
          bind = PIPE_BIND_DEPTH_STENCIL;
@@ -819,6 +857,22 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       } else {
          templat.target = PIPE_TEXTURE_RECT;
          templat.nr_samples = templat.nr_storage_samples = 0;
+      }
+      /*
+       * Mesa validates again when it needs another attachment, the front
+       * buffer for a glReadBuffer(GL_FRONT) say. What was drawn on the
+       * others must stay: give back the textures that are there.
+       */
+      if (osbuffer->has_back && osbuffer->owned[statts[i]]) {
+         struct pipe_resource *old = osbuffer->owned[statts[i]];
+
+         if (old->width0 == templat.width0 && old->height0 == templat.height0 &&
+             old->format == templat.format && old->nr_samples == templat.nr_samples) {
+            pipe_resource_reference(&out[i], NULL);
+            pipe_resource_reference(&out[i], old);
+            osbuffer->textures[statts[i]] = old;
+            continue;
+         }
       }
       pipe_resource_reference(&out[i], NULL);
       if (osbuffer->store && statts[i] == ST_ATTACHMENT_FRONT_LEFT) {
@@ -885,6 +939,17 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       }
       out[i] = osbuffer->textures[statts[i]] =
          screen->resource_create(screen, &templat);
+      if (osbuffer->has_back) {
+         pipe_resource_reference(&osbuffer->owned[statts[i]], out[i]);
+         /* A front buffer made after swaps starts as the last picture swapped. */
+         if (statts[i] == ST_ATTACHMENT_FRONT_LEFT && out[i] &&
+             osbuffer->owned[ST_ATTACHMENT_BACK_LEFT] && st && st->pipe) {
+            struct pipe_box box;
+
+            u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
+            osmesa_copy(st->pipe, out[i], 0, 0, osbuffer->owned[ST_ATTACHMENT_BACK_LEFT], &box);
+         }
+      }
    }
 
    return true;
@@ -899,7 +964,8 @@ static uint32_t osmesa_fb_ID = 0;
 static struct osmesa_buffer *
 osmesa_create_buffer(enum pipe_format color_format,
                      enum pipe_format ds_format,
-                     enum pipe_format accum_format)
+                     enum pipe_format accum_format,
+                     bool double_buffer)
 {
    struct osmesa_buffer *osbuffer = CALLOC_STRUCT(osmesa_buffer);
    if (osbuffer) {
@@ -910,8 +976,9 @@ osmesa_create_buffer(enum pipe_format color_format,
       osbuffer->base.fscreen = get_st_manager();
       osbuffer->base.visual = &osbuffer->visual;
 
+      osbuffer->has_back = double_buffer;
       osmesa_init_st_visual(&osbuffer->visual, color_format,
-                            ds_format, accum_format);
+                            ds_format, accum_format, double_buffer);
    }
 
    return osbuffer;
@@ -928,6 +995,8 @@ osmesa_destroy_buffer(struct osmesa_buffer *osbuffer)
    st_api_destroy_drawable(&osbuffer->base);
    pipe_resource_reference(&osbuffer->direct_res, NULL);
    pipe_resource_reference(&osbuffer->store_res, NULL);
+   for (unsigned k = 0; k < ST_ATTACHMENT_COUNT; k++)
+      pipe_resource_reference(&osbuffer->owned[k], NULL);
 
    FREE(osbuffer);
 }
@@ -1218,10 +1287,12 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
    attribs.options.disable_glsl_line_continuations = false;
    attribs.options.force_glsl_version = 0;
 
+   osmesa->double_buffer = osmesa_double;
    osmesa_init_st_visual(&attribs.visual,
                          PIPE_FORMAT_NONE,
                          osmesa->depth_stencil_format,
-                         osmesa->accum_format);
+                         osmesa->accum_format,
+                         osmesa->double_buffer);
 
    osmesa->st = st_api_create_context(get_st_manager(),
                                          &attribs, &st_error, st_shared);
@@ -1338,7 +1409,7 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
    if (!osmesa->current_buffer) {
       osmesa->current_buffer = osmesa_create_buffer(color_format,
                                       osmesa->depth_stencil_format,
-                                      osmesa->accum_format);
+                                      osmesa->accum_format, false);
    }
 
    struct osmesa_buffer *osbuffer = osmesa->current_buffer;
@@ -1672,6 +1743,7 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
    osbuffer = osmesa->current_buffer;
    if (osbuffer &&
        (!osbuffer->direct ||
+        osbuffer->has_back != osmesa->double_buffer ||
         osbuffer->visual.color_format != color_format ||
         osbuffer->width != (unsigned)width ||
         osbuffer->height != (unsigned)height ||
@@ -1688,7 +1760,8 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
    if (!osmesa->current_buffer) {
       osmesa->current_buffer = osmesa_create_buffer(color_format,
                                       osmesa->depth_stencil_format,
-                                      osmesa->accum_format);
+                                      osmesa->accum_format,
+                                      osmesa->double_buffer);
       if (!osmesa->current_buffer)
          return GL_FALSE;
    }
@@ -1712,6 +1785,23 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
 
    osmesa_make_current(osmesa->st, &osbuffer->base);
    osmesa->ever_used = true;
+   /*
+    * A double-buffered context draws on and reads the back buffer until
+    * the program says otherwise. Mesa chose its draw and read buffers when
+    * the context was first made current, on a drawable with no back
+    * buffer (OSMesaMakeCurrent, before this window was attached), and
+    * left them at the front.
+    */
+   if (osbuffer->has_back && !osmesa->back_defaults) {
+      void (*draw_buffer)(GLenum) = (void (*)(GLenum))OSMesaGetProcAddress("glDrawBuffer");
+      void (*read_buffer)(GLenum) = (void (*)(GLenum))OSMesaGetProcAddress("glReadBuffer");
+
+      osmesa->back_defaults = true;
+      if (draw_buffer && read_buffer) {
+         draw_buffer(GL_BACK);
+         read_buffer(GL_BACK);
+      }
+   }
    return GL_TRUE;
 }
 
@@ -1783,7 +1873,7 @@ OSMesaMakeCurrentStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
    if (!osmesa->current_buffer) {
       osmesa->current_buffer = osmesa_create_buffer(color_format,
                                       osmesa->depth_stencil_format,
-                                      osmesa->accum_format);
+                                      osmesa->accum_format, false);
       if (!osmesa->current_buffer)
          return GL_FALSE;
    }
@@ -1821,6 +1911,64 @@ GLAPI void GLAPIENTRY
 OSMesaSetSamples(GLint samples)
 {
    osmesa_samples = samples > 1 ? MIN2(samples, 8) : 1;
+}
+
+
+/*
+ * OSMesaDoubleBuffer: the contexts made from now on have a back buffer,
+ * which their drawables made with OSMesaMakeCurrentSurface/Direct get (the
+ * others are single-buffered, as a pbuffer is). Without it, GL_BACK and
+ * GL_FRONT are one buffer that is shown at every flush.
+ */
+GLAPI void GLAPIENTRY
+OSMesaDoubleBuffer(GLboolean yes)
+{
+   osmesa_double = yes != GL_FALSE;
+}
+
+
+/*
+ * The program swaps buffers. A double-buffered drawable shows the back
+ * buffer now (on the surface, and in the caller's memory if it has one) and
+ * the front buffer becomes a copy of it (back-to-front copy: the back buffer
+ * keeps its picture). Anything else is flushed as before.
+ */
+GLAPI void GLAPIENTRY
+OSMesaSwapBuffers(OSMesaContext osmesa)
+{
+   osmesa_sync(osmesa);
+   struct osmesa_buffer *osbuffer;
+   struct pipe_resource *back, *front;
+   struct pipe_context *pipe;
+
+   if (!osmesa || !osmesa->st)
+      return;
+   osbuffer = osmesa->current_buffer;
+   if (!osbuffer || !osbuffer->has_back || !osbuffer->direct) {
+      st_context_flush(osmesa->st, ST_FLUSH_FRONT, NULL, NULL, NULL);
+      return;
+   }
+   /* What Mesa still holds back, into the pipe; no front buffer flush. */
+   st_context_flush(osmesa->st, 0, NULL, NULL, NULL);
+   back = osbuffer->textures[ST_ATTACHMENT_BACK_LEFT];
+   front = osbuffer->textures[ST_ATTACHMENT_FRONT_LEFT];
+   if (!back)
+      return;
+   osmesa_present_direct(osmesa, osbuffer, back, false);
+   /*
+    * GL says the front buffer holds the picture that was swapped in
+    * (piglit swapbuffers-behavior, read-front). Mesa makes the front
+    * buffer's texture only when the program first draws to it or reads
+    * it, so for most programs there is none and this costs nothing.
+    */
+   if (front) {
+      struct pipe_box box;
+
+      pipe = osmesa->st->pipe;
+      u_box_2d(0, 0, osbuffer->width, osbuffer->height, &box);
+      osmesa_copy(pipe, front, 0, 0, back, &box);
+      pipe->flush(pipe, NULL, 0);
+   }
 }
 
 /*

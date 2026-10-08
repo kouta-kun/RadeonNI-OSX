@@ -131,6 +131,8 @@ struct context {
 	/* Bound to nothing that is shown (no drawable yet). */
 	int nowhere;
 	unsigned swaps;
+	/* The pixel format asked for a double-buffered context (OSMesaDoubleBuffer). */
+	int dbl;
 };
 
 #define MAX_CONTEXTS 64
@@ -228,6 +230,9 @@ static struct context *find(void *gld_ctx)
  * not exist yet (contexts are made on first use). Core Image does this:
  * its two contexts for pbuffers share with the program's.
  */
+/* The last pixel format chosen asked for double buffering (rdn_mesa_double). */
+static int pending_double;
+
 static OSMesaContext mesa_for(struct context *c)
 {
 	OSMesaContext list = NULL;
@@ -240,7 +245,9 @@ static OSMesaContext mesa_for(struct context *c)
 		if (o)
 			list = mesa_for(o);
 	}
+	OSMesaDoubleBuffer(c->dbl ? GL_TRUE : GL_FALSE);
 	c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, list);
+	OSMesaDoubleBuffer(GL_FALSE);
 	if (c->mesa && list && rdn_trace)
 		rdn_log("context %p shares with %p", c->gld_ctx, c->share);
 	return c->mesa;
@@ -257,6 +264,7 @@ void rdn_mesa_context_created(void *gld_ctx, void *share)
 			memset(&contexts[i], 0, sizeof(contexts[i]));
 			contexts[i].gld_ctx = gld_ctx;
 			contexts[i].share = share;
+			contexts[i].dbl = pending_double;
 			return;
 		}
 	rdn_log("no room for another context; it stays with the software renderer");
@@ -1649,6 +1657,8 @@ void rdn_flush_surface(void *rend)
 	for (i = 0; i < MAX_CONTEXTS; i++)
 		if (contexts[i].gld_ctx && contexts[i].rend == rend &&
 		    contexts[i].type == DRAWABLE_SURFACE) {
+			if (contexts[i].dbl)
+				return;	/* only a swap shows the back buffer */
 			if (contexts[i].swaps == 0 && contexts[i].bound) {
 				/* As for a swap: the picture is complete, then the window server knows. */
 				rdn_mesa_present(contexts[i].gld_ctx);
@@ -1723,6 +1733,21 @@ static int swap_finish(void)
  * this get that many samples; RDN_GLD_NO_MSAA in the environment keeps
  * them at one.
  */
+/*
+ * A program chose a double-buffered pixel format (kCGLPFADoubleBuffer). The
+ * contexts made with it draw on a back buffer that a swap shows; with
+ * RDN_GLD_NO_BACKBUFFER=1 in the program's environment they do not, and
+ * GL_BACK is GL_FRONT, which is shown at every flush, as before.
+ */
+void rdn_mesa_double(int yes)
+{
+	if (getenv("RDN_GLD_NO_BACKBUFFER"))
+		yes = 0;
+	pending_double = yes != 0;
+	if (yes)
+		rdn_log("pixel format with a back buffer asked for");
+}
+
 void rdn_mesa_samples(int samples)
 {
 	if (getenv("RDN_GLD_NO_MSAA"))
@@ -1745,6 +1770,8 @@ void rdn_mesa_present(void *gld_ctx)
 		rdn_make_current(c->rend);
 	if (c->rend != rdn_current_rend || !c->bound)
 		return;
+	if (c->dbl)
+		OSMesaSwapBuffers(c->mesa);
 	/*
 	 * A program that has the whole screen need not wait for its picture:
 	 * the copy to the screen is queued behind the drawing, and the
