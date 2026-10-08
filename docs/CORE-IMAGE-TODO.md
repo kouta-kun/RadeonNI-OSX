@@ -1,7 +1,17 @@
 # Core Image on the card: a plan for the agent that does the work
 
 Written 2026-10-08 at the user's request, for another agent to carry out
-and test. Nothing here is started. Read `CLAUDE.md`, `docs/PLAN.md` and
+and test. **Done through stage 5 the same day (journal, 2026-10-08;
+`docs/2D-ACCELERATION.md`); stage 6 is the user's.** What this plan got
+wrong, as found: the "16x16" bug was `read_record()` reading the wrong
+record for off-screen drawables; `CGLSetPBuffer` does reach the bundle
+(`gldAttachDrawable` type 0x5a, answered by Apple's engine with
+`kCGLBadEnumeration`); Core Image's "ROI is not tilable" was a missing
+display mask on an off-screen pixel format, not pbuffers; the window
+server's filter acts on what is *behind* the window; and `CGLTexImagePBuffer`
+and the window server's texture of a surface are `gliSetInteger` calls of
+the engine that the bundle takes by hooks, not `gld*` calls. The text
+below is left as written. Read `CLAUDE.md`, `docs/PLAN.md` and
 the last entries of `docs/JOURNAL.md` first, as that file says; this plan
 adds to them and repeats little.
 

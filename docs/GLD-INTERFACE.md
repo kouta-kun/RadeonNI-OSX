@@ -71,7 +71,9 @@ Calls seen for an off-screen context, in order, with what the arguments are:
 `gldAttachDrawable(ctx, 0x35, drawable, ...)` for `CGLSetOffScreen`: the
 third argument points at a record that begins with width, height, row
 bytes and base address, each a 32-bit word. The buffer holds 32-bit ARGB
-pixels in host byte order.
+pixels in host byte order. (Words 4 to 11 and 27, which a window's record
+has, are not filled for it: reading the window layout here left the
+context on its dummy drawable for good, until 2026-10-08.)
 
 ## Giving a context to Mesa [V, 2026-10-05]
 
@@ -173,6 +175,76 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
   server (`CGSLockWindowBits`, `CGSFlushSurface`). If Mesa's frame is in
   the record's buffer when entry 24 runs, it reaches the screen: a GLUT
   program in a window shows Mesa's rendering.
+
+## Shared contexts [V, 2026-10-08]
+
+`gldCreateContext`'s fourth argument is the context to share with (the
+`*(void **)a` the first call returned): Core Image's two helper contexts
+get the program's. The bundle makes a Mesa context with the other's as
+its share list (`mesa_for()` in `gld/rdn_mesa.c`), making the other's
+first when it does not exist (contexts are made on first use).
+`tools/guest/sharetest.c` checks it. One current context for the whole
+process (`rdn_current_rend`): right for one thread switching between
+contexts, as Core Image does, not for several threads.
+
+## Pbuffers [V, 2026-10-08]
+
+- `CGLCreatePBuffer`'s object is the record `gldAttachDrawable` gets for
+  type 0x5a: word 2 a surface ID (from `cglUniqueSurfaceID`), word 3 the
+  texture target, word 4 the format (0x1908, 0x8058, 0x805b GL_RGBA16,
+  0x881a, 0x8814), word 5 the number of levels, words 6 and 7 the size.
+- `CGLSetPBuffer` goes to `_cglSetAnyDrawable`, which calls the renderer's
+  attach with that record and returns what it returns: 1 means "set
+  viewport and scissor from the object's size", 2 "nothing more", anything
+  else is the error (Apple's software renderer's 0x271a is
+  `kCGLBadEnumeration`). A program only gets a drawable-less context to
+  draw into a pbuffer with a pixel format that has a display mask
+  (an off-screen format has mask 0, and Core Image counts the video memory
+  of a context's display only: `fe_cgl_total_vram`).
+- `CGLTexImagePBuffer` is `CGLSetParameter(ctx, 997, {ID, target, format,
+  width, height, 0x8367, buffer, levels})`, which the engine's
+  `gliSetInteger` (renderer table slot 0x24) does itself, for *its* bound
+  texture (Mesa's `glBindTexture` never reaches it) and refuses with
+  `kCGLBadState`. No `gld*` call is made. The bundle hooks the symbol.
+- `CGLDestroyPBuffer` tells the driver nothing.
+
+## Core Image in the window server [V, 2026-10-08]
+
+The window server's own GL ("cgls", in CoreGraphics) mirrors CGL: its
+pbuffers are `cglsCreatePBuffer` (format modes 0x24 for 0x8058 and
+0x1908, 0x23, 0x2b for GL_RGBA16, 0x2c, 0x2d), `cglsAttachPBuffer` (an
+`IOAccelSurface` for it, then the renderer's attach with type 0x5a; size in
+words 8 and 9 of its object, ID in word 2, target in 3, format in 4),
+`cglsTexImagePBuffer`, which is `cglsSetInteger(ctx, 0x3e6, ...)`, a plain
+call inside CoreGraphics, `cglsSetInteger` itself a jump through the
+renderer's table (`ctx + offset + 0xc`, slot 0x30). Parameter 0x3e6
+(0x3e5 for CGL's) binds the texture bound in the context to a surface
+**by ID**: a pbuffer's, or the screen's, which the filter layer uses for
+the backdrop: values `{surface ID, target 0x84f5, 0x1908, width, height,
+0x8367, 0x400, 0}`. The picture is the window's rectangle of the screen
+context's drawable, row 0 the top.
+
+What a filter on a window costs in GL calls (`CGSAddWindowFilter`, flags
+0x3001): the layers underneath are drawn into the screen context; a
+texture is made and bound to the screen's surface (above); a Core Image
+context sharing with the screen context compiles the filter's programs;
+its pbuffer (size of the filter's region) gets the backdrop copied in by
+the fixed function pipeline with rectangle texturing never enabled (its
+contexts start with it on); the pbuffer is bound as a texture in the
+screen context and a quad is drawn over the window with the programs; the
+window's own tiles are drawn over that. Its first GL calls on the new
+context come before the attach and carry the screen context's engine
+context, so they land in whatever Mesa context is current.
+
+How the bundle answers (`rdn_ws_core_image()`, behind the file
+`/Library/Application Support/RadeonNI/coreimage`): the extension names
+and a renderer name Core Image knows; type 0x5a attaches returning 2;
+Mesa's dispatch for the pbuffer contexts; texturing on and the screen
+context's rectangle texture inherited when a pbuffer context is first made
+current; `OSMesaTexCopyDrawable` for the screen's surface;
+`cglsSetInteger` taken by an inline hook (twelve words checked, four
+replaced by a jump; `rdn_hook_cgls_set_integer`); `cglsDestroyPBuffer`
+and `CGLDestroyPBuffer` hooked to give the memory back.
 
 ## Not known yet
 

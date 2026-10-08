@@ -307,8 +307,39 @@ been planned in detail.
   call never returned and the process could not be killed (G5 restarted;
   cause not known, a guess is the G5's DART). Buffers above 16 MB get a
   chunk of their own that is unbound when freed.
-- A6 has not started (what it needs is known: the Core Image bullet
-  above); A7 has (GART).
+- A6, Core Image on the card (2026-10-08, journal and
+  `docs/2D-ACCELERATION.md`; `docs/CORE-IMAGE-TODO.md` was the plan, its
+  header lists what it got wrong): works by readback, behind switches, not
+  seen by the user. In a program: `RDN_PBUFFER=1` (or the file
+  `/Library/Application Support/RadeonNI/pbuffer`), `RDN_EXT_ADD=
+  "GL_APPLE_client_storage GL_APPLE_float_pixels"` and `RDN_RENDERER="ATI
+  Radeon HD 7570"`; `ciprobe gl 0x21a00 [filter]` (built on the host with
+  `scripts/darwin.sh powerpc-apple-darwin8-gcc ... -framework Cocoa
+  -framework QuartzCore -framework OpenGL`) equals `ciprobe soft` within 1
+  on nine filters, 1.2 to 1.4 ms a render against 3 to 16 on the CPU.
+  Core Image only counts video memory for a context whose pixel format
+  has a display mask (not an off-screen one), else "ROI is not tilable".
+  Pbuffers: video memory the bundle makes, Mesa draws into
+  (`OSMesaMakeCurrentStore`, 8-bit, 16-bit and float stores) and takes as
+  textures; `CGLTexImagePBuffer`, `cglsTexImagePBuffer` and the window
+  server's `cglsSetInteger` 0x3e6 (texture of a surface by ID, also the
+  screen's, for a filter's backdrop) are taken by hooks in
+  `gld/rdn_hook.c`, the last an inline patch of twelve checked words.
+  Shared contexts work (`gldCreateContext`'s share argument, `sharetest`).
+  Off-screen drawables were never bound before (`read_record()` used the
+  window layout): fixed. In the window server, the file
+  `/Library/Application Support/RadeonNI/coreimage` (present when it
+  starts; **it is on the G5 now**, remove it and restart the window server
+  to go back) gives it the extension names, the renderer name and
+  pbuffers: `wsfilter` (`WSF_PLAIN=1` for a transparent window) puts
+  CIColorInvert, CIGaussianBlur, CISepiaTone and CIPixellate behind its
+  window, and Dashboard's widget drop shows the ripple (grabs). "Core
+  Image: Supported" is reported again while the file is there. The user
+  decides which renderer name to be and whether any of it is default;
+  floating point pbuffers are untried. A restart of the window server
+  needs the user's yes (given for stage 5, 2026-10-08); the G5's bundle
+  is e6b0b54b, the one before this work `~/RadeonNIGLDriver.before-ci`.
+  A7 has started (GART).
 - What is on by default since 2026-10-06, all decided by the user: the
   performance clocks and the memory controller's microcode, the GART,
   glthread for every program but the window server, the true extension

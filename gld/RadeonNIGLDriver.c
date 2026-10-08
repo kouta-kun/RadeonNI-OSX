@@ -216,6 +216,10 @@ int rdn_trace_wanted(const char *name)
 	return 0;
 }
 
+#ifdef RDN_MESA
+static int pbuffers_on(void);
+#endif
+
 static void setup(void)
 {
 	const char *path = getenv("RDN_GLD_LOG");
@@ -267,7 +271,7 @@ static void setup(void)
 	/* See rdn_hook.c. The window server's context always has a drawable. */
 	if (strcmp(getprogname(), "WindowServer") != 0) {
 		rdn_hook_set_current(rdn_mesa_early_all);
-		if (!getenv("RDN_NO_PBUFFER")) {
+		if (pbuffers_on()) {
 			rdn_hook_tex_image_pbuffer(rdn_mesa_tex_image_pbuffer);
 			rdn_hook_destroy_pbuffer(rdn_mesa_pbuffer_destroyed);
 		}
@@ -979,6 +983,26 @@ int rdn_ws_core_image(void)
 		yes = in_window_server() && access(RDN_CI_FILE, F_OK) == 0;
 	return yes;
 }
+
+/*
+ * Pbuffers for a program (not the window server): behind RDN_PBUFFER=1 in
+ * its environment or the file below, until it is decided that they stay
+ * on. RDN_NO_PBUFFER=1 turns them off whatever else says.
+ */
+#define RDN_PBUFFER_FILE "/Library/Application Support/RadeonNI/pbuffer"
+
+static int pbuffers_on(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		const char *env = getenv("RDN_PBUFFER");
+
+		on = !getenv("RDN_NO_PBUFFER") &&
+		     ((env && *env && strcmp(env, "0")) || access(RDN_PBUFFER_FILE, F_OK) == 0);
+	}
+	return on;
+}
 #endif
 
 /* Changes made to what the software renderer answered. */
@@ -1209,9 +1233,9 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	 * Pbuffers (kCGLPFAPBuffer): the software renderer refuses them with
 	 * kCGLBadEnumeration, so the program never gets one. Ours are video
 	 * memory that Mesa draws into and a texture can show
-	 * (CGLTexImagePBuffer is hooked, rdn_hook.c). RDN_NO_PBUFFER=1 leaves the refusal.
+	 * (CGLTexImagePBuffer is hooked, rdn_hook.c). Behind pbuffers_on().
 	 */
-	if (!in_window_server() && !getenv("RDN_NO_PBUFFER")) {
+	if (!in_window_server() && pbuffers_on()) {
 		if (idx == IDX_gldAttachDrawable && b == 0x5a && c) {
 			rdn_mesa_attach((void *)a, b, (const void *)c);
 			if (logf)

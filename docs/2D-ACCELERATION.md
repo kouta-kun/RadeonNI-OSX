@@ -55,74 +55,76 @@ server starts), with the CPU path as fallback.
   not call the plug-in under Quartz Extreme, it would only matter on a
   display without Quartz Extreme. Leave it off.
 
-## Core Image: does not use the card, and what it draws is wrong
+## Core Image on the card [V, 2026-10-08, by readback]
 
-`tools/guest/ciprobe.m` (`ciprobe gl 0x21a00`, `soft`, `pbuffer`,
-`compare`), on the G5 **[V]**:
+Built in `docs/CORE-IMAGE-TODO.md`'s stages 0 to 5 (journal, 2026-10-08).
+What was believed before it (Core Image "makes no pbuffer, no second
+context", "the quad comes out black except 16x16 pixels", "`CGLSetPBuffer`
+is refused before any call reaches the bundle") was each partly wrong:
 
-- Core Image, given a CGL context on our renderer, makes no fragment
-  program, no pbuffer, no framebuffer object and no second context. It
-  reads `GL_VENDOR`, `GL_RENDERER`, `GL_VERSION` and `GL_EXTENSIONS`,
-  filters on the CPU, and gives GL the finished picture as one
-  `GL_TEXTURE_RECTANGLE` (BGRA, client storage, `glTextureRangeAPPLE`,
-  `glFinishObjectAPPLE`) drawn as a quad. 10.6 ms a blur of 512x384,
-  against 8.3 ms with its software renderer alone.
-- That quad comes out black except for 16x16 pixels in the bottom left
-  corner, which hold the right part of the picture. Sixteen pixels is the
-  dummy drawable `rdn_make_current()` binds a context to before it has
-  one of its own; the off-screen context keeps clipping to it.
-  `glprobe draw 0x21a00` leaves its buffer all zero with the same bundle.
-- `CGLSetPBuffer` fails with `kCGLBadEnumeration` before any call reaches
-  the bundle.
+- The off-screen "16x16" was `read_record()` reading the window layout
+  of the record for `CGLSetOffScreen`'s, which is `{width, height, row
+  bytes, base}`: a context stayed bound to the dummy for good and the
+  program's memory was never written. Fixed.
+- `CGLSetPBuffer` reaches the bundle; `gldAttachDrawable` with type 0x5a
+  went on to Apple's software renderer, which answers `kCGLBadEnumeration`.
+  The bundle answers it now.
+- Core Image's "ROI is not tilable" with the two switches was no pbuffer
+  problem. It splits a picture until its pieces fit the memory of the
+  context's **display**: `fe_cgl_total_vram` adds up the renderers of the
+  pixel format's display mask, and an off-screen format has mask 0. A
+  program with a window (or a pbuffer drawable with a non-off-screen
+  format, as `ciprobe gl` has now) has one.
 
-So System Profiler's "Core Image: Supported" meant only that a gate was
-passed. A6 is not started in any real sense.
+**In a program** (`RDN_PBUFFER=1` and the two switches, per program):
+Core Image takes the card, makes two contexts that share with the
+program's, compiles each filter's ARB programs and draws through pbuffers
+of the format it names (`GL_RGBA16` for the 64 bit context's), which are
+video memory the bundle makes and Mesa draws into
+(`OSMesaMakeCurrentStore`, with 16-bit and float stores) and takes as
+textures (`OSMesaTexStoreImage`, no copy; `CGLTexImagePBuffer` is hooked
+because the engine wants the texture bound in its own state).
+`ciprobe gl 0x21a00` against `ciprobe soft`, 512x384:
 
-The gate **[V, 2026-10-08]**: the window server sets that state
-(`CGSServerOperationState` 0xf) when its own context's extension list has
-`GL_ARB_fragment_program`, and the Dock asks for Dashboard's ripple on
-the strength of it. A filter put on a window that way changes nothing on
-the screen (`tools/guest/wsfilter.c`, three grabs). Since 2026-10-08 the
-bundle keeps that name from the window server, so nothing is reported
-that is not there: System Profiler says "Core Image: Not Supported" on
-the G5. The window server asks before its context's table is Mesa's, so
-the name has to go from the list OpenGL's engine makes as well
-(`docs/GLD-INTERFACE.md`). The file
-`/Library/Application Support/RadeonNI/coreimage` brings it back.
+| filter | greatest difference | pixels over 8 | CPU ms | card ms |
+|---|---|---|---|---|
+| CIGaussianBlur | 1 | 0 | 8.1 | 1.2 |
+| CIColorInvert | 1 | 0 | 7.6 | 1.2 |
+| CISepiaTone | 1 | 0 | 8.5 | 1.2 |
+| CIBumpDistortion | 191 | 13 | 11.1 | 1.4 |
+| CIHueAdjust, CIColorControls | 0 | 0 | 2.9 | 1.3 |
+| CIPixellate | 1 | 0 | 10.3 | 1.4 |
+| CIGammaAdjust | 1 | 0 | 9.4 | 1.2 |
+| CIZoomBlur | 1 | 0 | 15.8 | 1.2 |
 
-### Why it filters on the CPU [V, 2026-10-07, later the same day]
+(The 13 pixels of CIBumpDistortion are on the edges of the test picture's
+cells, where a sample point falls on a texel boundary and one side
+rounds the other way.) Without the switches Core Image still filters on
+the CPU and the picture is exact. Floating point pbuffers (`GL_RGBA16F`,
+`GL_RGBA32F`) have a store but nothing has drawn into one.
 
-Found with `ciprobe gl` under a full GL trace and by reading QuartzCore's
-`accel_load_screen_info`, `fe_accel_new` and `fe_accel_get` in disassembly
-(journal). Core Image uses a renderer only when all of this holds:
-
-1. `GL_APPLE_client_storage` and `GL_EXT_texture_rectangle` are in the
-   list. We do not name the first (texture data is copied, so naming it
-   would be true enough; it is left out because of what follows).
-2. The renderer has a class: from its ID (0x21800 ATI Radeon, 0x21900
-   Radeon X1000, 0x22400 NVIDIA, 0x24000 Intel) or from the start of
-   `GL_RENDERER` ("ATI Radeon X1", "ATI Radeon ", "NVIDIA GeForce ",
-   "NVIDIA Quadro ", "NVIDIA GeForce FX ", "NVIDIA NV34", "Intel "). One
-   without a class gets no buffer formats and a speed of 0, below the
-   software renderer's 1. Ours has none.
-3. Pbuffers. Once 1 and 2 are given (`RDN_EXT_ADD="GL_APPLE_client_storage
-   GL_APPLE_float_pixels" RDN_RENDERER="ATI Radeon HD 7570"`) it makes two
-   contexts that share with the program's, one with 32 bits of colour and
-   one with 64 (floating point), cannot set a pbuffer on either, and draws
-   nothing.
-
-`GL_APPLE_float_pixels` and the two program extensions only set flags.
-The program limits it reads (`tools/guest/proglimits.c`) are all larger on
-our renderer than on Apple's software renderer.
+**In the window server** (the file
+`/Library/Application Support/RadeonNI/coreimage`, present when it
+starts): `wsfilter` (`CGSAddWindowFilter`, flags 0x3001, the Dock's call)
+puts the filter on what is *behind* the window, and the window's own
+picture is drawn over it. CIColorInvert shows the desktop behind it
+inverted, right way up (blue to orange, the Finder window black with white
+text), CIGaussianBlur blurs it, CISepiaTone and CIPixellate ran. In
+Dashboard, dropping a widget from the widget bar distorts the other
+widgets with the ripple for about a second (two grabs). By readback; not
+seen by the user. How it works, from the GL trace and CoreGraphics in
+disassembly: `docs/GLD-INTERFACE.md`, "Core Image in the window server".
+System Profiler says "Core Image: Supported", `qe` Quartz Extreme in use.
 
 ## What exists for the next round
 
 - Front end: `OSMesaMakeCurrentStore` (a context draws into video memory
-  the caller names: what a pbuffer needs) and `OSMesaTexStoreImage` (that
-  memory as a 2D or rectangle texture, with alpha, no copy); share lists
-  work. `rdn_gltest -P` checks them, and `RDN_SOFT=1` runs it on Linux
-  without the card (softpipe, `mesa/tests/rdn_soft.c`): passes on x86 and
-  big-endian. Never run on r600. The bundle does not use them yet.
+  the caller names: what a pbuffer needs, 8-bit, 16-bit or float),
+  `OSMesaTexStoreImage` (that memory as a 2D or rectangle texture, with
+  alpha, no copy), `OSMesaTexCopyDrawable` (a part of the drawable as a
+  texture, for the window server's backdrop); share lists work, and the
+  bundle makes shared contexts with them (`sharetest`). The bundle uses
+  them all.
 - The bundle's log (`RDN_GLD_LOG=file`, or `/tmp/rdngld.on`): the thread
   in every line, dumps for shared contexts and unknown drawables, and a
   count of every call to the entries Apple's engine keeps ("kept:").
@@ -133,27 +135,29 @@ our renderer than on Apple's software renderer.
 
 ## Next, in this order
 
-1. The off-screen clipping bug: a context taken over before its drawable
-   exists, then given an off-screen one, draws only 16x16 pixels.
-2. Done (above): Core Image wants `GL_APPLE_client_storage`, a renderer
-   it knows by ID or name, and pbuffers.
-3. Pbuffers (`CGLSetPBuffer`'s refusal first), one of them with floating
-   point colour, and shared contexts in the bundle. Core Image asks for
-   them as soon as it takes the card.
-4. Then, the user's to decide: which renderer to be for Core Image. The
-   name is what programs see too, and games read it for their own
-   workarounds; the ID is what CGL files the driver under.
-5. The window server's own filters (Dashboard's ripple): with the name
-   back (the file above), `wsfilter` is the test. They draw nothing today
-   and the window server logs a GL error from its filter layer; not looked
-   into further.
+1. The user's to decide (`docs/CORE-IMAGE-TODO.md`, stage 6): which
+   renderer to be for Core Image (the name "ATI Radeon HD 7570" is what
+   every program and game sees; the ID is what CGL files the driver
+   under; or give the name only when Core Image asks), and whether the
+   switches (`RDN_PBUFFER`, the two extension names, the renderer name,
+   the window server's file) become the default.
+2. Floating point pbuffers, tried with a filter that needs them.
+3. Pbuffers' memory is given back through hooks on the destroy calls
+   (`CGLDestroyPBuffer`, `cglsDestroyPBuffer`), a few at a time later;
+   nothing was looked at after minutes of continuous ripples.
+4. Core Image in programs with a window (no off-screen pixel format), the
+   case real programs are.
 
 ## Known problems left by this round
 
-- `ciprobe gl` crashes in `CGLDestroyContext` when the bundle's log is on
-  (not with it off). Not looked into.
+- `ciprobe gl` crashed in `CGLDestroyContext` with the bundle's log on
+  (2026-10-07). Not seen again since the off-screen fix of 2026-10-08;
+  many runs with the log and the trace on.
 - The Tiger build of `rdn_gltest` has not linked since Mesa is built at
   `-O2` (2026-10-06): the program is over 16 MB and Apple's `crt1.o` makes
   a short call across it. The bundle is not affected.
-- On the G5: the round 1 driver is installed (bundle 39a16a74); the set
-  before it is `~/RadeonNI-g5.before-round1`.
+- On the G5 (2026-10-08, end of A6 stage 5): bundle e6b0b54b is installed;
+  the one from before this work is `~/RadeonNIGLDriver.before-ci`
+  (9f7f487f). The file `/Library/Application Support/RadeonNI/coreimage`
+  is there, so the window server runs Core Image on the card (remove it
+  and restart the window server to go back).
