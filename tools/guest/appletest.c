@@ -20,7 +20,10 @@
  *   appletest [renderer id, default 0x21a00]
  *
  * RDN_NO_APPLE=1 or RDN_NO_PROGPARAMS=1 in the environment show what a
- * program gets without the bundle's own.
+ * program gets without the bundle's own. A copy of this program named
+ * WindowServer shows the list the window server gets (no
+ * GL_ARB_fragment_program, and none of the bundle's own; the rest of the
+ * tests then fail, as they should).
  *
  * Build on the host:
  *   scripts/darwin.sh powerpc-apple-darwin8-gcc -O2 -o build/appletest \
@@ -116,6 +119,7 @@ int main(int argc, char **argv)
 		"GL_APPLE_transform_hint", "GL_APPLE_fence", "GL_APPLE_vertex_array_object",
 		"GL_APPLE_flush_render", "GL_APPLE_flush_buffer_range",
 		"GL_EXT_gpu_program_parameters", "GL_ATI_array_rev_comps_in_4_bytes",
+		"GL_ARB_fragment_program",
 	};
 	static const char env_text[] = "!!ARBfp1.0\nMOV result.color, program.env[1];\nEND\n";
 	static const char local_text[] = "!!ARBfp1.0\nMOV result.color, program.local[1];\nEND\n";

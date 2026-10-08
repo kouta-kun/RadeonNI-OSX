@@ -4400,3 +4400,50 @@ fences are new for.
 Wrong in the plan written before the work: it said the fence entries were
 already ours for every program. They were only for programs with the
 vertex array range.
+
+## 2026-10-08: "Core Image: Supported" was one extension name; the window server no longer gets it
+
+**The user:** what would Core Image gain, and if nothing useful is in
+there now, stop reporting it as supported.
+
+**What says "supported".** System Profiler asks the window server
+(`CGSServerOperationState`). Read in CoreGraphics' `CGXGPUCapability` and
+`CGXGLDisplayContextCapabilities`: state 0xf, Core Image, is set when the
+list of extensions the window server's own context gets has
+`GL_ARB_fragment_program`, and nothing else is looked at. State 0xd
+(Quartz 2D Extreme possible) wants the same name; 0xe is whether that is
+turned on (it is not). `AccelCaps` has no part in it. The Dock asks for
+the same state before it does Dashboard's ripple
+(`CGSNewCIFilterByName("CIShapedWaterRipple")`, `CGSAddWindowFilter` with
+flags 0x3001).
+
+**Is anything behind it.** `tools/guest/wsfilter.c` makes the Dock's calls
+with `CIColorInvert` on a transparent window of 600x400: both calls
+return no error, the states read 0xd 1, 0xe 0, 0xf 1, and three grabs
+(before, with the filter, after) are the same in every pixel. The window
+server's log has one line from that second: "CGXGLAccelCompositeLayer_ :
+GL error 0500 entering". So a filter on a window draws nothing. (The test
+has not been run on a Mac where filters work; that the window server
+went into its filter layer is what the log line shows.) Programs' own
+Core Image filters on the CPU whatever is reported (the entry before
+this). Nothing useful comes of the report.
+
+**Changed:** the bundle leaves `GL_ARB_fragment_program` out of the list
+the window server gets (`ext_no_core_image()` in `gld/gen_dispatch.py`).
+Only the name: fragment programs work as before, for it and for every
+program. The file `/Library/Application Support/RadeonNI/coreimage`,
+there when the window server starts, keeps the name in, for when A6 is
+worked on. Checked with a copy of `appletest` named `WindowServer`: the
+name is gone, and back with the file.
+
+**Not yet seen:** the window server on the G5 still runs a bundle from
+before this, so System Profiler still says "Supported" until it restarts
+(the user's to allow). Bundle 2b6f92b4 is installed; the one from before
+the extension work is still `~/RadeonNIGLDriver.before-ext`.
+
+**What Core Image on the card would gain,** for the record: Dashboard's
+ripple, filters in the window server and in programs that use Core Image
+(Preview's image correction, Quartz Composer compositions, and Aperture
+and Motion, which want such a card to start) several times faster than
+the CPU does them. Nothing for the games. It needs pbuffers, a floating
+point one among them, and a renderer identity Core Image knows.

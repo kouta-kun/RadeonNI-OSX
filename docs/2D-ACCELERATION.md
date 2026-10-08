@@ -75,8 +75,17 @@ server starts), with the CPU path as fallback.
 - `CGLSetPBuffer` fails with `kCGLBadEnumeration` before any call reaches
   the bundle.
 
-So System Profiler's "Core Image: Supported" means only that a gate is
+So System Profiler's "Core Image: Supported" meant only that a gate was
 passed. A6 is not started in any real sense.
+
+The gate **[V, 2026-10-08]**: the window server sets that state
+(`CGSServerOperationState` 0xf) when its own context's extension list has
+`GL_ARB_fragment_program`, and the Dock asks for Dashboard's ripple on
+the strength of it. A filter put on a window that way changes nothing on
+the screen (`tools/guest/wsfilter.c`, three grabs). Since 2026-10-08 the
+bundle keeps that name from the window server, so nothing is reported
+that is not there; the file
+`/Library/Application Support/RadeonNI/coreimage` brings it back.
 
 ### Why it filters on the CPU [V, 2026-10-07, later the same day]
 
@@ -131,7 +140,10 @@ our renderer than on Apple's software renderer.
 4. Then, the user's to decide: which renderer to be for Core Image. The
    name is what programs see too, and games read it for their own
    workarounds; the ID is what CGL files the driver under.
-5. The window server's own filters (Dashboard's ripple): never traced.
+5. The window server's own filters (Dashboard's ripple): with the name
+   back (the file above), `wsfilter` is the test. They draw nothing today
+   and the window server logs a GL error from its filter layer; not looked
+   into further.
 
 ## Known problems left by this round
 

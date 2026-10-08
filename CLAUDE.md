@@ -288,6 +288,16 @@ been planned in detail.
   the first two; it then takes the card and draws nothing. Both are
   experiment switches, off by default. `~/gl/proglimits` prints the
   program limits it asks for.
+- "Core Image: Supported" is not reported (2026-10-08, the user's
+  decision: nothing useful was behind it). The window server reports it
+  when its list has `GL_ARB_fragment_program`, so the bundle leaves that
+  one name out of the window server's list; fragment programs still work
+  everywhere. `/Library/Application Support/RadeonNI/coreimage`, present
+  when the window server starts, keeps the name in (for A6).
+  `~/gl/wsfilter` (`tools/guest/wsfilter.c`) puts a Core Image filter on
+  a window the way the Dock does for Dashboard's ripple and prints the
+  window server's states. Takes effect when the window server restarts;
+  on the G5 that had not happened yet when this was written.
 - The Tiger device layer binds at most 512 MB behind the GART for one
   program (`GART_MOST_BYTES`): with about 860 MB bound the kext's bind
   call never returned and the process could not be killed (G5 restarted;
