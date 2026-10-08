@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
@@ -142,6 +143,23 @@ static long hooked_cgls_tex_image(void *ctx, void *pbuffer, long source)
 	return real_cgls_tex_image(ctx, pbuffer, source);
 }
 
+/* CGLDestroyPBuffer and the window server's cglsDestroyPBuffer. */
+static long (*real_destroy_pbuffer)(void *pbuffer);
+static long (*real_cgls_destroy_pbuffer)(void *pbuffer);
+static void (*destroy_pbuffer_handler)(void *pbuffer);
+
+static long hooked_destroy_pbuffer(void *pbuffer)
+{
+	destroy_pbuffer_handler(pbuffer);
+	return real_destroy_pbuffer(pbuffer);
+}
+
+static long hooked_cgls_destroy_pbuffer(void *pbuffer)
+{
+	destroy_pbuffer_handler(pbuffer);
+	return real_cgls_destroy_pbuffer(pbuffer);
+}
+
 static void rebind(const struct mach_header *mh, intptr_t slide)
 {
 	const struct load_command *lc = (const struct load_command *)(mh + 1);
@@ -208,6 +226,14 @@ static void rebind(const struct mach_header *mh, intptr_t slide)
 				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLChoosePixelFormat") &&
 				    pointers[k] != (void *)hooked_choose)
 					pointers[k] = (void *)hooked_choose;
+				if (real_destroy_pbuffer &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLDestroyPBuffer") &&
+				    pointers[k] != (void *)hooked_destroy_pbuffer)
+					pointers[k] = (void *)hooked_destroy_pbuffer;
+				if (real_cgls_destroy_pbuffer &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_cglsDestroyPBuffer") &&
+				    pointers[k] != (void *)hooked_cgls_destroy_pbuffer)
+					pointers[k] = (void *)hooked_cgls_destroy_pbuffer;
 				if (real_cgls_tex_image &&
 				    !strcmp(strings + symbols[sym].n_un.n_strx, "_cglsTexImagePBuffer") &&
 				    pointers[k] != (void *)hooked_cgls_tex_image)
@@ -316,5 +342,101 @@ void rdn_hook_cgls_tex_image(int (*handler)(void *ctx, void *pbuffer, long sourc
 		return;
 	}
 	cgls_tex_image_handler = handler;
+	watch_images();
+}
+
+/*
+ * The window server's cglsSetInteger. CoreGraphics calls it by a plain
+ * branch inside itself (a filter's backdrop is a texture of the screen's
+ * surface, set with parameter 0x3e6), so no symbol pointer can be
+ * replaced. The function is twelve instructions long in 10.4.11:
+ *
+ *   mfspr r0,lr; bcl 20,31,+4; mfspr r10,lr; mtspr lr,r0      (position)
+ *   addis r2,r10,0xff0; lwz r2,-0x2d28(r2); add r2,r3,r2      (offset)
+ *   lwz r3,0(r3); lwz r2,0xc(r2); lwz r12,0x30(r2)
+ *   mtctr r12; bctr                                            (the engine's)
+ *
+ * Its words are checked, and the four from "addis" on are replaced by a
+ * jump to rdn_hook_cgls_set_integer's own function, which does what the
+ * rest did unless the handler takes the call. A function that is not
+ * these twelve words is left alone.
+ */
+static int (*cgls_set_handler)(void *ctx, long pname, long *vals, long *result);
+static const void *cgls_set_fn;
+
+static long hooked_cgls_set_integer(void *ctx, long pname, long *vals)
+{
+	long result;
+	/* The offset the original reads, from where the original reads it. */
+	long off = *(const int *)((const char *)cgls_set_fn + 8 + 0x0ff00000 - 0x2d28);
+	void **table = *(void ***)((char *)ctx + off + 0xc);
+	long (*engine)(void *rend, long pname, long *vals) = (long (*)(void *, long, long *))table[0x30 / 4];
+
+	if (cgls_set_handler(ctx, pname, vals, &result))
+		return result;
+	return engine(*(void **)ctx, pname, vals);
+}
+
+int rdn_hook_cgls_set_integer(int (*handler)(void *ctx, long pname, long *vals, long *result))
+{
+	static const uint32_t original[12] = {
+		0x7c0802a6, 0x429f0005, 0x7d4802a6, 0x7c0803a6,
+		0x3c4a0ff0, 0x8042d2d8, 0x7c431214, 0x80630000,
+		0x8042000c, 0x81820030, 0x7d8903a6, 0x4e800420
+	};
+	volatile uint32_t *code;
+	uintptr_t target = (uintptr_t)hooked_cgls_set_integer;
+	uintptr_t page;
+	kern_return_t kr;
+	unsigned i;
+
+	if (cgls_set_fn)
+		return 1;
+	code = (volatile uint32_t *)dlsym(RTLD_DEFAULT, "cglsSetInteger");
+	if (!code) {
+		rdn_log("no cglsSetInteger to hook");
+		return 0;
+	}
+	for (i = 0; i < 12; i++)
+		if (code[i] != original[i]) {
+			rdn_log("cglsSetInteger is not the one hooked for (word %u is 0x%08x)", i, (unsigned)code[i]);
+			return 0;
+		}
+	page = (uintptr_t)code & ~(uintptr_t)(vm_page_size - 1);
+	kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE,
+			VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE | VM_PROT_COPY);
+	if (kr != KERN_SUCCESS)
+		/* A mapping whose maximum protection lacks writing: copy the page. */
+		kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE,
+				VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+	if (kr != KERN_SUCCESS) {
+		rdn_log("cglsSetInteger's code cannot be written (vm_protect %d at 0x%lx)",
+			(int)kr, (unsigned long)page);
+		return 0;
+	}
+	cgls_set_handler = handler;
+	cgls_set_fn = (const void *)code;
+	code[4] = 0x3d800000 | (uint32_t)(target >> 16);		/* lis r12,hi */
+	code[5] = 0x618c0000 | (uint32_t)(target & 0xffff);		/* ori r12,r12,lo */
+	code[6] = 0x7d8903a6;					/* mtctr r12 */
+	code[7] = 0x4e800420;					/* bctr */
+	for (i = 4; i < 8; i++) {
+		__asm__ volatile("dcbst 0,%0; sync; icbi 0,%0; sync; isync" : : "r"(code + i) : "memory");
+	}
+	vm_protect(mach_task_self(), page, vm_page_size, FALSE,
+		   VM_PROT_READ | VM_PROT_EXECUTE);
+	rdn_log("cglsSetInteger is ours (jump at %p)", (const void *)code);
+	return 1;
+}
+
+void rdn_hook_destroy_pbuffer(void (*handler)(void *pbuffer))
+{
+	if (destroy_pbuffer_handler)
+		return;
+	real_destroy_pbuffer = (long (*)(void *))dlsym(RTLD_DEFAULT, "CGLDestroyPBuffer");
+	real_cgls_destroy_pbuffer = (long (*)(void *))dlsym(RTLD_DEFAULT, "cglsDestroyPBuffer");
+	if (!real_destroy_pbuffer && !real_cgls_destroy_pbuffer)
+		return;
+	destroy_pbuffer_handler = handler;
 	watch_images();
 }

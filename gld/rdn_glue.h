@@ -68,6 +68,19 @@ void rdn_hook_cgl_log(void);
 /* rdn_hook.c: the same for the window server's cglsTexImagePBuffer. */
 void rdn_hook_cgls_tex_image(int (*handler)(void *ctx, void *pbuffer, long source,
 					    long *result));
+/*
+ * rdn_hook.c: let `handler` see the window server's cglsSetInteger (ctx,
+ * parameter, values); it returns 1 and the result for a call that is
+ * ours, 0 to leave it to OpenGL's engine. 0 when it cannot be hooked.
+ */
+int rdn_hook_cgls_set_integer(int (*handler)(void *ctx, long pname, long *vals, long *result));
+int rdn_mesa_cgls_set_integer(void *ctx, long pname, long *vals, long *result);
+/*
+ * rdn_hook.c: `handler` is called with a pbuffer object just before
+ * CGLDestroyPBuffer (or the window server's cglsDestroyPBuffer) destroys it.
+ */
+void rdn_hook_destroy_pbuffer(void (*handler)(void *pbuffer));
+void rdn_mesa_pbuffer_destroyed(void *pbuffer);
 /* The pbuffer records are the window server's (size in words 8 and 9). */
 void rdn_mesa_pbuffer_layout(int window_server);
 int rdn_mesa_is_pbuffer(void *gld_ctx);

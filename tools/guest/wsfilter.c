@@ -8,11 +8,14 @@
  *
  *   wsfilter [filter, default CIColorInvert] [seconds, default 8] [flags]
  *
- * A transparent window of 600x400 at 300,300 is shown for that long; grab
- * the screen meanwhile (~/gl/rdnuc grab). With CIColorInvert the desktop
- * behind it has its colours inverted if the window server's filters work.
- * The calls are private to CoreGraphics; their arguments are as the Dock
- * passes them.
+ * A window of 600x400 at 300,300 is shown for that long, with four opaque
+ * bands (red, green, blue, white, top to bottom, 100 rows each; WSF_PLAIN=1
+ * leaves it empty and transparent); grab the screen meanwhile
+ * (scripts/mac.sh g5 grab). The window server applies the filter to the
+ * window's own picture, so with CIColorInvert the bands are cyan, magenta,
+ * yellow and black if the window server's filters work. (Dashboard's ripple
+ * is put on the Dock's layer in the same way.) The calls are private to
+ * CoreGraphics; their arguments are as the Dock passes them.
  *
  * Build on the host:
  *   scripts/darwin.sh powerpc-apple-darwin8-gcc -O2 -o build/wsfilter \
@@ -51,6 +54,22 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	ShowWindow(window);
+	if (!getenv("WSF_PLAIN")) {
+		static const float bands[4][3] = {
+			{ 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 1, 1 }
+		};
+		CGContextRef cg = NULL;
+		int i;
+
+		if (!QDBeginCGContext(GetWindowPort(window), &cg) && cg) {
+			for (i = 0; i < 4; i++) {
+				CGContextSetRGBFillColor(cg, bands[i][0], bands[i][1], bands[i][2], 1);
+				CGContextFillRect(cg, CGRectMake(0, i * 100, 600, 100));
+			}
+			CGContextFlush(cg);
+			QDEndCGContext(GetWindowPort(window), &cg);
+		}
+	}
 	cid = _CGSDefaultConnection();
 	wid = GetNativeWindowFromWindowRef(window);
 	for (state = 0xd; state <= 0xf; state++)

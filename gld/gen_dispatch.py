@@ -1385,7 +1385,9 @@ static int apple_on(void)
 	if (on < 0) {
 		const char *name = getprogname();
 
-		on = name && strcmp(name, "WindowServer") && !getenv("RDN_NO_APPLE");
+		/* Not the window server, unless it does Core Image on the card. */
+		on = name && (strcmp(name, "WindowServer") || rdn_ws_core_image()) &&
+		     !getenv("RDN_NO_APPLE");
 		if (on)
 			rdn_log("GL_APPLE_fence, texture range and flush render: ours, for %s", name);
 	}

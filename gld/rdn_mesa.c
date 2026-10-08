@@ -118,6 +118,8 @@ struct context {
 	uint32_t store_offset, store_row_bytes, store_width, store_height;
 	int stored;
 	int bound;
+	/* The window server's Core Image context has had its start state set. */
+	int ws_state;
 	/*
 	 * The engine's context as gldCreateContext was told, so that the
 	 * program's GL calls can be given to Mesa before the first drawable
@@ -279,6 +281,51 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 }
 
 
+/*
+ * A pbuffer that is destroyed: the contexts drawing into it let go of it
+ * and its memory is given back, not at once but after a few more have
+ * gone, so that the GPU has finished with what was drawn into it and
+ * read from it (a finish before the memory is free to go, in whichever
+ * context is current).
+ */
+#define RETIRED_PBUFFERS 6
+static struct pbuffer retired_pbuffers[RETIRED_PBUFFERS];
+static unsigned retired_next;
+static void (*mesa_finish_fn)(void);
+
+void rdn_mesa_pbuffer_destroyed(void *record)
+{
+	int i;
+
+	for (i = 0; i < MAX_CONTEXTS; i++) {
+		struct context *c = &contexts[i];
+
+		if (c->gld_ctx && c->type == DRAWABLE_PBUFFER && c->record == record) {
+			c->type = 0;
+			c->record = NULL;
+			c->bound = 0;
+			if (c->rend && c->rend == rdn_current_rend)
+				rdn_current_rend = NULL;
+		}
+	}
+	for (i = 0; i < MAX_PBUFFERS; i++) {
+		struct pbuffer *p = &pbuffers[i], *slot;
+
+		if (p->key != record)
+			continue;
+		slot = &retired_pbuffers[retired_next++ % RETIRED_PBUFFERS];
+		if (slot->key) {
+			if (!mesa_finish_fn)
+				mesa_finish_fn = (void (*)(void))OSMesaGetProcAddress("glFinish");
+			if (mesa_finish_fn && OSMesaGetCurrentContext())
+				mesa_finish_fn();
+			rdn_target_vram_free(slot->offset);
+		}
+		*slot = *p;
+		memset(p, 0, sizeof(*p));
+	}
+}
+
 static struct pbuffer *pbuffer_find(uint32_t id)
 {
 	int i;
@@ -432,6 +479,62 @@ int rdn_mesa_tex_image_pbuffer_ws(void *cgls_ctx, void *pbuffer, long source, lo
 		rdn_log("cglsTexImagePBuffer(%p, %p) -> %s, %ld", cgls_ctx, pbuffer,
 			ret ? "ours" : "left to OpenGL", ret ? *result : 0L);
 	return ret;
+}
+
+/*
+ * The window server's cglsSetInteger. Parameter 0x3e6 makes the texture
+ * bound in the context (its own, in the engine, which Mesa's glBindTexture
+ * never reaches) the image of a surface by ID: a pbuffer's (this is also
+ * what cglsTexImagePBuffer does), or the screen's, which a layer's filter
+ * wants as its backdrop. The values are the ID, the target, the format,
+ * the width and height, 0x8367, the buffer (0x400 and 0x404 seen) and a
+ * word.
+ */
+int rdn_mesa_cgls_set_integer(void *cgls_ctx, long pname, long *vals, long *result)
+{
+	struct context *c = NULL;
+	void *rend = cgls_ctx ? *(void **)cgls_ctx : NULL;
+	struct pbuffer *p;
+	int i;
+
+	if (pname != 0x3e6)
+		return 0;
+	if (rdn_trace)
+		rdn_log("cglsSetInteger(%p, 0x%lx): %lx %lx %lx %lx %lx %lx %lx %lx", cgls_ctx,
+			pname, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5],
+			vals[6], vals[7]);
+	for (i = 0; rend && i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].rend == rend)
+			c = &contexts[i];
+	if (!c || !c->mesa)
+		return 0;
+	p = pbuffer_find((uint32_t)vals[0]);
+	if (p) {
+		/* A pbuffer: its memory is the texture. */
+		rdn_make_current(c->rend);
+		if (!OSMesaTexStoreImage(c->mesa, (GLenum)vals[1], RDN_TARGET_VRAM_HANDLE,
+					 (GLsizei)p->row_bytes, p->offset,
+					 (GLsizei)p->width, (GLsizei)p->height,
+					 p->flags | OSMESA_STORE_BOTTOM_UP | OSMESA_STORE_ALPHA)) {
+			*result = 0x2717;
+			return 1;
+		}
+		*result = 0;
+		return 1;
+	}
+	if (c->type == DRAWABLE_SCREEN && (unsigned long)vals[0] == c->surface) {
+		/* The screen's surface: what is drawn so far, as a texture. */
+		rdn_make_current(c->rend);
+		*result = OSMesaTexCopyDrawable(c->mesa, (GLenum)vals[1], c->origin_x,
+						(GLint)c->screen_height - c->origin_y - (GLint)vals[4],
+						(GLsizei)vals[3], (GLsizei)vals[4]) ? 0 : 0x2717;
+		if (rdn_trace)
+			rdn_log("the screen as a texture of context %p (%ldx%ld at %d,%d): %s",
+				c->gld_ctx, vals[3], vals[4], rdn_origin_x, rdn_origin_y,
+				*result ? "failed" : "done");
+		return 1;
+	}
+	return 0;
 }
 
 /* Read the engine's record; false if there is nothing to draw into. */
@@ -663,6 +766,7 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 		return 0;
 	}
 	c->type = DRAWABLE_SCREEN;
+	c->surface = surface;
 	c->record = NULL;
 	c->bound = 0;
 	c->screen_rects = 0;
@@ -989,6 +1093,18 @@ void rdn_make_current(void *rend)
 		c->bound = 1;
 		c->nowhere = 0;
 		rdn_current_rend = rend;
+		if (pbuffer_ws && !c->ws_state) {
+			/*
+			 * The window server's contexts start with rectangle
+			 * texturing on: it draws the backdrop copy into its
+			 * pbuffer without ever enabling it.
+			 */
+			void (*enable)(GLenum) = (void (*)(GLenum))OSMesaGetProcAddress("glEnable");
+
+			c->ws_state = 1;
+			if (enable)
+				enable(0x84f5);
+		}
 		return;
 	}
 	/*

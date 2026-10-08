@@ -1370,6 +1370,52 @@ OSMesaTexStoreImage(OSMesaContext osmesa, GLenum target, GLuint handle,
 }
 
 
+GLAPI GLboolean GLAPIENTRY
+OSMesaTexCopyDrawable(OSMesaContext osmesa, GLenum target, GLint x, GLint y,
+                      GLsizei width, GLsizei height)
+{
+   osmesa_sync(osmesa);
+   struct osmesa_buffer *osbuffer = osmesa ? osmesa->current_buffer : NULL;
+   struct pipe_context *pipe;
+   struct pipe_screen *screen;
+   struct pipe_resource templat, *src, *dst;
+   struct pipe_box box;
+   GLboolean ok;
+
+   if (!osbuffer || width < 1 || height < 1 ||
+       (target != GL_TEXTURE_2D && target != GL_TEXTURE_RECTANGLE))
+      return GL_FALSE;
+   src = osbuffer->textures[ST_ATTACHMENT_FRONT_LEFT];
+   if (!src)
+      return GL_FALSE;
+   if (x < 0 || y < 0 || x + width > (int)src->width0 ||
+       y + height > (int)src->height0)
+      return GL_FALSE;
+   /* What GL has drawn so far goes first. */
+   st_context_flush(osmesa->st, 0, NULL, NULL, NULL);
+   pipe = osmesa->st->pipe;
+   screen = pipe->screen;
+   memset(&templat, 0, sizeof(templat));
+   templat.target = target == GL_TEXTURE_2D ? PIPE_TEXTURE_2D : PIPE_TEXTURE_RECT;
+   templat.format = src->format;
+   templat.width0 = width;
+   templat.height0 = height;
+   templat.depth0 = 1;
+   templat.array_size = 1;
+   templat.usage = PIPE_USAGE_DEFAULT;
+   templat.bind = PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_RENDER_TARGET;
+   dst = screen->resource_create(screen, &templat);
+   if (!dst)
+      return GL_FALSE;
+   u_box_2d(x, y, width, height, &box);
+   osmesa_copy(pipe, dst, 0, 0, src, &box);
+   ok = st_context_teximage(osmesa->st, target, 0, src->format, dst, false)
+        ? GL_TRUE : GL_FALSE;
+   pipe_resource_reference(&dst, NULL);
+   return ok;
+}
+
+
 GLAPI void GLAPIENTRY
 OSMesaDrawStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
                 GLuint offset, GLsizei width, GLsizei height, GLint sx,

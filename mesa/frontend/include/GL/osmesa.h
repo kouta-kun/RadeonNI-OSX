@@ -426,6 +426,18 @@ OSMesaTexStoreImage( OSMesaContext ctx, GLenum target, GLuint handle,
                      GLsizei height, GLuint flags );
 
 
+/*
+ * osx-gpu: make the part x, y, width x height (in pixels, from the top left
+ * of the context's current drawable, the way the picture is kept in
+ * memory) the image of the texture bound to `target` in the context, as a
+ * copy of what has been drawn so far: the texture's row 0 is the part's top
+ * row. Returns GL_FALSE if there is no drawable or no memory.
+ */
+GLAPI GLboolean APIENTRY
+OSMesaTexCopyDrawable( OSMesaContext ctx, GLenum target, GLint x, GLint y,
+                       GLsizei width, GLsizei height );
+
+
 GLAPI void APIENTRY
 OSMesaShowStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                  GLuint offset, GLsizei width, GLsizei height, GLint x,

@@ -246,13 +246,17 @@ static void setup(void)
 	/* See rdn_hook.c. The window server's context always has a drawable. */
 	if (strcmp(getprogname(), "WindowServer") != 0) {
 		rdn_hook_set_current(rdn_mesa_early_all);
-		if (!getenv("RDN_NO_PBUFFER"))
+		if (!getenv("RDN_NO_PBUFFER")) {
 			rdn_hook_tex_image_pbuffer(rdn_mesa_tex_image_pbuffer);
+			rdn_hook_destroy_pbuffer(rdn_mesa_pbuffer_destroyed);
+		}
 		if (logf)
 			rdn_hook_cgl_log();
 	} else if (rdn_ws_core_image()) {
 		/* Core Image in the window server: cglsTexImagePBuffer. */
 		rdn_hook_cgls_tex_image(rdn_mesa_tex_image_pbuffer_ws);
+		rdn_hook_cgls_set_integer(rdn_mesa_cgls_set_integer);
+		rdn_hook_destroy_pbuffer(rdn_mesa_pbuffer_destroyed);
 	}
 #endif
 }

@@ -4676,3 +4676,61 @@ Without the file nothing changes. A copy of `earlyext` named `WindowServer`
 shows the lists with and without the file as designed (297 names and the
 Radeon name against 293 and Mesa's). Bundle on the G5's disk is
 d9bfb565; the running window server still has 9f7f487f mapped.
+
+## 2026-10-08: A6 stage 5, Core Image in the window server works (by readback)
+
+With the user's go-ahead for as many window server restarts as stage 5
+needs (`sudo killall WindowServer`; the session comes back in ten seconds,
+logged in by itself), the `coreimage` file and the prepared bundle:
+`system_profiler` says "Core Image: Supported", `qe` Quartz Extreme in
+use, no new crash log.
+
+**What the window server does for a filter on a window** (trace of every
+GL call with `/tmp/rdngld.on` and `.trace`, then CoreGraphics and QuartzCore
+in disassembly): the plan's wording was wrong. The filter is on what is
+*behind* the window, and the window's own picture is drawn over the
+result afterwards. It
+1. draws the layers underneath into its screen context's buffer;
+2. makes a texture and binds it to the screen's surface with
+   `cglsSetInteger(ctx, 0x3e6, {surface ID, target, 0x1908, w, h, 0x8367,
+   0x400, 0})` (inside CoreGraphics, a plain `bl`: the engine's own
+   `gliSetInteger` takes it and does nothing useful for Mesa); the picture
+   is the window's rectangle of the drawable, row 0 the top;
+3. makes a Core Image context that shares with its own (the 32 bit one;
+   the 64 bit one was not used for CIColorInvert), compiles the filter's
+   programs, attaches a pbuffer of the filter's size (`cglsAttachPBuffer`,
+   type 0x5a, its own record) and copies the backdrop into it with the
+   fixed function pipeline, without ever enabling rectangle texturing (its
+   contexts start with it on);
+4. binds the pbuffer as a texture in the screen context
+   (`cglsTexImagePBuffer`, which is `cglsSetInteger(0x3e6)` again) and
+   draws a quad over the window with the filter's vertex and fragment
+   programs, then the window's own tiles over that.
+
+**What was built** (all behind the file, `rdn_ws_core_image()`):
+- the extension names, `GL_RENDERER` "ATI Radeon HD 7570", the bundle's
+  Apple handling (`apple_on()`; without it `glPixelStorei(
+  GL_UNPACK_CLIENT_STORAGE_APPLE)` gave GL error 0x500 and the window
+  server printed "CGXGLAccelCompositeLayer_: GL error 0500 entering");
+- pbuffers by the window server's record (size in words 8 and 9), attach
+  returns 2, Mesa's dispatch for those contexts, start state with
+  `GL_TEXTURE_RECTANGLE` on;
+- `rdn_hook_cgls_set_integer`: an inline hook, since the call cannot be
+  reached by a symbol pointer: the twelve words of `cglsSetInteger` are
+  checked (nothing is changed if they differ), four are replaced by a jump
+  to our function, which does what the rest did (the engine's table slot
+  0x30) unless it takes the call. Needs `vm_protect` of the text page
+  with `VM_PROT_COPY`; the bundle is the only code that changes anything
+  in CoreGraphics, and only with the file;
+- `OSMesaTexCopyDrawable` (the front end): a GPU copy of a part of the
+  current drawable into a new texture image, rows in memory order (the
+  first attempt, `glCopyTexImage2D`, had the picture upside down);
+- `cglsDestroyPBuffer` and `CGLDestroyPBuffer` hooks: contexts let go of
+  the pbuffer, its memory is given back after six more (a finish first),
+  because the window server makes a pbuffer for every filter pass.
+
+**Seen by readback** (screen grabs of the G5, `wsfilter`, window 600x400
+at 300,300, `WSF_PLAIN=1` = nothing drawn in it): CIColorInvert shows the
+desktop behind it inverted (blue to orange, the Finder window black with
+white text, right way up); CIGaussianBlur blurs the region, CISepiaTone and
+CIPixellate ran. Not seen by the user. Dashboard's ripple not tried yet.
