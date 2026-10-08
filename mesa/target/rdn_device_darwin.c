@@ -92,30 +92,82 @@ static void mem_os_free(void *cookie, void *ptr)
 }
 
 /* A new chunk of at least `size` bytes in a free slot; NULL if there is none. */
-static struct gart_chunk *gart_new_chunk(struct darwin_device *d, uint64_t size)
+static struct gart_chunk *gart_new_chunk(struct darwin_device *d, uint64_t size,
+					 uint64_t align)
 {
 	vm_address_t addr = 0;
+	/*
+	 * A chunk for one large buffer is a little larger than it: the
+	 * chunk's start in the GART is only page aligned, and the buffer's
+	 * own alignment may move it, which an exact fit cannot take (a
+	 * 256 MB buffer was refused every time and its chunk stayed bound).
+	 */
 	vm_size_t bytes = size > GART_CHUNK_BYTES ?
-		(vm_size_t)((size + 4095) & ~4095ull) : GART_CHUNK_BYTES;
+		(vm_size_t)((size + align + 4095) & ~4095ull) : GART_CHUNK_BYTES;
 	struct gart_chunk *c = NULL;
 	int i, offset = 0;
 
 	for (i = 0; i < GART_CHUNKS && !c; i++)
 		if (!d->gart[i].cpu)
 			c = &d->gart[i];
-	if (!c || bytes > GART_MOST_BYTES - d->gart_bytes || vm_allocate(mach_task_self(), &addr, bytes, VM_FLAGS_ANYWHERE))
+	if (!c || bytes > GART_MOST_BYTES - d->gart_bytes || vm_allocate(mach_task_self(), &addr, bytes, VM_FLAGS_ANYWHERE)) {
+		if (getenv("RDN_STATS"))
+			fprintf(stderr, "rdn: GART chunk of %lu bytes: %s (%u bound)\n", (unsigned long)bytes,
+				!c ? "no free slot" : bytes > GART_MOST_BYTES - d->gart_bytes ? "over the limit" : "vm_allocate failed",
+				(unsigned)d->gart_bytes);
+		if (getenv("RDN_STATS") && bytes > GART_MOST_BYTES - d->gart_bytes) {
+			int k;
+
+			for (k = 0; k < GART_CHUNKS; k++)
+				if (d->gart[k].cpu)
+					fprintf(stderr, "rdn:   chunk %d: %u KB at %u, %llu KB free\n", k,
+						(unsigned)(d->gart[k].size >> 10), (unsigned)d->gart[k].offset,
+						(unsigned long long)(rdn_mem_available(&d->gart[k].mem) >> 10));
+		}
 		return NULL;
-	if (IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_BIND, 2, 1,
-					  (int)addr, (int)bytes, &offset) ||
-	    rdn_mem_init(&c->mem, &d->mem_os, (uint32_t)offset, bytes)) {
-		vm_deallocate(mach_task_self(), addr, bytes);
-		return NULL;
+	}
+	{
+		int br = IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_BIND, 2, 1,
+						       (int)addr, (int)bytes, &offset);
+
+		if (br || rdn_mem_init(&c->mem, &d->mem_os, (uint32_t)offset, bytes)) {
+			if (getenv("RDN_STATS"))
+				fprintf(stderr, "rdn: GART chunk of %lu bytes: bind returned 0x%x\n",
+					(unsigned long)bytes, (unsigned)br);
+			vm_deallocate(mach_task_self(), addr, bytes);
+			return NULL;
+		}
 	}
 	c->cpu = (uint8_t *)addr;
 	c->offset = (uint32_t)offset;
 	c->size = (uint32_t)bytes;
 	d->gart_bytes += (uint32_t)bytes;
 	return c;
+}
+
+/*
+ * Chunks of the ordinary size stay bound for the buffers to come, which
+ * counts against what one program may have bound (GART_MOST_BYTES). Give
+ * back those with nothing in them when the room is wanted: piglit's
+ * large-tex had 272 MB of them idle and was refused a 256 MB buffer.
+ */
+static void gart_release_idle(struct darwin_device *d)
+{
+	int i;
+
+	for (i = 0; i < GART_CHUNKS; i++) {
+		struct gart_chunk *c = &d->gart[i];
+
+		if (!c->cpu || c->size != GART_CHUNK_BYTES ||
+		    rdn_mem_available(&c->mem) != c->size)
+			continue;
+		rdn_mem_fini(&c->mem);
+		IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_UNBIND, 1, 0,
+					      (int)c->offset);
+		vm_deallocate(mach_task_self(), (vm_address_t)c->cpu, c->size);
+		c->cpu = NULL;
+		d->gart_bytes -= c->size;
+	}
 }
 
 static int dev_gart_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
@@ -131,8 +183,26 @@ static int dev_gart_alloc(struct rdn_device *dev, uint64_t size, uint64_t align,
 		if (d->gart[i].cpu && d->gart[i].size == GART_CHUNK_BYTES &&
 		    !rdn_mem_alloc(&d->gart[i].mem, size, align, offset))
 			return 0;
-	c = gart_new_chunk(d, size);
-	return c ? rdn_mem_alloc(&c->mem, size, align, offset) : -1;
+	c = gart_new_chunk(d, size, align);
+	if (!c && size > GART_CHUNK_BYTES) {
+		gart_release_idle(d);
+		c = gart_new_chunk(d, size, align);
+	}
+	if (!c)
+		return -1;
+	if (rdn_mem_alloc(&c->mem, size, align, offset)) {
+		/* Nothing came of it: do not keep the chunk. */
+		if (c->size > GART_CHUNK_BYTES) {
+			rdn_mem_fini(&c->mem);
+			IOConnectMethodScalarIScalarO(d->conn, RDN_UC_GART_UNBIND, 1, 0,
+						      (int)c->offset);
+			vm_deallocate(mach_task_self(), (vm_address_t)c->cpu, c->size);
+			c->cpu = NULL;
+			d->gart_bytes -= c->size;
+		}
+		return -1;
+	}
+	return 0;
 }
 
 static struct gart_chunk *gart_chunk_of(struct darwin_device *d, uint64_t offset)

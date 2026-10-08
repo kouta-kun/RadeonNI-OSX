@@ -5063,3 +5063,25 @@ grab the screen (`scripts/mac.sh g5 grab`) before measuring.
 Full piglit run on the branch `back-buffer` (with the fix above): 4,869 pass,
 94 fail (`main`: 4,852 / 111); 17 fixed, 0 regressed; multisample the same.
 Call of Duty 2 looked right to the user; World of Warcraft not run.
+
+## 2026-10-08: piglit `large-tex` (GART chunks)
+
+`large-tex` makes R8 textures of 16384x16384 (256 MB each); two of them fill
+the 768 MB beyond the aperture to within a few MB. The third was refused
+("out of video memory ... 538586880 in use"), and the GART, the overflow, said
+"over the limit (285212672 bound)" with 272 MB bound and 1 MB in use. Cause
+(from a dump of the chunks under `RDN_STATS=1`, `mesa/target/
+rdn_device_darwin.c`): a chunk made for one large buffer was exactly the
+buffer's size, the chunk's place in the GART is only page aligned, and
+`rdn_mem_alloc` moved the buffer for its alignment, so it did not fit; the
+call failed and the new chunk stayed bound, empty, and counted against the
+512 MB a program may bind. Every later attempt was over the limit.
+Fixed: such a chunk is the size plus the alignment, a chunk whose buffer
+could not be made is given back, and chunks of the ordinary size with
+nothing in them are given back when a large one is wanted. Now 11 of the 14
+subtests pass (it was 2 and a SIGBUS); the other three (`get_tex_image_pbo`,
+`copy_pixels`, `image_load_store`) need a third 256 MB object next to two
+textures and a PBO, which is more than 768 MB + 256 MB of aperture + the
+512 MB limit leave; no eviction would help, all of it is live. No change in
+the other texture tests (118 run). The finding about eviction: the one piece
+of evidence for it was a bug in the GART chunks.
