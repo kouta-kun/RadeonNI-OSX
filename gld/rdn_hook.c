@@ -36,6 +36,7 @@
 
 #define HOOKED "_CGLSetCurrentContext"
 #define HOOKED_LOOKUP "_CFBundleGetFunctionPointerForName"
+#define HOOKED_TEX "_CGLTexImagePBuffer"
 #define ASCII 0x0600	/* kCFStringEncodingASCII */
 
 static int (*real_set_current)(void *ctx);
@@ -63,6 +64,23 @@ static void *hooked_lookup(void *bundle, void *name)
 	    (own = own_function(text)) != NULL)
 		return own;
 	return real_lookup(bundle, name);
+}
+
+/*
+ * CGLTexImagePBuffer goes to the engine, which wants the texture bound in
+ * its own state (Mesa's glBindTexture never reaches it) and refuses the
+ * rest with kCGLBadState. A pbuffer of ours is Mesa's to show.
+ */
+static long (*real_tex_image)(void *ctx, void *pbuffer, long source);
+static int (*tex_image_handler)(void *ctx, void *pbuffer, long source, long *result);
+
+static long hooked_tex_image(void *ctx, void *pbuffer, long source)
+{
+	long result;
+
+	if (tex_image_handler(ctx, pbuffer, source, &result))
+		return result;
+	return real_tex_image(ctx, pbuffer, source);
 }
 
 static void rebind(const struct mach_header *mh, intptr_t slide)
@@ -119,6 +137,10 @@ static void rebind(const struct mach_header *mh, intptr_t slide)
 				    !strcmp(strings + symbols[sym].n_un.n_strx, HOOKED) &&
 				    pointers[k] != (void *)hooked_set_current)
 					pointers[k] = (void *)hooked_set_current;
+				if (real_tex_image &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, HOOKED_TEX) &&
+				    pointers[k] != (void *)hooked_tex_image)
+					pointers[k] = (void *)hooked_tex_image;
 				if (real_lookup &&
 				    !strcmp(strings + symbols[sym].n_un.n_strx, HOOKED_LOOKUP) &&
 				    pointers[k] != (void *)hooked_lookup)
@@ -171,5 +193,20 @@ void rdn_hook_set_current(void (*after)(void *cgl_ctx))
 		return;
 	}
 	after_set_current = after;
+	watch_images();
+}
+
+void rdn_hook_tex_image_pbuffer(int (*handler)(void *cgl_ctx, void *pbuffer,
+					       long source, long *result))
+{
+	if (real_tex_image)
+		return;
+	real_tex_image = (long (*)(void *, void *, long))
+		dlsym(RTLD_DEFAULT, "CGLTexImagePBuffer");
+	if (!real_tex_image) {
+		rdn_log("no CGLTexImagePBuffer to hook");
+		return;
+	}
+	tex_image_handler = handler;
 	watch_images();
 }

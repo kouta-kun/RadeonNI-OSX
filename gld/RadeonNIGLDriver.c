@@ -244,8 +244,11 @@ static void setup(void)
 		fflush(logf);
 #ifdef RDN_MESA
 	/* See rdn_hook.c. The window server's context always has a drawable. */
-	if (strcmp(getprogname(), "WindowServer") != 0)
+	if (strcmp(getprogname(), "WindowServer") != 0) {
 		rdn_hook_set_current(rdn_mesa_early_all);
+		if (!getenv("RDN_NO_PBUFFER"))
+			rdn_hook_tex_image_pbuffer(rdn_mesa_tex_image_pbuffer);
+	}
 #endif
 }
 
@@ -1155,6 +1158,20 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 					present_hook((void *)a, b);
 			}
 			return idx == IDX_gldInitDispatch ? 4 : 0;
+		}
+	}
+	/*
+	 * Pbuffers (kCGLPFAPBuffer): the software renderer refuses them with
+	 * kCGLBadEnumeration, so the program never gets one. Ours are video
+	 * memory that Mesa draws into and a texture can show
+	 * (CGLTexImagePBuffer is hooked, rdn_hook.c). RDN_NO_PBUFFER=1 leaves the refusal.
+	 */
+	if (!in_window_server() && !getenv("RDN_NO_PBUFFER")) {
+		if (idx == IDX_gldAttachDrawable && b == 0x5a && c) {
+			rdn_mesa_attach((void *)a, b, (const void *)c);
+			if (logf)
+				fprintf(logf, TAG "   pbuffer attached by us -> 1\n", TAG_ARGS);
+			return 1;
 		}
 	}
 	if (in_window_server()) {

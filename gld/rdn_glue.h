@@ -10,6 +10,8 @@
 #ifndef RDN_GLUE_H
 #define RDN_GLUE_H
 
+#include <stdint.h>
+
 /* The generated glue (gen_dispatch.py). */
 /* Look Mesa's functions up by OpenGL name; returns how many exist. */
 unsigned rdn_dispatch_resolve(void *(*lookup)(const char *name),
@@ -55,6 +57,14 @@ void rdn_hook_set_current(void (*after)(void *cgl_ctx));
  * when the program cannot be hooked.
  */
 int rdn_hook_function_lookup(void *(*own)(const char *name));
+/*
+ * rdn_hook.c: let `handler` answer CGLTexImagePBuffer (it returns 1 and
+ * the CGL error in *result, or 0 to leave the call to OpenGL).
+ */
+void rdn_hook_tex_image_pbuffer(int (*handler)(void *cgl_ctx, void *pbuffer,
+					       long source, long *result));
+/* CGLTexImagePBuffer for a context of ours (rdn_mesa.c). */
+int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *result);
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
 /*
  * Where the current context's window coordinates start on Mesa's drawable,

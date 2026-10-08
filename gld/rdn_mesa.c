@@ -48,6 +48,8 @@
 
 /* gldAttachDrawable's type for a window: kCGLPFAWindow. */
 #define DRAWABLE_WINDOW		0x50
+/* gldAttachDrawable's type for CGLSetPBuffer: kCGLPFAPBuffer. */
+#define DRAWABLE_PBUFFER	0x5a
 /* Not Apple's: the card's own screen, for the window server's context. */
 #define DRAWABLE_SCREEN		0x7570
 /*
@@ -133,6 +135,24 @@ static struct context contexts[MAX_CONTEXTS];
 static int resolved, usable = -1;
 
 static int surface_direct(void);
+
+/*
+ * Pbuffers. CGLCreatePBuffer's object is the record gldAttachDrawable
+ * gets for type 0x5a: word 2 is its surface ID, word 3 the texture
+ * target, word 4 the format, words 6 and 7 the size. Its pixels are video
+ * memory of ours, 64 pixels to the row's multiple, bottom row first (a
+ * texture's order), made when a context first draws into it or takes it
+ * as a texture. CGLDestroyPBuffer tells the driver nothing, so the memory
+ * is given back when the object's address comes back with another ID, and
+ * when the program ends.
+ */
+#define MAX_PBUFFERS 64
+struct pbuffer {
+	const void *key;
+	uint32_t id;
+	uint32_t offset, row_bytes, width, height;
+};
+static struct pbuffer pbuffers[MAX_PBUFFERS];
 
 void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
@@ -249,6 +269,118 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 	memset(c, 0, sizeof(*c));
 }
 
+
+static struct pbuffer *pbuffer_find(uint32_t id)
+{
+	int i;
+
+	for (i = 0; i < MAX_PBUFFERS; i++)
+		if (pbuffers[i].key && pbuffers[i].id == id)
+			return &pbuffers[i];
+	return NULL;
+}
+
+/* The pbuffer a record describes, its memory made if it is not yet. */
+static struct pbuffer *pbuffer_for(const uint32_t *r)
+{
+	struct pbuffer *p = NULL, *free_slot = NULL;
+	uint32_t width = r[6], height = r[7];
+	uint32_t row_bytes, bytes;
+	int i;
+
+	if (!width || !height)
+		return NULL;
+	for (i = 0; i < MAX_PBUFFERS; i++) {
+		struct pbuffer *q = &pbuffers[i];
+
+		if (!q->key) {
+			if (!free_slot)
+				free_slot = q;
+			continue;
+		}
+		if (q->key == r && q->id != r[2]) {
+			/* The object's address is another pbuffer's now. */
+			rdn_target_vram_free(q->offset);
+			memset(q, 0, sizeof(*q));
+			if (!free_slot)
+				free_slot = q;
+		} else if (q->id == r[2]) {
+			p = q;
+		}
+	}
+	if (p && p->width == width && p->height == height)
+		return p;
+	if (p) {
+		rdn_target_vram_free(p->offset);
+		memset(p, 0, sizeof(*p));
+		free_slot = p;
+	}
+	if (!free_slot)
+		return NULL;
+	row_bytes = ((width + 63) & ~63u) * 4;
+	bytes = row_bytes * ((height + 63) & ~63u);
+	bytes = (bytes + 4095) & ~4095u;
+	if (!rdn_target_vram_alloc(bytes, &free_slot->offset)) {
+		rdn_log("pbuffer %ux%u: no video memory", (unsigned)width, (unsigned)height);
+		return NULL;
+	}
+	free_slot->key = r;
+	free_slot->id = r[2];
+	free_slot->row_bytes = row_bytes;
+	free_slot->width = width;
+	free_slot->height = height;
+	if (rdn_trace)
+		rdn_log("pbuffer 0x%x (record %p): %ux%u in video memory at 0x%x",
+			(unsigned)r[2], (const void *)r, (unsigned)width,
+			(unsigned)height, (unsigned)free_slot->offset);
+	return free_slot;
+}
+
+/*
+ * CGLTexImagePBuffer (hooked, rdn_hook.c): the texture bound to the
+ * pbuffer's target in this context then shows the pbuffer's memory, the
+ * way a texture does that is bound to a pbuffer. `pbuffer` is the record
+ * gldAttachDrawable got. Returns 1 if the call is ours, with the CGL
+ * error (0 if it worked) in *result.
+ */
+int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *result)
+{
+	const uint32_t *r = pbuffer;
+	struct context *c = NULL;
+	struct pbuffer *p;
+	void *rend = cgl_ctx ? *(void **)cgl_ctx : NULL;
+	int i;
+
+	(void)source;
+	for (i = 0; rend && i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].rend == rend)
+			c = &contexts[i];
+	if (!c || !r || !c->mesa)
+		return 0;
+	p = pbuffer_find(r[2]);
+	if (!p) {
+		/* Not one of ours, or never drawn into or attached. */
+		p = pbuffer_for(r);
+		if (!p)
+			return 0;
+	}
+	rdn_make_current(c->rend);
+	if (!OSMesaTexStoreImage(c->mesa, (GLenum)r[3], RDN_TARGET_VRAM_HANDLE,
+				 (GLsizei)p->row_bytes, p->offset,
+				 (GLsizei)p->width, (GLsizei)p->height,
+				 OSMESA_STORE_BOTTOM_UP | OSMESA_STORE_ALPHA)) {
+		rdn_log("pbuffer 0x%x as a texture: Mesa refuses (target 0x%x)",
+			(unsigned)r[2], (unsigned)r[3]);
+		*result = 0x2717;
+		return 1;
+	}
+	if (rdn_trace)
+		rdn_log("pbuffer 0x%x is the texture bound to 0x%x of context %p",
+			(unsigned)r[2], (unsigned)r[3], c->gld_ctx);
+	*result = 0;
+	return 1;
+}
+
 /* Read the engine's record; false if there is nothing to draw into. */
 /*
  * A surface's picture is kept in a linear buffer in video memory, 64
@@ -347,6 +479,17 @@ static int read_record(const struct context *c, struct drawable *d)
 	if (c->type == DRAWABLE_SURFACE)
 		return surface_drawable((struct context *)c, d);
 	memset(d, 0, sizeof(*d));
+	if (c->type == DRAWABLE_PBUFFER) {
+		struct pbuffer *p = r ? pbuffer_for(r) : NULL;
+
+		if (!p)
+			return 0;
+		d->width = p->width;
+		d->height = p->height;
+		d->rowbytes = p->row_bytes;
+		d->base = p;
+		return 1;
+	}
 	if (!r || (c->type != DRAWABLE_OFFSCREEN && c->type != DRAWABLE_WINDOW))
 		return 0;
 	if (c->type == DRAWABLE_OFFSCREEN) {
@@ -764,6 +907,24 @@ void rdn_make_current(void *rend)
 			box[3] = (GLint)c->screen.height;
 			OSMesaReadbackRects(c->mesa, 1, box);
 		}
+		c->drawable = d;
+		c->bound = 1;
+		c->nowhere = 0;
+		rdn_current_rend = rend;
+		return;
+	}
+	if (c->type == DRAWABLE_PBUFFER) {
+		const struct pbuffer *p = d.base;
+
+		if (!OSMesaMakeCurrentStore(c->mesa, RDN_TARGET_VRAM_HANDLE,
+					    (GLsizei)p->row_bytes, p->offset,
+					    (GLsizei)p->width, (GLsizei)p->height,
+					    OSMESA_STORE_BOTTOM_UP)) {
+			rdn_log("OSMesaMakeCurrentStore failed for context %p",
+				c->gld_ctx);
+			return;
+		}
+		OSMesaReadbackRects(c->mesa, 0, NULL);
 		c->drawable = d;
 		c->bound = 1;
 		c->nowhere = 0;

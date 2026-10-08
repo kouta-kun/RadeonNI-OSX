@@ -4531,3 +4531,48 @@ powerpc-apple-darwin8-gcc` (no guest needed).
 
 Speed, G5, 1920x1080: Quake 3 `four` 147.9 fps (148), Doom 3 `bench` 49.1
 (48). `appletest` and `vartest` as before.
+
+## 2026-10-08: A6 stage 3a to 3c, pbuffers
+
+**3a, why `CGLSetPBuffer` was refused** (the plan said before any call
+reached the bundle; it does reach it). Read in disassembly (`otool -tV`
+on the G5): `CGLSetPBuffer` puts the pbuffer in a list of drawables and
+calls `_cglSetAnyDrawable`, which sets the context's screen
+(`_cglSetContextScreen`) and then calls the renderer's `gldAttachDrawable`
+with the list entry's type (0x5a) and, as its third argument, the
+`CGLPBufferObj` itself. Whatever that returns is the CGL error code, with
+1 meaning "set viewport and scissor from the object's size (words 6, 7)"
+and 2 "nothing more to do". Our bundle forwarded the call to Apple's
+software renderer, which answers 0x271a, `kCGLBadEnumeration`. Nothing
+about renderer info or pixel format flags was needed (`kCGLPFAPBuffer`
+was already set: "pbuffer 1").
+
+The record is the pbuffer object: word 2 its surface ID, word 3 the
+texture target, word 4 the format, words 6 and 7 the size.
+
+**3b, drawing into one.** The bundle answers type 0x5a itself (not in the
+window server; `RDN_NO_PBUFFER=1` leaves the refusal) and returns 1.
+`gld/rdn_mesa.c`: `struct pbuffer`, keyed by the surface ID, with video
+memory made at first use (64 pixels to the row's multiple, bottom row
+first, like a texture), and `DRAWABLE_PBUFFER` in `read_record()` and
+`rdn_make_current()`, which binds with `OSMesaMakeCurrentStore`.
+`CGLDestroyPBuffer` calls nothing of ours, so the memory is given back
+when the object's address returns with another ID and at the end of the
+program (the kext frees a client's memory). A limit to remember for the
+window server.
+
+**3c, as a texture.** `CGLTexImagePBuffer` is `CGLSetParameter(ctx, 997,
+{ID, target, format, w, h, 0x8367, source, ...})`, which goes to the
+engine's `gliSetInteger`, not to a `gld*` function. The engine looks at
+*its own* texture bound to the target (Mesa's `glBindTexture` never
+reaches it) and refuses with `kCGLBadState` (10007). So the bundle hooks
+`CGLTexImagePBuffer` the way it hooks `CGLSetCurrentContext` (symbol
+pointers of every image, `rdn_hook_tex_image_pbuffer`) and, for a context
+of ours, calls `OSMesaTexStoreImage` on Mesa's bound texture (no copy,
+flags bottom-up and alpha).
+
+**Check:** `ciprobe pbuffer 0x21a00`: PASS for the 2D texture (256x256)
+and the rectangle (320x200), 0 of 64 points wrong both when drawn into
+and when read through the texture, also with `RDN_GLTHREAD=0`; with
+`RDN_NO_PBUFFER=1` both FAIL as before. `appletest`, `sharetest`,
+`glprobe draw` as before.
