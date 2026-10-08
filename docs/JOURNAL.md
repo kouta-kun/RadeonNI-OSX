@@ -5041,3 +5041,21 @@ lets the swap run in glthread's thread after the frame; a full-screen swap is
 queued, a window's (read by the window server at once) still waits. The
 result is neutral within 0 to 2.5 %. Not yet seen by eye in the games; the
 window server is untouched. Full piglit re-run on the branch still to do.
+
+### Correction, same day: the first back buffer showed nothing
+
+The user launched Doom 3 from the Finder: a blue screen (the menu was running
+behind it; `sample` showed the game idle in its menu loop). The cause was in
+the branch: `direct_res` (the device's surface) and `store_res` (a window's
+buffer for the window server) were created while the FRONT_LEFT attachment was
+validated, and Mesa makes that attachment only when a program uses it, so a
+double-buffered program that never touches the front buffer never got them and
+`osmesa_present_direct` returned at `if (!osbuffer->direct_res)`. Nothing was
+ever copied to the screen. The timedemo numbers above were taken in that
+state, with nothing shown (a frame rate proves nothing about the picture).
+Fixed: they are made with the back buffer's attachment as well
+(`colour` in `osmesa_st_framebuffer_validate`). Measured again with the
+picture on screen (Doom 3 menu and Quake 3 `four` grabbed): Quake 3 148.0,
+148.2, 148.6 single buffer against 147.9, 148.1, 148.2; Doom 3 bench 48.5,
+48.4 against 48.1, 48.5. Neutral. Lesson: after a change to presentation,
+grab the screen (`scripts/mac.sh g5 grab`) before measuring.

@@ -899,8 +899,16 @@ osmesa_st_framebuffer_validate(struct st_context *st,
                                    osbuffer->own_offset, osbuffer->width,
                                    osbuffer->height);
       }
-      if (osbuffer->direct && statts[i] == ST_ATTACHMENT_FRONT_LEFT &&
-          !osbuffer->direct_res) {
+      /*
+       * The device's surface and the caller's memory are set up with the
+       * colour buffer the context draws on: the front one, or the back
+       * one of a double-buffered drawable, whose front buffer Mesa makes
+       * only when the program uses it.
+       */
+      bool colour = statts[i] == ST_ATTACHMENT_FRONT_LEFT ||
+                    (osbuffer->has_back && statts[i] == ST_ATTACHMENT_BACK_LEFT);
+
+      if (osbuffer->direct && colour && !osbuffer->direct_res) {
          struct winsys_handle whandle;
          struct pipe_resource target = templat;
 
@@ -919,7 +927,7 @@ osmesa_st_framebuffer_validate(struct st_context *st,
                                          PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
       }
       if (osbuffer->direct && osbuffer->own_handle && !osbuffer->store_res &&
-          statts[i] == ST_ATTACHMENT_FRONT_LEFT) {
+          colour) {
          struct winsys_handle whandle;
 
          memset(&whandle, 0, sizeof(whandle));
