@@ -1409,6 +1409,20 @@ OSMesaTexCopyDrawable(OSMesaContext osmesa, GLenum target, GLint x, GLint y,
       return GL_FALSE;
    u_box_2d(x, y, width, height, &box);
    osmesa_copy(pipe, dst, 0, 0, src, &box);
+   /*
+    * The copy is given to the device now: another context (Core Image's in
+    * the window server) draws from the texture next and must not get ahead
+    * of it.
+    */
+   {
+      struct pipe_fence_handle *fence = NULL;
+
+      pipe->flush(pipe, &fence, 0);
+      if (fence) {
+         screen->fence_finish(screen, pipe, fence, OS_TIMEOUT_INFINITE);
+         screen->fence_reference(screen, &fence, NULL);
+      }
+   }
    ok = st_context_teximage(osmesa->st, target, 0, src->format, dst, false)
         ? GL_TRUE : GL_FALSE;
    pipe_resource_reference(&dst, NULL);

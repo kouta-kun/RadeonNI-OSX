@@ -423,6 +423,37 @@ static struct pbuffer *pbuffer_for(const uint32_t *r)
 	return free_slot;
 }
 
+/* Debug (with the log): what the context that drew into a pbuffer left there. */
+static void pbuffer_peek(struct pbuffer *p, uint32_t id)
+{
+	struct context *d = NULL;
+	const uint32_t *m;
+	int i;
+
+	if (!rdn_logging)
+		return;
+	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].type == DRAWABLE_PBUFFER &&
+		    contexts[i].drawable.base == (void *)p)
+			d = &contexts[i];
+	if (!d) {
+		rdn_log("pbuffer 0x%x as a texture: no context is bound to it", (unsigned)id);
+		return;
+	}
+	rdn_make_current(d->rend);
+	if (!mesa_finish_fn)
+		mesa_finish_fn = (void (*)(void))OSMesaGetProcAddress("glFinish");
+	if (mesa_finish_fn)
+		mesa_finish_fn();
+	m = rdn_target_vram_map(p->offset);
+	rdn_log("pbuffer 0x%x as a texture, after a finish: pixels %08x %08x %08x (middle row %u)",
+		(unsigned)id,
+		m ? m[(p->height / 2) * p->row_bytes / 4 + p->width / 4] : 0,
+		m ? m[(p->height / 2) * p->row_bytes / 4 + p->width / 2] : 0,
+		m ? m[(p->height / 2) * p->row_bytes / 4 + p->width * 3 / 4] : 0,
+		(unsigned)(p->height / 2));
+}
+
 /*
  * CGLTexImagePBuffer (hooked, rdn_hook.c): the texture bound to the
  * pbuffer's target in this context then shows the pbuffer's memory, the
@@ -451,6 +482,7 @@ int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *
 		if (!p)
 			return 0;
 	}
+	pbuffer_peek(p, r[2]);
 	rdn_make_current(c->rend);
 	if (!OSMesaTexStoreImage(c->mesa, (GLenum)r[3], RDN_TARGET_VRAM_HANDLE,
 				 (GLsizei)p->row_bytes, p->offset,
@@ -511,6 +543,7 @@ int rdn_mesa_cgls_set_integer(void *cgls_ctx, long pname, long *vals, long *resu
 	p = pbuffer_find((uint32_t)vals[0]);
 	if (p) {
 		/* A pbuffer: its memory is the texture. */
+		pbuffer_peek(p, (uint32_t)vals[0]);
 		rdn_make_current(c->rend);
 		if (!OSMesaTexStoreImage(c->mesa, (GLenum)vals[1], RDN_TARGET_VRAM_HANDLE,
 					 (GLsizei)p->row_bytes, p->offset,
@@ -528,9 +561,10 @@ int rdn_mesa_cgls_set_integer(void *cgls_ctx, long pname, long *vals, long *resu
 		*result = OSMesaTexCopyDrawable(c->mesa, (GLenum)vals[1], c->origin_x,
 						(GLint)c->screen_height - c->origin_y - (GLint)vals[4],
 						(GLsizei)vals[3], (GLsizei)vals[4]) ? 0 : 0x2717;
-		if (rdn_trace)
-			rdn_log("the screen as a texture of context %p (%ldx%ld at %d,%d): %s",
-				c->gld_ctx, vals[3], vals[4], rdn_origin_x, rdn_origin_y,
+		if (rdn_logging)
+			rdn_log("the screen as a texture of context %p (%ldx%ld at %d,%d of %ux%u): %s",
+				c->gld_ctx, vals[3], vals[4], c->origin_x, c->origin_y,
+				(unsigned)c->screen_width, (unsigned)c->screen_height,
 				*result ? "failed" : "done");
 		return 1;
 	}
@@ -1080,6 +1114,23 @@ void rdn_make_current(void *rend)
 	if (c->type == DRAWABLE_PBUFFER) {
 		const struct pbuffer *p = d.base;
 
+		/*
+		 * The window server's first calls on its Core Image context
+		 * (bind a texture, set its parameters) come before the pbuffer
+		 * is attached and carry the screen context's engine context, so
+		 * they land in the context that is current, not here. The new
+		 * context takes over the rectangle texture bound there.
+		 */
+		GLint inherit = 0;
+
+		if (pbuffer_ws && !c->ws_state && OSMesaGetCurrentContext() &&
+		    OSMesaGetCurrentContext() != c->mesa) {
+			void (*get_int)(GLenum, GLint *) = (void (*)(GLenum, GLint *))
+				OSMesaGetProcAddress("glGetIntegerv");
+
+			if (get_int)
+				get_int(0x84f6, &inherit);	/* GL_TEXTURE_BINDING_RECTANGLE */
+		}
 		if (!OSMesaMakeCurrentStore(c->mesa, RDN_TARGET_VRAM_HANDLE,
 					    (GLsizei)p->row_bytes, p->offset,
 					    (GLsizei)p->width, (GLsizei)p->height,
@@ -1100,10 +1151,17 @@ void rdn_make_current(void *rend)
 			 * pbuffer without ever enabling it.
 			 */
 			void (*enable)(GLenum) = (void (*)(GLenum))OSMesaGetProcAddress("glEnable");
+			void (*bind)(GLenum, GLuint) = (void (*)(GLenum, GLuint))
+				OSMesaGetProcAddress("glBindTexture");
 
 			c->ws_state = 1;
 			if (enable)
 				enable(0x84f5);
+			if (inherit > 0 && bind)
+				bind(0x84f5, (GLuint)inherit);
+			if (rdn_logging)
+				rdn_log("window server context %p: rectangle texturing on, texture %d bound",
+					c->gld_ctx, (int)inherit);
 		}
 		return;
 	}

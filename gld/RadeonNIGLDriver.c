@@ -184,6 +184,27 @@ int rdn_trace_wanted(const char *name)
 
 	if (!looked) {
 		only = getenv("RDN_GLD_TRACE_ONLY");
+		/*
+		 * Where the environment is not ours to set (the window server)
+		 * the names can be in /tmp/rdngld.trace itself, separated by
+		 * commas or lines.
+		 */
+		if (!only) {
+			static char names[2048];
+			FILE *f = fopen("/tmp/rdngld.trace", "r");
+			size_t n = f ? fread(names, 1, sizeof(names) - 1, f) : 0, i;
+
+			if (f)
+				fclose(f);
+			for (i = 0; i < n; i++)
+				if (names[i] == '\n' || names[i] == ' ')
+					names[i] = ',';
+			while (n && names[n - 1] == ',')
+				n--;
+			names[n] = 0;
+			if (n)
+				only = names;
+		}
 		looked = 1;
 	}
 	if (!only)
