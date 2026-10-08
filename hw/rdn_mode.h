@@ -10,6 +10,9 @@
 
 #include "rdn_card.h"
 
+/* The highest pixel clock of a mode we offer: one TMDS link, and what DisplayPort at 4 lanes of 1.62 Gbit/s carries. */
+#define RDN_MODE_MAX_CLOCK	165000
+
 #define RDN_MODE_NHSYNC		(1 << 0)	/* horizontal sync active low */
 #define RDN_MODE_NVSYNC		(1 << 1)	/* vertical sync active low */
 
@@ -50,6 +53,14 @@ bool rdn_edid_detailed_mode(const uint8_t *edid, int index,
 
 /* The preferred (first detailed) timing of an EDID. False if there is none. */
 bool rdn_edid_preferred_mode(const uint8_t *edid, struct rdn_mode *mode);
+
+/*
+ * Every mode an EDID offers (its detailed, established, standard and CEA
+ * timings that are progressive, and 640x480, 800x600 and 1024x768 at 60 Hz
+ * if the monitor's range limits allow them), the preferred one first, at
+ * most `max`. `len` is the EDID's length. Returns the count.
+ */
+int rdn_edid_modes(const uint8_t *edid, int len, struct rdn_mode *out, int max);
 
 /* True when the EDID carries an HDMI vendor block in a CEA extension. */
 bool rdn_edid_is_hdmi(const uint8_t *edid, int len);

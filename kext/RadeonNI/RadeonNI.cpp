@@ -362,16 +362,11 @@ bool RadeonNI::bringUp()
 	      (fEdid[20] & 0x80) ? "digital" : "analog",
 	      fCard.output->displayport ? "DisplayPort" : useHDMI() ? "HDMI" : "DVI",
 	      fForceDVI ? " (rdn_dvi)" : "");
-	fModeCount = 0;
-	for (i = 0; i < kMaxModes; i++)
-		if (rdn_edid_detailed_mode(fEdid, i, &fModes[fModeCount])) {
-			IOLog("RadeonNI: mode %lu: %ux%u at %lu kHz\n",
-			      (unsigned long)fModeCount + 1,
-			      fModes[fModeCount].hdisplay,
-			      fModes[fModeCount].vdisplay,
-			      (unsigned long)fModes[fModeCount].clock);
-			fModeCount++;
-		}
+	/* The monitor's timings, the preferred one first (mode 1), and the sizes programs expect. */
+	fModeCount = (UInt32)rdn_edid_modes(fEdid, fEdidLen, fModes, kMaxModes);
+	for (i = 0; i < fModeCount; i++)
+		IOLog("RadeonNI: mode %lu: %ux%u at %lu kHz\n", (unsigned long)i + 1,
+		      fModes[i].hdisplay, fModes[i].vdisplay, (unsigned long)fModes[i].clock);
 	if (!fModeCount) {
 		IOLog("RadeonNI: the EDID has no detailed timing\n");
 		return false;

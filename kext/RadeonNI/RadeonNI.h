@@ -30,7 +30,7 @@ class RadeonNIAccel;
 
 class RadeonNI : public IOFramebuffer
 {
-	enum { kMaxModes = 4 };
+	enum { kMaxModes = 32 };
 
 	OSDeclareDefaultStructors(RadeonNI)
 
