@@ -98,6 +98,11 @@ samples as wanted. `GL_RGB9_E5` was missing from the endian swap table
 Re-run: 4,852 pass, 111 fail (first run 4,774 / 181), 72 tests fixed in all,
 none regressed; multisample 359 pass, 1 fail.
 
+On the branch `back-buffer` (full run, 2026-10-08, evening): 4,869 pass, 94
+fail; 17 tests fixed against the run on `main`, none regressed (the front
+and back buffer tests, `fbo-sys-blit`, `fbo-sys-sub-blit`, `fcc-front-buffer-
+distraction`, and others); multisample unchanged (359 pass, 1 fail).
+
 What the rest of the failures are (read from the logs, 2026-10-08):
 
 - Geometry shader and tessellation subtests (`gs-out and fs`, ...) of

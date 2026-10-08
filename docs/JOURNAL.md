@@ -5059,3 +5059,7 @@ picture on screen (Doom 3 menu and Quake 3 `four` grabbed): Quake 3 148.0,
 148.2, 148.6 single buffer against 147.9, 148.1, 148.2; Doom 3 bench 48.5,
 48.4 against 48.1, 48.5. Neutral. Lesson: after a change to presentation,
 grab the screen (`scripts/mac.sh g5 grab`) before measuring.
+
+Full piglit run on the branch `back-buffer` (with the fix above): 4,869 pass,
+94 fail (`main`: 4,852 / 111); 17 fixed, 0 regressed; multisample the same.
+Call of Duty 2 looked right to the user; World of Warcraft not run.
