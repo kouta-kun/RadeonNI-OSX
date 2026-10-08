@@ -2122,6 +2122,11 @@ def main():
             out.append('}')
             out.append('')
             continue
+        if name == 'get_error':
+            out.append('\t{ GLenum e = m_get_error(); if (e && rdn_logging) rdn_log("glGetError -> 0x%x", e); return e; }')
+            out.append('}')
+            out.append('')
+            continue
         out.append('\t%s%s;' % ('' if ret == 'void' else 'return ', call))
         if name in ('flush', 'finish'):
             out.append('\trdn_flush_surface(ctx);')

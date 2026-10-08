@@ -413,6 +413,13 @@ static struct pbuffer *pbuffer_for(const uint32_t *r)
 	}
 	if (!free_slot)
 		return NULL;
+	/* Nothing bigger than the card draws (16384 a side) or than fits 32 bits. */
+	if (width > 16384 || height > 16384 ||
+	    (unsigned long long)((width + 63) & ~63u) * per_pixel *
+	    ((height + 63) & ~63u) > 0x7ffff000ull) {
+		rdn_log("pbuffer %ux%u: too big", (unsigned)width, (unsigned)height);
+		return NULL;
+	}
 	row_bytes = ((width + 63) & ~63u) * per_pixel;
 	bytes = row_bytes * ((height + 63) & ~63u);
 	bytes = (bytes + 4095) & ~4095u;
@@ -716,13 +723,13 @@ static int read_record(const struct context *c, struct drawable *d)
 	       d->rowbytes >= d->width * 4;
 }
 
-void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
+int rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 {
 	struct context *c = find(gld_ctx);
 	struct drawable d;
 
 	if (!c)
-		return;
+		return 1;
 	c->type = type;
 	c->record = drawable;
 	c->bound = 0;
@@ -733,6 +740,17 @@ void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 	rdn_log("attach: context %p, type 0x%lx, %ux%u, rowbytes %u, base %p",
 		gld_ctx, type, (unsigned)d.width, (unsigned)d.height,
 		(unsigned)d.rowbytes, d.base);
+	if (type == DRAWABLE_PBUFFER && !d.base) {
+		/*
+		 * No memory for it (or a size no card has): the call fails
+		 * (kCGLBadAlloc) and the context keeps what it had, instead
+		 * of drawing into a dummy where nothing is ever seen.
+		 */
+		c->type = 0;
+		c->record = NULL;
+		return 0;
+	}
+	return 1;
 }
 
 int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,

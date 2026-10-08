@@ -4905,3 +4905,26 @@ After: Color Invert and Gaussian Blur (radius 10) show at once on a
 1693x961 image, 0 allocation failures, a dozen pbuffers live (181 MB).
 Tried by clicks (`drag`) and grabs: Color Invert, Gaussian Blur. Other
 filters of its list not tried; Quartz Composer, Preview not tried.
+
+## 2026-10-08: Fun House, an effect above the image (user's report)
+
+**The user:** Copenhagen plus Motion Blur added with the *top bar's* "+"
+(which puts the effect above the image row, so it has no input) does
+nothing and, when a window is moved over the picture, that region goes
+black. A well-placed Motion Blur is fine. The user's guess: an error that
+is handled wrongly, not a shader problem.
+
+Reproduced on the G5 (Copenhagen, top "+", Motion Blur: the old picture
+stays, then dragging the Finder window over it leaves black staircase
+blocks where the window was). The programs compile (log: no error
+position). What I could read in the code: when a pbuffer cannot be had
+(a size over 16384, a 32-bit overflow of the size, no memory) `pbuffer_for`
+returned nothing, `read_record()` failed, and the context was bound to the
+16x16 dummy with the attach reported as a success: Core Image went on
+drawing into a buffer nobody sees. Changed: sizes are checked in 64 bits and
+over 16384 a side is refused, and the attach of a pbuffer that cannot be
+made now fails with `kCGLBadAlloc` (0x2720) for both CGL's and the window
+server's, so the caller sees the error. Whether this is what Fun House hit
+was not confirmed (the clicks I send to the app became unreliable after the
+window moved; no log of the failing case was caught). The bundle on the G5
+has the change (fd75a5f6), logs off.

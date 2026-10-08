@@ -100,7 +100,8 @@ int rdn_mesa_is_pbuffer(void *gld_ctx);
 int rdn_mesa_tex_image_pbuffer_ws(void *cgls_ctx, void *pbuffer, long source, long *result);
 /* CGLTexImagePBuffer for a context of ours (rdn_mesa.c). */
 int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *result);
-void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
+/* 0 if a pbuffer's memory cannot be had: the attach is to fail. */
+int rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);
 /*
  * Where the current context's window coordinates start on Mesa's drawable,
  * when that is bigger than what the context was given (the window server

@@ -1247,7 +1247,11 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	 */
 	if (!in_window_server() && pbuffers_on()) {
 		if (idx == IDX_gldAttachDrawable && b == 0x5a && c) {
-			rdn_mesa_attach((void *)a, b, (const void *)c);
+			if (!rdn_mesa_attach((void *)a, b, (const void *)c)) {
+				if (logf)
+					fprintf(logf, TAG "   pbuffer refused by us -> kCGLBadAlloc\n", TAG_ARGS);
+				return 0x2720;
+			}
 			if (logf)
 				fprintf(logf, TAG "   pbuffer attached by us -> 1\n", TAG_ARGS);
 			return 1;
@@ -1260,7 +1264,11 @@ static long forward(int idx, long a, long b, long c, long d, long e, long f,
 	 */
 	if (rdn_ws_core_image() && idx == IDX_gldAttachDrawable && b == 0x5a && c) {
 		rdn_mesa_pbuffer_layout(1);
-		rdn_mesa_attach((void *)a, b, (const void *)c);
+		if (!rdn_mesa_attach((void *)a, b, (const void *)c)) {
+			if (logf)
+				fprintf(logf, TAG "   pbuffer of the window server refused by us -> kCGLBadAlloc\n", TAG_ARGS);
+			return 0x2720;
+		}
 		if (logf)
 			fprintf(logf, TAG "   pbuffer of the window server attached by us -> 2\n", TAG_ARGS);
 		return 2;
