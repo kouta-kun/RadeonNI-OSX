@@ -517,6 +517,10 @@ Keep these current as part of the work, and commit small and often.
   with the Quartz Extreme personality `kext.sh` uses under QEMU, plus the
   bundle and the plug-in; without options, phase 1's. The installer's
   bundle and plug-in step has not run anywhere yet.
+- `scripts/build-piglit.sh`, `tools/piglit/run.py` (stage, start, fetch,
+  summary) and `docs/PIGLIT.md`: piglit's GL 2.1 tests built for Tiger and
+  run on the G5 (2026-10-08). `run.py start` must stay in the foreground of
+  its ssh session (run it as a background job), else the tests abort.
 - `scripts/make-dist.sh [--keep-gl]`: the archive for other people,
   `build/RadeonNI-<date>-<commit>.zip`: what `make-g5-package.sh` builds
   plus `README.md`, `INSTALL.txt` (`g5/README.txt`) and the licences

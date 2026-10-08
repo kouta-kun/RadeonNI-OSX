@@ -91,11 +91,15 @@ def start(args):
     open(lst, "w").writelines(sel)
     mac(args, ["put", lst, "~/piglit/%s.list" % args.label], check=True)
     envs = " ".join(args.env)
+    # The run stays in the foreground of the ssh session: on Tiger the tests
+    # lose their window server connection when the session that started them
+    # ends (CFMessagePort bootstrap_register failed, SIGABRT). Run this
+    # command itself in the background.
     cmd = ("cd ~/piglit && rm -f out-%(l)s/stop out-%(l)s/finished && "
-           "%(e)s nohup perl run.pl %(l)s.list out-%(l)s %(t)d > run-%(l)s.log 2>&1 < /dev/null & "
-           "sleep 1; echo started") % dict(l=args.label, t=args.timeout, e=envs)
+           "%(e)s perl run.pl %(l)s.list out-%(l)s %(t)d") % dict(
+               l=args.label, t=args.timeout, e=envs)
+    print(len(sel), "tests", flush=True)
     mac(args, ["ssh", cmd], check=True)
-    print(len(sel), "tests")
 
 
 def status(args):
@@ -124,7 +128,20 @@ def load(label):
     for line in open(os.path.join(OUT, label, "results")):
         p = line.rstrip("\n").split("\t")
         if len(p) >= 3:
-            res[p[0]] = (p[1], int(p[2]))
+            r = p[1]
+            if r == "crash" and p[2] in ("127", "2"):
+                # Not a crash of the driver: the binary was not built, or the
+                # command's arguments lost their quoting on the way.
+                f = os.path.join(OUT, label, "logs", re.sub(r"[^A-Za-z0-9_.-]", "_", p[0]) + ".txt")
+                try:
+                    t = open(f, errors="replace").read(2000)
+                except OSError:
+                    t = ""
+                if "No such file" in t:
+                    r = "notbuilt"
+                elif "syntax error" in t:
+                    r = "harness"
+            res[p[0]] = (r, int(p[2]))
     return res
 
 

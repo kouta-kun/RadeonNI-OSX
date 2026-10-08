@@ -4950,3 +4950,29 @@ Quartz Composer and its screen savers, iChat effects, floating point
 pbuffers, hours of use. The crash log of DashboardClient from 05:24 is
 from a window server restart (a client dies when its server does), not
 from the driver.
+
+## 2026-10-08: piglit on the G5 (A7)
+
+Built piglit for Tiger (`scripts/build-piglit.sh`; the toolchain image got
+cmake, numpy, six; 1,610 test programs, two skipped for a `pipe` name clash
+through `tiger_compat.h` -> `unistd.h`). Runner `tools/piglit/run.py` (host)
+and `run.pl` (G5, perl 5.8), 5,972 GL 2.1 tests chosen by
+`tools/piglit/select.py`.
+
+- Result: 4,774 pass of 4,962 with a verdict (96.2 %); 181 fail, 2 timeouts,
+  2 crashes; 81 not built, 21 lost quoting. Multisample: 353/6 fail/287 skip.
+  Clusters and ranking in `docs/PIGLIT.md`.
+- Negative result 1: first run of every test failed with
+  "glGetStringi not found": the context says GL 3.2 but Tiger exports only
+  GL 2.1 entry points and the bundle answers four names by `CFBundle`
+  lookup, none by `dlsym`. piglit patched to ask `OSMesaGetProcAddress`
+  (`RDN_PIGLIT_MESA=1`).
+- Negative result 2: a batch started with `nohup &` and then its ssh
+  session closed aborted every test ("CFMessagePort: bootstrap_register()
+  failed 1100"); Tiger processes lose the window server connection with
+  the login session. The run now stays in the foreground of the ssh call.
+- No baseline on Apple's renderer yet.
+- Biggest clusters: packed pixel types (5551/4444/10_10_10_2/565_REV,
+  channels reversed), front/back buffer, occlusion queries returning 0,
+  two-sided vertex program lighting, DEPTH32F_STENCIL8's stencil,
+  RGB9_E5. `large-tex` shows a 256 MB request failing at 538 MB in use.
