@@ -76,7 +76,8 @@ is refused before any call reaches the bundle") was each partly wrong:
   program with a window (or a pbuffer drawable with a non-off-screen
   format, as `ciprobe gl` has now) has one.
 
-**In a program** (`RDN_PBUFFER=1` and the two switches, per program):
+**In a program** (all default since the user's decision on 2026-10-08;
+`RDN_NO_PBUFFER=1` and `RDN_RENDERER=` switch parts off, per program):
 Core Image takes the card, makes two contexts that share with the
 program's, compiles each filter's ARB programs and draws through pbuffers
 of the format it names (`GL_RGBA16` for the 64 bit context's), which are
@@ -103,8 +104,8 @@ rounds the other way.) Without the switches Core Image still filters on
 the CPU and the picture is exact. Floating point pbuffers (`GL_RGBA16F`,
 `GL_RGBA32F`) have a store but nothing has drawn into one.
 
-**In the window server** (the file
-`/Library/Application Support/RadeonNI/coreimage`, present when it
+**In the window server** (on unless the file
+`/Library/Application Support/RadeonNI/nocoreimage` is there when it
 starts): `wsfilter` (`CGSAddWindowFilter`, flags 0x3001, the Dock's call)
 puts the filter on what is *behind* the window, and the window's own
 picture is drawn over it. CIColorInvert shows the desktop behind it
