@@ -87,7 +87,33 @@ fail (was 6). Cluster 1 below is therefore closed except for `GL_RGB9_E5`
 (cluster 6), `s3tc` mipmap generation and `ext_packed_depth_stencil`
 stencil, which are other causes.
 
-## Failure clusters, ranked (first run, before the fix)
+## After the occlusion query and RGB9_E5 fixes (2026-10-08, later)
+
+`mesa/patches/0007-r600-big-endian-query-results.patch`: the GPU writes
+query results as little-endian dwords, the CPU read them as host dwords, so
+the "written" bit was never seen: every occlusion query counted 0 samples
+and timer queries were byte-swapped. `tools/guest/occtest.c`: 400, 0, 0
+samples as wanted. `GL_RGB9_E5` was missing from the endian swap table
+(patch 0006 again); every `rgb9_e5` and `shared_exponent` test passes.
+Re-run: 4,852 pass, 111 fail (first run 4,774 / 181), 72 tests fixed in all,
+none regressed; multisample 359 pass, 1 fail.
+
+What the rest of the failures are (read from the logs, 2026-10-08):
+
+- Geometry shader and tessellation subtests (`gs-out and fs`, ...) of
+  `vertex-program-two-side` (27 tests) and `glsl-fs-fogscale`: the "vs and
+  fs" subtest passes. GL 3.2 and above; nothing on Tiger can call it.
+- Polygon stipple (`polygon-stipple-fs`, `no-op-paths`): r600's
+  `set_polygon_stipple` is an empty function, as upstream; not our bug.
+- Accumulation buffer (`clear-accum`): not supported.
+- Front and back buffer (about 15 tests): the frontend has one colour
+  buffer by design. Being worked on in the branch `back-buffer`.
+- `GL_DEPTH32F_STENCIL8` stencil (about 35), the stencil of
+  `ext_packed_depth_stencil` (2), S3TC mipmap generation (2), line stipple
+  and smooth lines, `timestamp-get` (the "now" call returns the host clock
+  while timestamp queries return the GPU counter): not looked into.
+
+## Failure clusters, ranked (first run, before the fixes)
 
 1. **(fixed, see above) Packed pixel types are wrong (about 400 subtests, 58 formats).** In
    `teximage-colors` every internal format fails for exactly seven

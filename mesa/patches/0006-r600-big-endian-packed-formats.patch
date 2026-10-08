@@ -6,7 +6,7 @@ while the hardware reads the word, after the 8IN16/8IN32 swap, as a
 little-endian word. r600 chose the hardware format and the swizzle from the
 reversed description. Use the little-endian view of such formats in
 r600_translate_texformat, r600_translate_colorformat and
-r600_translate_colorswap, and swap 5_5_5_1 and 10_10_10_2 as well. Found by
+r600_translate_colorswap, and swap 5_5_5_1, 10_10_10_2 and the shared exponent format (RGB9_E5) as well. Found by
 piglit (teximage-colors) on a Power Mac G5; tools/guest/packedtest.c.
 
 diff -ruN a/src/gallium/drivers/r600/r600_pipe_common.h b/src/gallium/drivers/r600/r600_pipe_common.h
@@ -108,11 +108,12 @@ diff -ruN a/src/gallium/drivers/r600/r600_state_common.c b/src/gallium/drivers/r
  		case V_0280A0_COLOR_4_4_4_4:
  		case V_0280A0_COLOR_16_FLOAT:
  		case V_0280A0_COLOR_16:
-@@ -3805,6 +3849,7 @@
+@@ -3805,6 +3849,8 @@
  
  		case V_0280A0_COLOR_10_11_11_FLOAT:
  		case V_0280A0_COLOR_2_10_10_10:
 +		case V_0280A0_COLOR_10_10_10_2:
++		case FMT_5_9_9_9_SHAREDEXP:
  		case V_0280A0_COLOR_8_24:
  		case V_0280A0_COLOR_24_8:
  		case V_0280A0_COLOR_32_FLOAT:

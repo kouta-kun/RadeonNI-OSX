@@ -4997,3 +4997,18 @@ fixed the render-target side (reading a texture back as its own packed type).
 Re-run: 66 more tests pass, no regression; multisample 5 more.
 Bundle on the G5: this build; the one before is `~/RadeonNIGLDriver.before-packed`.
 The window server still has the old copy loaded.
+
+## 2026-10-08: piglit, occlusion queries and RGB9_E5
+
+Occlusion queries counted 0: `r600_query.c` read the GPU's little-endian
+result dwords as host dwords (mesa/patches/0007). Timer queries were swapped
+the same way. `occtest` 400/0/0. First attempt at a test of mine had the
+depth direction wrong (glOrtho maps z -0.5 to the far side). RGB9_E5 needed
+the 8IN32 swap (patch 0006). A scan of the games on the G5 found none that
+references the query functions, so nothing used the broken results.
+Mistake: after editing the tree for a change already covered by patch 0006
+the build script's reverse dry-run failed, it tried to apply the patch
+forward, and left .rej files; regenerate a patch whenever the tree changes
+under it. Regression runs: `ours4` 4,852 pass; the bundle on the G5 is the
+build with both patches (`~/RadeonNIGLDriver.rgb9`).
+Read of the remaining failures: see docs/PIGLIT.md.
