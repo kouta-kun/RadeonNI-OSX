@@ -34,7 +34,7 @@ extern void *rdn_current_rend;
 void rdn_make_current(void *rend);
 
 /* rdn_mesa.c: what the bundle tells it about, as the gld* calls go by. */
-void rdn_mesa_context_created(void *gld_ctx);
+void rdn_mesa_context_created(void *gld_ctx, void *share);
 void rdn_mesa_context_destroyed(void *gld_ctx);
 /*
  * The engine's context that goes with a new driver context, and the

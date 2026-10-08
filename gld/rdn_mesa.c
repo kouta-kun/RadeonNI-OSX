@@ -82,6 +82,8 @@ struct drawable {
 
 struct context {
 	void *gld_ctx;
+	/* The context it shares objects with (gldCreateContext's fourth argument). */
+	void *share;
 	void *rend;
 	OSMesaContext mesa;
 	long type;
@@ -186,7 +188,33 @@ static struct context *find(void *gld_ctx)
 	return NULL;
 }
 
-void rdn_mesa_context_created(void *gld_ctx)
+/*
+ * Mesa's context for ours, made now if it is not yet. A context that
+ * shares (CGLCreateContext's second argument) is made with the other's
+ * Mesa context as its share list, so that textures, programs and buffers
+ * are the same objects in both; the other's is made first when it does
+ * not exist yet (contexts are made on first use). Core Image does this:
+ * its two contexts for pbuffers share with the program's.
+ */
+static OSMesaContext mesa_for(struct context *c)
+{
+	OSMesaContext list = NULL;
+
+	if (c->mesa)
+		return c->mesa;
+	if (c->share && c->share != c->gld_ctx) {
+		struct context *o = find(c->share);
+
+		if (o)
+			list = mesa_for(o);
+	}
+	c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, list);
+	if (c->mesa && list && rdn_trace)
+		rdn_log("context %p shares with %p", c->gld_ctx, c->share);
+	return c->mesa;
+}
+
+void rdn_mesa_context_created(void *gld_ctx, void *share)
 {
 	int i;
 
@@ -196,6 +224,7 @@ void rdn_mesa_context_created(void *gld_ctx)
 		if (!contexts[i].gld_ctx) {
 			memset(&contexts[i], 0, sizeof(contexts[i]));
 			contexts[i].gld_ctx = gld_ctx;
+			contexts[i].share = share;
 			return;
 		}
 	rdn_log("no room for another context; it stays with the software renderer");
@@ -369,7 +398,7 @@ int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,
 		return 0;
 	/* The device is opened with the first Mesa context. */
 	if (!c->mesa)
-		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
+		mesa_for(c);
 	if (!c->mesa)
 		return 0;
 	c->type = DRAWABLE_SURFACE;
@@ -425,7 +454,7 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 		return 0;
 	/* The device is opened with the first Mesa context. */
 	if (!c->mesa)
-		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
+		mesa_for(c);
 	if (!c->mesa || !rdn_target_screen(&pixels, &width, &height, &pitch)) {
 		rdn_log("attach: context %p cannot reach the screen", gld_ctx);
 		return 0;
@@ -621,7 +650,7 @@ void rdn_make_current(void *rend)
 		return;
 	}
 	if (!c->mesa)
-		c->mesa = OSMesaCreateContextExt(OSMESA_BGRA, 24, 8, 0, NULL);
+		mesa_for(c);
 	if (!c->mesa)
 		return;
 	async_data(c->mesa);

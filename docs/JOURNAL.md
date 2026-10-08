@@ -4505,3 +4505,29 @@ it: `glprobe draw` fills all 96x64 with green; `appletest` all passed;
 on the CPU, drawn through us) compares equal to `ciprobe soft`: 0 of
 196608 pixels differ by more than 8, checksum 83e28896 both; 13.0 ms a
 render against 8.2.
+
+## 2026-10-08: A6 stage 2, shared contexts
+
+`gldCreateContext`'s fourth argument is the gld context to share with
+(0x280ea00 in Core Image's second and third, the first context's own
+`*(void **)a`). The bundle keeps it (`struct context.share`) and
+`mesa_for()` makes the Mesa context with the other's as its share list,
+making the other's first when it does not exist (contexts are made on
+first use; all four places that made one now go through it).
+
+**The limit, as the plan asked to note:** `rdn_current_rend` and the
+OSMesa current context are one variable for the whole process, so this is
+right for one thread switching between contexts, as Core Image does, and
+not for several threads each with a context of their own. Not widened.
+
+`tools/guest/sharetest.c`: A, B sharing with A, C sharing nothing, each
+with its own off-screen memory. A makes a texture and an ARB fragment
+program (red and blue swapped); B sees both, draws a quad with them,
+12 checks all PASS with the default and with `RDN_GLTHREAD=0`: the swapped
+colour by `glReadPixels` and in B's own memory (0xff804020), A's memory
+untouched, C sees neither, A draws it too, and a texture B makes later
+is seen in A. Built on the host with `scripts/darwin.sh
+powerpc-apple-darwin8-gcc` (no guest needed).
+
+Speed, G5, 1920x1080: Quake 3 `four` 147.9 fps (148), Doom 3 `bench` 49.1
+(48). `appletest` and `vartest` as before.

@@ -1037,7 +1037,7 @@ static long adjust(int idx, long a, long b, long c, long d, long ret)
 #ifdef RDN_MESA
 	case IDX_gldCreateContext:
 		if (ret == 0 && a)
-			rdn_mesa_context_created(*(void **)a);
+			rdn_mesa_context_created(*(void **)a, (void *)d);
 		break;
 	case IDX_gldAttachDrawable:
 		rdn_mesa_attach((void *)a, b, (const void *)c);
