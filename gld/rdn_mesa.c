@@ -854,6 +854,12 @@ static void missing(const char *name)
 }
 
 /* Mesa's functions looked up, once. False if there is no card to use. */
+extern void (*osmesa_present_log)(int rects);
+static void present_log(int rects)
+{
+	rdn_log("PRESENT to the screen, %d rectangles", rects);
+}
+
 static int mesa_ready(void)
 {
 	unsigned n;
@@ -871,6 +877,10 @@ static int mesa_ready(void)
 		return 0;
 	if (!resolved) {
 		mesa_finish = (void (*)(void))OSMesaGetProcAddress("glFinish");
+		if (rdn_logging)
+			osmesa_present_log = present_log;
+		if (rdn_ws_core_image())
+			OSMesaPresentOnSwitch(GL_FALSE);
 		mesa_flush = (void (*)(void))OSMesaGetProcAddress("glFlush");
 		n = rdn_dispatch_resolve(lookup, missing);
 		rdn_log("Mesa provides %u of the %u GL entry points", n,

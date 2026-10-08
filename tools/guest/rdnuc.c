@@ -4,6 +4,9 @@
  *   rdnuc info             print what the accelerator reports
  *   rdnuc probe            read the pixels the drawing self-test colours
  *   rdnuc grab file.ppm    save the screen as the card holds it
+ *   rdnuc poll x y w h n   n times as fast as it goes: the time in ms and the sum of
+ *                          the red, green and blue of every 8th pixel of that
+ *                          part of the screen (what changes shows a flicker)
  *   rdnuc peek off [n]     print n words of video memory at aperture offset off
  *   rdnuc alloc            allocate, write, read back and free video memory
  *   rdnuc reg off [n]      print n registers from offset off of the register BAR
@@ -23,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
 
@@ -127,6 +131,33 @@ int main(int argc, char **argv)
 			}
 		fclose(f);
 		printf("saved %ux%u\n", (unsigned)info.fb_width, (unsigned)info.fb_height);
+	} else if (!strcmp(cmd, "poll") && argc > 6) {
+		uint32_t x0 = atoi(argv[2]), y0 = atoi(argv[3]), w = atoi(argv[4]), h = atoi(argv[5]);
+		int n = atoi(argv[6]), i;
+		static double t[4096];
+		static unsigned long sum[4096];
+		struct timeval tv;
+		double first = 0;
+
+		if (n > 4096)
+			n = 4096;
+		for (i = 0; i < n; i++) {
+			uint32_t x, y;
+			unsigned long acc = 0;
+
+			for (y = y0; y < y0 + h; y += 8)
+				for (x = x0; x < x0 + w; x += 8) {
+					uint32_t v = screen_pixel(x, y);
+
+					acc += ((v >> 16) & 0xff) + ((v >> 8) & 0xff) + (v & 0xff);
+				}
+			gettimeofday(&tv, NULL);
+			t[i] = tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+			sum[i] = acc;
+		}
+		first = t[0];
+		for (i = 0; i < n; i++)
+			printf("%.3f %lu\n", (t[i] - 1000000.0 * (double)((long)(t[i] / 1000000.0))) / 1000.0, sum[i]);
 	} else if (!strcmp(cmd, "reg") && argc > 2) {
 		unsigned long off = strtoul(argv[2], NULL, 0);
 		int i, n = argc > 3 ? atoi(argv[3]) : 1, v;

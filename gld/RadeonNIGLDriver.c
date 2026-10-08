@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include <mach/mach.h>
 #include <OpenGL/gl.h>
 #include <OpenGL/gliContext.h>
@@ -152,6 +153,8 @@ static int log_all;
 int rdn_logging;
 int rdn_trace;
 
+static int log_time;
+
 void rdn_log(const char *fmt, ...)
 {
 	va_list ap;
@@ -161,6 +164,12 @@ void rdn_log(const char *fmt, ...)
 	/* One line, also when another thread logs at the same time. */
 	flockfile(logf);
 	fprintf(logf, TAG " ", TAG_ARGS);
+	if (log_time) {
+		struct timeval tv;
+
+		gettimeofday(&tv, NULL);
+		fprintf(logf, "%lu.%03lu ", (unsigned long)(tv.tv_sec % 1000), (unsigned long)(tv.tv_usec / 1000));
+	}
 	va_start(ap, fmt);
 	vfprintf(logf, fmt, ap);
 	va_end(ap);
@@ -246,6 +255,7 @@ static void setup(void)
 		snprintf(name, sizeof(name), "/tmp/rdngld.%d.log", (int)getpid());
 		logf = fopen(name, "a");
 	}
+	log_time = logf && access("/tmp/rdngld.time", F_OK) == 0;
 	rdn_trace = logf && access("/tmp/rdngld.trace", F_OK) == 0;
 	log_all = rdn_trace;
 	/* The entries Mesa lacks are counted while there is a log. */
@@ -955,7 +965,8 @@ static int in_window_server(void)
  * cleared when the context has been made (forward()). Later questions get
  * Mesa's list, which leaves the name out as well (gen_dispatch.py).
  */
-#define RDN_CI_FILE "/Library/Application Support/RadeonNI/coreimage"
+/* Core Image on the card is the default (the user's decision, 2026-10-08); this file turns it off. */
+#define RDN_CI_FILE "/Library/Application Support/RadeonNI/nocoreimage"
 /* The words of extension bits in that record, and the bit. */
 #define ENGINE_FEATURES			0x124
 #define ENGINE_FEATURE_FRAGMENT_PROGRAM	0x8000ul
@@ -965,7 +976,7 @@ int rdn_ws_no_core_image(void)
 	static int no = -1;
 
 	if (no < 0)
-		no = in_window_server() && access(RDN_CI_FILE, F_OK) != 0;
+		no = in_window_server() && access(RDN_CI_FILE, F_OK) == 0;
 	return no;
 }
 
@@ -980,16 +991,15 @@ int rdn_ws_core_image(void)
 	static int yes = -1;
 
 	if (yes < 0)
-		yes = in_window_server() && access(RDN_CI_FILE, F_OK) == 0;
+		yes = in_window_server() && access(RDN_CI_FILE, F_OK) != 0;
 	return yes;
 }
 
 /*
- * Pbuffers for a program (not the window server): behind RDN_PBUFFER=1 in
- * its environment or the file below, until it is decided that they stay
- * on. RDN_NO_PBUFFER=1 turns them off whatever else says.
+ * Pbuffers for a program (not the window server): on, unless RDN_NO_PBUFFER=1
+ * or RDN_PBUFFER=0 is in its environment or the file below exists.
  */
-#define RDN_PBUFFER_FILE "/Library/Application Support/RadeonNI/pbuffer"
+#define RDN_PBUFFER_FILE "/Library/Application Support/RadeonNI/nopbuffer"
 
 static int pbuffers_on(void)
 {
@@ -998,8 +1008,8 @@ static int pbuffers_on(void)
 	if (on < 0) {
 		const char *env = getenv("RDN_PBUFFER");
 
-		on = !getenv("RDN_NO_PBUFFER") &&
-		     ((env && *env && strcmp(env, "0")) || access(RDN_PBUFFER_FILE, F_OK) == 0);
+		on = !getenv("RDN_NO_PBUFFER") && !(env && !strcmp(env, "0")) &&
+		     access(RDN_PBUFFER_FILE, F_OK) != 0;
 	}
 	return on;
 }

@@ -539,6 +539,35 @@ drawable_to_osbuffer(struct pipe_frontend_drawable *drawable)
  * Called via glFlush/glFinish.  This is where we copy the contents
  * of the driver's color buffer into the user-specified buffer.
  */
+/*
+ * Debug and policy: whether making another context current shows the
+ * picture of the one that was current (Mesa flushes it, and a context that
+ * draws on the screen copies to it on a flush). The window server's Core
+ * Image composes a frame over several contexts and must show it once.
+ */
+static bool osmesa_present_on_switch = true;
+static bool osmesa_switching;
+
+GLAPI void GLAPIENTRY
+OSMesaPresentOnSwitch(GLboolean yes)
+{
+   osmesa_present_on_switch = yes != GL_FALSE;
+}
+
+static bool
+osmesa_make_current(struct st_context *st, struct pipe_frontend_drawable *fb)
+{
+   bool ok;
+
+   osmesa_switching = true;
+   ok = st_api_make_current(st, fb, fb);
+   osmesa_switching = false;
+   return ok;
+}
+
+/* Debug: told of every copy to the screen (the bundle's log). */
+void (*osmesa_present_log)(int rects);
+
 static bool
 osmesa_st_framebuffer_flush_front(struct st_context *st,
                                   struct pipe_frontend_drawable *drawable,
@@ -573,6 +602,11 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
    if (osbuffer->direct) {
       struct pipe_context *pipe = osmesa->st->pipe;
       struct pipe_box box;
+
+      if (osmesa_switching && !osmesa_present_on_switch)
+         return true;
+      if (osmesa_present_log)
+         osmesa_present_log(osmesa->num_rects);
 
       if (getenv("RDN_DEBUG_DIRECT"))
          fprintf(stderr, "flush_front: direct_res %p, %dx%d at %d,%d of %ux%u, %d rects (%d %d %d %d)\n",
@@ -1215,7 +1249,7 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
 
    osmesa->type = type;
 
-   st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base);
+   osmesa_make_current(osmesa->st, &osbuffer->base);
 
    /* XXX: We should probably load the current color value into the buffer here
     * to match classic swrast behavior (context's fb starts with the contents of
@@ -1367,6 +1401,24 @@ OSMesaTexStoreImage(OSMesaContext osmesa, GLenum target, GLuint handle,
       return GL_FALSE;
    return osmesa_tex_store(osmesa, target, format, handle, stride, offset,
                            width, height, (flags & OSMESA_STORE_ALPHA) != 0);
+}
+
+
+GLAPI void GLAPIENTRY
+OSMesaFlushRender(OSMesaContext osmesa, GLboolean wait)
+{
+   osmesa_sync(osmesa);
+   struct pipe_fence_handle *fence = NULL;
+
+   if (!osmesa || !osmesa->st)
+      return;
+   st_context_flush(osmesa->st, 0, wait ? &fence : NULL, NULL, NULL);
+   if (fence) {
+      struct pipe_screen *screen = osmesa->st->pipe->screen;
+
+      screen->fence_finish(screen, NULL, fence, OS_TIMEOUT_INFINITE);
+      screen->fence_reference(screen, &fence, NULL);
+   }
 }
 
 
@@ -1566,7 +1618,7 @@ OSMesaMakeCurrentSurface(OSMesaContext osmesa, GLuint handle,
    osbuffer->target_y = y;
    osmesa->type = GL_UNSIGNED_BYTE;
 
-   st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base);
+   osmesa_make_current(osmesa->st, &osbuffer->base);
    osmesa->ever_used = true;
    return GL_TRUE;
 }
@@ -1655,7 +1707,7 @@ OSMesaMakeCurrentStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
    osbuffer->bottom_up = bottom_up;
    osmesa->type = GL_UNSIGNED_BYTE;
 
-   if (!st_api_make_current(osmesa->st, &osbuffer->base, &osbuffer->base))
+   if (!osmesa_make_current(osmesa->st, &osbuffer->base))
       return GL_FALSE;
    osmesa->ever_used = true;
    osmesa_row_order(osmesa, bottom_up);

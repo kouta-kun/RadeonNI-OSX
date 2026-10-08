@@ -438,6 +438,22 @@ OSMesaTexCopyDrawable( OSMesaContext ctx, GLenum target, GLint x, GLint y,
                        GLsizei width, GLsizei height );
 
 
+/*
+ * osx-gpu: what glFlush and glFinish do without showing the picture: the
+ * commands go to the device (and, for the second, are waited for), but a
+ * context that draws on a screen or a window does not copy to it. This is
+ * GL_APPLE_flush_render.
+ */
+GLAPI void APIENTRY
+OSMesaFlushRender( OSMesaContext ctx, GLboolean wait );
+
+
+/* osx-gpu: with GL_FALSE a context that draws on a screen does not show its
+ * picture when another context is made current (default GL_TRUE). */
+GLAPI void APIENTRY
+OSMesaPresentOnSwitch( GLboolean yes );
+
+
 GLAPI void APIENTRY
 OSMesaShowStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                  GLuint offset, GLsizei width, GLsizei height, GLint x,

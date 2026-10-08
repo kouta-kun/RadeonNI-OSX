@@ -4788,3 +4788,50 @@ one), a long run of ripples (the pbuffers' memory is given back with a
 delay by the destroy hooks; no leak check beyond a few filters),
 Core Image in a program with a window, stage 6's questions (which renderer
 name, default or not) and goal 3 (the user's eyes on the ripple).
+
+## 2026-10-08: the user's decisions after A6, and the ripple's flicker
+
+**The user:** changing the renderer to "ATI Radeon" looks good and should
+be the default; the widget ripple looked a bit flickery.
+
+**Defaults now** (stage 6 answered): `GL_RENDERER` is "ATI Radeon HD 7570"
+for every program (`RDN_RENDERER=` with nothing in it gives Mesa's own
+name back, any other value is used), `GL_APPLE_client_storage` and
+`GL_APPLE_float_pixels` are in the extension list of every program that
+has the bundle's Apple names (`EXT_DEFAULT`), pbuffers are on (`RDN_NO_PBUFFER=1`,
+`RDN_PBUFFER=0` or the file `/Library/Application Support/RadeonNI/nopbuffer`
+turn them off), and the window server does Core Image on the card unless
+the file `/Library/Application Support/RadeonNI/nocoreimage` exists (the
+file `coreimage` is no longer read). Without any switch `ciprobe gl 0x21a00`
+takes the card (1.2 ms a render, 0 pixels over 8 against the CPU's);
+`appletest`, `sharetest` pass, Quake 3 148.3 and Doom 3 `bench` 47.8
+frames a second (49.0 before; one run each).
+
+**The flicker.** A poll of the screen through the aperture
+(`rdnuc poll x y w h n`: every 8th pixel of a rectangle summed, 1.8 ms a
+sample) over a widget drop showed the picture falling back to the
+exact undistorted frame now and then: 40 times in 5 s, twice 5 ms. Logs with a
+time on every line (`/tmp/rdngld.time`) and a line for each copy to the
+screen (`PRESENT`) showed two copies per frame: the window server draws
+the layers underneath in its screen context, switches to Core Image's
+context, and Mesa flushes the context it leaves; the screen context
+copies to the screen at a flush, so the frame without the filter was
+shown until the real `glFlush()` at the end of the frame. Two changes:
+- `GL_APPLE_flush_render` (`glFlushRenderAPPLE`, `glFinishRenderAPPLE`)
+  was Mesa's `glFlush`/`glFinish`, which also copy to the screen for a
+  context that draws on it; now `OSMesaFlushRender` (submit, optionally
+  wait, no copy). Does not by itself change what is shown for the window server (the
+  context switch is what showed it) but is what the extension means;
+- `OSMesaPresentOnSwitch(GL_FALSE)` for the window server: making another
+  context current does not copy the old one's picture to the screen.
+After: one `PRESENT` per frame, 0 undistorted blips in 5 s (and 20 the run
+before the first change), a frame about every 10 ms. Looked at in two
+grabs only; the user's eyes decide.
+
+Also made: Dashboard was left with two extra widgets by the test runs (a
+click missed); put back (Calculator, Weather-less four as before, Calendar
+moved back). A restart of the window server was done for each test (the
+user's yes was for stage 5; this was the same work).
+
+On the G5 now: bundle d484fe00, window server started with it, no log
+files, no switch files but the older `glthread` and `vertexrange`.
