@@ -4976,3 +4976,24 @@ and `run.pl` (G5, perl 5.8), 5,972 GL 2.1 tests chosen by
   channels reversed), front/back buffer, occlusion queries returning 0,
   two-sided vertex program lighting, DEPTH32F_STENCIL8's stencil,
   RGB9_E5. `large-tex` shows a 256 MB request failing at 538 MB in use.
+
+## 2026-10-08: piglit cluster 1, packed pixel types on big-endian (fixed)
+
+Reproduced with `tools/guest/packedtest.c` (G5): 4444, 5551, 565_REV and
+10_10_10_2 came back with channels reversed or R and B swapped, with
+`glGetTexImage` and drawn, for GL_RGBA8 and for native internal formats.
+Negative results on the way: the endian macros are right on Tiger
+(`UTIL_ARCH_BIG_ENDIAN` 1); the generated format tables are identical to the
+Linux big-endian build; gallium's unpack and `_mesa_format_convert` give the
+right colours on the G5 (small programs linked against `libmesa_util.a` and
+three Mesa sources); `rdn_gltest -K` passes on x86 and under `qemu-ppc` on
+softpipe. The error was in the GPU: the staging upload is a blit sampling
+the packed format. Cause and fix in `mesa/patches/0006`: the big-endian
+description lists the channels of sub-byte packed formats from the top bits,
+r600 expects the little-endian order. Adding 5_5_5_1 and 10_10_10_2 to
+`r600_colorformat_endian_swap` alone changed nothing; the little-endian view
+in the sampler fixed the sampling, the same in colorformat and colorswap
+fixed the render-target side (reading a texture back as its own packed type).
+Re-run: 66 more tests pass, no regression; multisample 5 more.
+Bundle on the G5: this build; the one before is `~/RadeonNIGLDriver.before-packed`.
+The window server still has the old copy loaded.

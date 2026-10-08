@@ -72,9 +72,24 @@ Of the 4,962 tests that ran and gave a verdict, 96.2 % pass. All of
 `glsl-1.10` (2,100) and 1,146 of 1,165 `glsl-1.20` tests pass; the 19 others
 are the harness. Multisample: see the end.
 
-## Failure clusters, ranked
+## After the packed-format fix (2026-10-08)
 
-1. **Packed pixel types are wrong (about 400 subtests, 58 formats).** In
+`mesa/patches/0006-r600-big-endian-packed-formats.patch`: r600 chose the
+hardware format and the swizzle of 565, 4444, 5551 and 2101010 from Mesa's
+big-endian description, which lists the channels from the top bits, while
+the hardware reads the word after its 8IN16/8IN32 swap as a little-endian
+word. It now uses the little-endian view of those formats in
+`r600_translate_texformat`, `_colorformat` and `_colorswap`, and swaps
+5_5_5_1 and 10_10_10_2. `tools/guest/packedtest.c` (all 14 types, upload,
+draw, read back, round trip) passes. Re-run: 4,846 pass (was 4,774), 117
+fail (was 181), 66 tests fixed, none regressed; multisample 359 pass, 1
+fail (was 6). Cluster 1 below is therefore closed except for `GL_RGB9_E5`
+(cluster 6), `s3tc` mipmap generation and `ext_packed_depth_stencil`
+stencil, which are other causes.
+
+## Failure clusters, ranked (first run, before the fix)
+
+1. **(fixed, see above) Packed pixel types are wrong (about 400 subtests, 58 formats).** In
    `teximage-colors` every internal format fails for exactly seven
    format/type pairs: `GL_UNSIGNED_SHORT_5_5_5_1`, `4_4_4_4`, `4_4_4_4_REV`,
    `GL_UNSIGNED_INT_10_10_10_2`, `5_6_5_REV`, with RGBA and BGRA. The colours
