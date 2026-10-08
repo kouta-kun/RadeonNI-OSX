@@ -248,6 +248,8 @@ static void setup(void)
 		rdn_hook_set_current(rdn_mesa_early_all);
 		if (!getenv("RDN_NO_PBUFFER"))
 			rdn_hook_tex_image_pbuffer(rdn_mesa_tex_image_pbuffer);
+		if (logf)
+			rdn_hook_cgl_log();
 	}
 #endif
 }

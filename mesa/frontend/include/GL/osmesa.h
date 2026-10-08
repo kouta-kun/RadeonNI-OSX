@@ -345,6 +345,17 @@ OSMesaTexStore( OSMesaContext ctx, GLenum target, GLuint handle,
 #define OSMESA_STORE_BOTTOM_UP	0x1
 #define OSMESA_STORE_COPY	0x2
 #define OSMESA_STORE_ALPHA	0x4
+/*
+ * The store's pixels are not 32 bits of 8 bits a channel but 64 (four
+ * 16-bit unsigned normalized channels, OSMESA_STORE_RGBA16, or four half
+ * floats, OSMESA_STORE_FLOAT16) or 128 (four floats, OSMESA_STORE_FLOAT32),
+ * in the device's byte order, red first. The row length must be at least
+ * width times that many bytes. OSMesaTexStoreImage takes the same flags
+ * for the same memory. Float drawing is not clamped.
+ */
+#define OSMESA_STORE_RGBA16	0x8
+#define OSMESA_STORE_FLOAT16	0x10
+#define OSMESA_STORE_FLOAT32	0x20
 
 
 /*

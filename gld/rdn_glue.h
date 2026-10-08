@@ -63,6 +63,8 @@ int rdn_hook_function_lookup(void *(*own)(const char *name));
  */
 void rdn_hook_tex_image_pbuffer(int (*handler)(void *cgl_ctx, void *pbuffer,
 					       long source, long *result));
+/* rdn_hook.c: log CGLCreatePBuffer, CGLSetPBuffer and CGLChoosePixelFormat. */
+void rdn_hook_cgl_log(void);
 /* CGLTexImagePBuffer for a context of ours (rdn_mesa.c). */
 int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *result);
 void rdn_mesa_attach(void *gld_ctx, long type, const void *drawable);

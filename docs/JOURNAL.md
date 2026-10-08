@@ -4576,3 +4576,72 @@ and the rectangle (320x200), 0 of 64 points wrong both when drawn into
 and when read through the texture, also with `RDN_GLTHREAD=0`; with
 `RDN_NO_PBUFFER=1` both FAIL as before. `appletest`, `sharetest`,
 `glprobe draw` as before.
+
+## 2026-10-08: A6 stages 3d and 4, Core Image draws on the card in a program
+
+**What the plan had wrong.** Core Image never reached `CGLSetPBuffer` for
+its own pbuffers in the earlier runs, because it had decided before that
+every region of a picture is too big ("CoreImage: ROI is not tilable"),
+and that was not about pbuffers. Found with `gdb` on the G5 (Xcode's gdb
+works; there is no `timeout`) and `otool -tV` of QuartzCore:
+`fe_tree_node_push_ROI` splits a region until it fits the limits of the
+context (`max width`, `max height`, `max bytes` = 16384, 16384 and 0 for
+us), and cannot split a one pixel region. The 0 is `fe_cgl_total_vram`,
+which adds up the video memory of the accelerated renderers for the
+**display mask of the context's pixel format** (`CGLQueryRendererInfo`,
+`CGLDescribePixelFormat(kCGLPFADisplayMask)`); an off-screen pixel format
+has mask 0 and so no memory at all. (The window server's counterpart,
+`fe_cgls_total_vram`, is a constant 64 MB.) Not ours: a program that
+draws into a window, or into a pbuffer with a non-off-screen format, has
+a mask. `ciprobe gl` now makes its context that way (`CIPROBE_DRAW=
+offscreen` for the old).
+
+**3d, pixel formats.** Core Image asks `CGLChoosePixelFormat` for
+`{51, 8, 32|64, 70, <renderer>, 73}` (minimum policy, colour size 32 and
+64, the renderer, accelerated); the bundle already answers both. The
+64-bit one is not floating point in the format: the pbuffers it makes for
+its intermediate pictures say `GL_RGBA16` (0x805b) in
+`CGLCreatePBuffer`'s format. With them in 8-bit stores the picture came
+out within 19 of the software one (12503 pixels over 8); with 16-bit
+stores it is within 1. `OSMESA_STORE_RGBA16`, `_FLOAT16` and `_FLOAT32`
+(`mesa/frontend/include/GL/osmesa.h`, `osmesa.c`:
+`osmesa_store_format()`) give `OSMesaMakeCurrentStore` and
+`OSMesaTexStoreImage` 64- and 128-bit stores; the bundle picks the flag
+from the pbuffer record's format word (`pbuffer_pixels()` in
+`gld/rdn_mesa.c`: 0x805b, 0x881a, 0x8814). The float stores are made but
+nothing here has drawn into one yet (no test asked for it), so floating
+point is not shown to work, only 16-bit integer.
+
+**Tools made:** logging hooks for `CGLCreatePBuffer`, `CGLSetPBuffer` and
+`CGLChoosePixelFormat` (`rdn_hook_cgl_log`, only with `RDN_GLD_LOG`).
+
+**4, the filters** (G5, 512x384, `ciprobe soft <f>` against `CIPROBE_DRAW=
+pbuffer ciprobe gl 0x21a00 <f>` with `RDN_EXT_ADD="GL_APPLE_client_storage
+GL_APPLE_float_pixels"` and `RDN_RENDERER="ATI Radeon HD 7570"`, 10 renders):
+
+| filter | greatest difference | pixels over 8 | CPU ms/render | card ms/render |
+|---|---|---|---|---|
+| CIGaussianBlur | 1 | 0 | 8.3 | 1.3 |
+| CIColorInvert | 1 | 0 | 7.7 | 1.2 |
+| CISepiaTone | 1 | 0 | 8.7 | 1.2 |
+| CIBumpDistortion | 191 | 13 | 11.3 | 1.4 |
+| CIHueAdjust | 0 | 0 | 2.9 | 1.3 |
+| CIPixellate | 1 | 0 | 10.5 | 1.4 |
+| CIColorControls | 0 | 0 | 2.9 | 1.3 |
+| CIGammaAdjust | 1 | 0 | 9.7 | 1.2 |
+| CIZoomBlur | 1 | 0 | 16.1 | 1.2 |
+
+(CIVignette does not exist on Tiger.) The 13 pixels of CIBumpDistortion are
+all on the edges of the test picture's checkered cells, where the
+distorted sample point falls on a texel boundary and one implementation
+rounds to the neighbouring cell (blue 64 against 255); none is wrong by
+more than that anywhere else. Not a driver difference that was looked into
+further. Traces: for six of the filters (blur, invert, sepia, bump, hue,
+zoom blur) 1 to 5 fragment programs each are made without an error, bound
+and drawn with. Without the two switches Core Image still filters on the
+CPU and the picture is exact (checksum 83e28896, 9.5 ms a render, the
+pbuffer context or not).
+
+`ciprobe pbuffer 0x21a00`, `appletest`, `sharetest`, Quake 3 and Doom 3
+were run again after the bundle changes of this stage: see the list
+below for the bundle on the G5.

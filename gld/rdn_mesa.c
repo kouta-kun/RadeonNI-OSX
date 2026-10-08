@@ -151,6 +151,8 @@ struct pbuffer {
 	const void *key;
 	uint32_t id;
 	uint32_t offset, row_bytes, width, height;
+	/* OSMESA_STORE_* of the pixel format, from CGLCreatePBuffer's. */
+	uint32_t flags, bytes_per_pixel;
 };
 static struct pbuffer pbuffers[MAX_PBUFFERS];
 
@@ -280,16 +282,44 @@ static struct pbuffer *pbuffer_find(uint32_t id)
 	return NULL;
 }
 
+/*
+ * The pixels of a pbuffer by its internal format (CGLCreatePBuffer's
+ * fourth argument, word 4 of the record): Core Image asks for GL_RGBA16
+ * (0x805b) for its intermediate pictures, and for floating point when a
+ * filter wants it. Everything else is 8 bits a channel.
+ */
+static void pbuffer_pixels(uint32_t format, uint32_t *flags, uint32_t *bytes)
+{
+	switch (format) {
+	case 0x805b:	/* GL_RGBA16 */
+		*flags = OSMESA_STORE_RGBA16;
+		*bytes = 8;
+		break;
+	case 0x881a:	/* GL_RGBA16F_ARB, GL_RGBA_FLOAT16_APPLE */
+		*flags = OSMESA_STORE_FLOAT16;
+		*bytes = 8;
+		break;
+	case 0x8814:	/* GL_RGBA32F_ARB, GL_RGBA_FLOAT32_APPLE */
+		*flags = OSMESA_STORE_FLOAT32;
+		*bytes = 16;
+		break;
+	default:
+		*flags = 0;
+		*bytes = 4;
+	}
+}
+
 /* The pbuffer a record describes, its memory made if it is not yet. */
 static struct pbuffer *pbuffer_for(const uint32_t *r)
 {
 	struct pbuffer *p = NULL, *free_slot = NULL;
 	uint32_t width = r[6], height = r[7];
-	uint32_t row_bytes, bytes;
+	uint32_t row_bytes, bytes, flags, per_pixel;
 	int i;
 
 	if (!width || !height)
 		return NULL;
+	pbuffer_pixels(r[4], &flags, &per_pixel);
 	for (i = 0; i < MAX_PBUFFERS; i++) {
 		struct pbuffer *q = &pbuffers[i];
 
@@ -308,7 +338,7 @@ static struct pbuffer *pbuffer_for(const uint32_t *r)
 			p = q;
 		}
 	}
-	if (p && p->width == width && p->height == height)
+	if (p && p->width == width && p->height == height && p->flags == flags)
 		return p;
 	if (p) {
 		rdn_target_vram_free(p->offset);
@@ -317,7 +347,7 @@ static struct pbuffer *pbuffer_for(const uint32_t *r)
 	}
 	if (!free_slot)
 		return NULL;
-	row_bytes = ((width + 63) & ~63u) * 4;
+	row_bytes = ((width + 63) & ~63u) * per_pixel;
 	bytes = row_bytes * ((height + 63) & ~63u);
 	bytes = (bytes + 4095) & ~4095u;
 	if (!rdn_target_vram_alloc(bytes, &free_slot->offset)) {
@@ -329,10 +359,13 @@ static struct pbuffer *pbuffer_for(const uint32_t *r)
 	free_slot->row_bytes = row_bytes;
 	free_slot->width = width;
 	free_slot->height = height;
+	free_slot->flags = flags;
+	free_slot->bytes_per_pixel = per_pixel;
 	if (rdn_trace)
-		rdn_log("pbuffer 0x%x (record %p): %ux%u in video memory at 0x%x",
+		rdn_log("pbuffer 0x%x (record %p): %ux%u, format 0x%x, %u bytes a pixel, in video memory at 0x%x",
 			(unsigned)r[2], (const void *)r, (unsigned)width,
-			(unsigned)height, (unsigned)free_slot->offset);
+			(unsigned)height, (unsigned)r[4], (unsigned)per_pixel,
+			(unsigned)free_slot->offset);
 	return free_slot;
 }
 
@@ -368,7 +401,7 @@ int rdn_mesa_tex_image_pbuffer(void *cgl_ctx, void *pbuffer, long source, long *
 	if (!OSMesaTexStoreImage(c->mesa, (GLenum)r[3], RDN_TARGET_VRAM_HANDLE,
 				 (GLsizei)p->row_bytes, p->offset,
 				 (GLsizei)p->width, (GLsizei)p->height,
-				 OSMESA_STORE_BOTTOM_UP | OSMESA_STORE_ALPHA)) {
+				 p->flags | OSMESA_STORE_BOTTOM_UP | OSMESA_STORE_ALPHA)) {
 		rdn_log("pbuffer 0x%x as a texture: Mesa refuses (target 0x%x)",
 			(unsigned)r[2], (unsigned)r[3]);
 		*result = 0x2717;
@@ -919,7 +952,7 @@ void rdn_make_current(void *rend)
 		if (!OSMesaMakeCurrentStore(c->mesa, RDN_TARGET_VRAM_HANDLE,
 					    (GLsizei)p->row_bytes, p->offset,
 					    (GLsizei)p->width, (GLsizei)p->height,
-					    OSMESA_STORE_BOTTOM_UP)) {
+					    p->flags | OSMESA_STORE_BOTTOM_UP)) {
 			rdn_log("OSMesaMakeCurrentStore failed for context %p",
 				c->gld_ctx);
 			return;

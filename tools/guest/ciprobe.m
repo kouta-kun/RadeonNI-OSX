@@ -9,7 +9,7 @@
  *       Saves ciprobe-pbuffer-2d.ppm and ciprobe-pbuffer-rect.ppm and
  *       prints PASS or FAIL for each.
  *   ciprobe gl [renderer-id] [filter]
- *       A Core Image context on a CGL context with an off-screen drawable
+ *       A Core Image context on a CGL context with a pbuffer drawable
  *       draws a generated picture through a filter (CIGaussianBlur unless
  *       one is named). Saves ciprobe-gl.ppm; prints the GL strings, the
  *       time of the first render and of the rest, and a checksum.
@@ -22,7 +22,8 @@
  *
  * Our renderer is 0x00021a00, Apple's software renderer 0x00020400.
  * Environment: CIPROBE_N renders (default 10), CIPROBE_OUT the file to
- * save, CIPROBE_PBUFFER=1 makes `gl` ask for a pixel format that can do
+ * save, CIPROBE_MASK=0 leaves the display mask out of the pixel format,
+ * CIPROBE_PBUFFER=1 makes `gl` ask for a pixel format that can do
  * pbuffers as well.
  *
  * Every CGL call is announced before it is made ("step: ..."), unbuffered:
@@ -201,6 +202,16 @@ static CGLPixelFormatObj choose(const CGLPixelFormatAttribute *kinds, long rende
 		attrs[n++] = kCGLPFARendererID;
 		attrs[n++] = renderer;
 	}
+	/*
+	 * Core Image counts the video memory of the renderers of the context's
+	 * display mask; an off-screen format without one has none, and every
+	 * region is then too big to render ("ROI is not tilable"). Programs
+	 * with windows always have a mask. CIPROBE_MASK=0: none.
+	 */
+	if (!getenv("CIPROBE_MASK") || atoi(getenv("CIPROBE_MASK"))) {
+		attrs[n++] = kCGLPFADisplayMask;
+		attrs[n++] = CGDisplayIDToOpenGLDisplayMask(CGMainDisplayID());
+	}
 	attrs[n] = 0;
 	if (CGL(CGLChoosePixelFormat(attrs, &pix, &npix)) || !pix) {
 		printf("  no pixel format\n");
@@ -213,7 +224,9 @@ static CGLPixelFormatObj choose(const CGLPixelFormatAttribute *kinds, long rende
 	CGLDescribePixelFormat(pix, 0, kCGLPFAOffScreen, &value);
 	printf(", off-screen %ld", value);
 	CGLDescribePixelFormat(pix, 0, kCGLPFAPBuffer, &value);
-	printf(", pbuffer %ld\n", value);
+	printf(", pbuffer %ld", value);
+	CGLDescribePixelFormat(pix, 0, kCGLPFADisplayMask, &value);
+	printf(", display mask 0x%lx\n", value);
 	return pix;
 }
 
@@ -457,12 +470,33 @@ static int mode_gl(long renderer, NSString *name)
 
 	if (n > 256)
 		n = 256;
-	pix = choose(getenv("CIPROBE_PBUFFER") ? off_pb : off, renderer);
+	/*
+	 * The program's context draws into a pbuffer and its format is no
+	 * off-screen one: only the others have a display mask, and Core Image
+	 * counts the video memory of a context's display only (with none it
+	 * finds every region too big: "ROI is not tilable").
+	 * CIPROBE_DRAW=offscreen: an off-screen format and drawable, the way
+	 * this program first did it.
+	 */
+	int into_pbuffer = !getenv("CIPROBE_DRAW") || strcmp(getenv("CIPROBE_DRAW"), "offscreen");
+	static const CGLPixelFormatAttribute none[] = { 0 };
+	CGLPBufferObj pbuffer = NULL;
+	long virtual_screen = 0;
+
+	pix = choose(into_pbuffer ? none : getenv("CIPROBE_PBUFFER") ? off_pb : off, renderer);
 	if (!pix || !screen || !rgba)
 		return 1;
-	if (CGL(CGLCreateContext(pix, NULL, &ctx)) ||
-	    CGL(CGLSetOffScreen(ctx, WIDTH, HEIGHT, WIDTH * 4, screen)) ||
-	    CGL(CGLSetCurrentContext(ctx)))
+	if (CGL(CGLCreateContext(pix, NULL, &ctx)))
+		return 1;
+	if (into_pbuffer) {
+		if (CGL(CGLCreatePBuffer(WIDTH, HEIGHT, GL_TEXTURE_RECTANGLE_EXT, GL_RGBA, 0, &pbuffer)) ||
+		    CGL(CGLGetVirtualScreen(ctx, &virtual_screen)) ||
+		    CGL(CGLSetPBuffer(ctx, pbuffer, 0, 0, virtual_screen)))
+			return 1;
+	} else if (CGL(CGLSetOffScreen(ctx, WIDTH, HEIGHT, WIDTH * 4, screen))) {
+		return 1;
+	}
+	if (CGL(CGLSetCurrentContext(ctx)))
 		return 1;
 	gl_strings();
 	/* One unit is one pixel, as Core Image wants its context. */
@@ -509,6 +543,8 @@ static int mode_gl(long renderer, NSString *name)
 	[ci clearCaches];
 	CGL(CGLSetCurrentContext(NULL));
 	CGL(CGLDestroyContext(ctx));
+	if (pbuffer)
+		CGL(CGLDestroyPBuffer(pbuffer));
 	CGLDestroyPixelFormat(pix);
 	CGColorSpaceRelease(space);
 	return 0;

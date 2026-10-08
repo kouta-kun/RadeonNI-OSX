@@ -1337,6 +1337,20 @@ OSMesaTexStore(OSMesaContext osmesa, GLenum target, GLuint handle,
 }
 
 
+
+/* The colour format of a store: the context's own, or by OSMESA_STORE_* flags. */
+static enum pipe_format
+osmesa_store_format(OSMesaContext osmesa, GLuint flags)
+{
+   if (flags & OSMESA_STORE_FLOAT32)
+      return PIPE_FORMAT_R32G32B32A32_FLOAT;
+   if (flags & OSMESA_STORE_FLOAT16)
+      return PIPE_FORMAT_R16G16B16A16_FLOAT;
+   if (flags & OSMESA_STORE_RGBA16)
+      return PIPE_FORMAT_R16G16B16A16_UNORM;
+   return osmesa_choose_format(osmesa->format, GL_UNSIGNED_BYTE);
+}
+
 GLAPI GLboolean GLAPIENTRY
 OSMesaTexStoreImage(OSMesaContext osmesa, GLenum target, GLuint handle,
                     GLsizei stride, GLuint offset, GLsizei width,
@@ -1347,8 +1361,8 @@ OSMesaTexStoreImage(OSMesaContext osmesa, GLenum target, GLuint handle,
 
    if (!osmesa || OSMesaGetCurrentContext() != osmesa)
       return GL_FALSE;
-   /* What OSMesaMakeCurrentStore draws with this context's format. */
-   format = osmesa_choose_format(osmesa->format, GL_UNSIGNED_BYTE);
+   /* What OSMesaMakeCurrentStore draws with these flags. */
+   format = osmesa_store_format(osmesa, flags);
    if (format == PIPE_FORMAT_NONE)
       return GL_FALSE;
    return osmesa_tex_store(osmesa, target, format, handle, stride, offset,
@@ -1531,12 +1545,15 @@ OSMesaMakeCurrentStore(OSMesaContext osmesa, GLuint handle, GLsizei stride,
    bool bottom_up = (flags & OSMESA_STORE_BOTTOM_UP) != 0;
    bool copy = (flags & OSMESA_STORE_COPY) != 0;
 
-   if (!osmesa || !handle || width < 1 || height < 1 || stride < width * 4)
+   if (!osmesa || !handle || width < 1 || height < 1)
       return GL_FALSE;
-   color_format = osmesa_choose_format(osmesa->format, GL_UNSIGNED_BYTE);
+   color_format = osmesa_store_format(osmesa, flags);
    screen = osmesa->st->pipe->screen;
    if (color_format == PIPE_FORMAT_NONE ||
-       util_format_get_blocksize(color_format) != 4 ||
+       stride < width * (GLsizei)util_format_get_blocksize(color_format) ||
+       (!(flags & (OSMESA_STORE_RGBA16 | OSMESA_STORE_FLOAT16 |
+                   OSMESA_STORE_FLOAT32)) &&
+        util_format_get_blocksize(color_format) != 4) ||
        !screen->is_format_supported(screen, color_format, PIPE_TEXTURE_RECT,
                                     0, 0, PIPE_BIND_RENDER_TARGET))
       return GL_FALSE;

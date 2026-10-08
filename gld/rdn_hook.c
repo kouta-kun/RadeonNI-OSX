@@ -27,6 +27,7 @@
 
 #include <dlfcn.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
@@ -83,6 +84,51 @@ static long hooked_tex_image(void *ctx, void *pbuffer, long source)
 	return real_tex_image(ctx, pbuffer, source);
 }
 
+/*
+ * Calls of CGL that the log (RDN_GLD_LOG) shows, with what they were given
+ * and what they returned: pbuffers and pixel formats are decided before
+ * any driver function is called.
+ */
+static long (*real_create_pbuffer)(long w, long h, long target, long format,
+				   long levels, void **out);
+static long (*real_set_pbuffer)(void *ctx, void *pbuffer, long face, long level,
+				long screen);
+static long (*real_choose)(const long *attrs, void **pix, long *npix);
+
+static long hooked_create_pbuffer(long w, long h, long target, long format,
+				  long levels, void **out)
+{
+	long err = real_create_pbuffer(w, h, target, format, levels, out);
+
+	rdn_log("CGLCreatePBuffer(%ld, %ld, target 0x%lx, format 0x%lx, levels %ld) -> %ld, %p",
+		w, h, target, format, levels, err, out ? *out : NULL);
+	return err;
+}
+
+static long hooked_set_pbuffer(void *ctx, void *pbuffer, long face, long level,
+			       long screen)
+{
+	long err = real_set_pbuffer(ctx, pbuffer, face, level, screen);
+
+	rdn_log("CGLSetPBuffer(%p, %p, face %ld, level %ld, screen %ld) -> %ld",
+		ctx, pbuffer, face, level, screen, err);
+	return err;
+}
+
+static long hooked_choose(const long *attrs, void **pix, long *npix)
+{
+	long err = real_choose(attrs, pix, npix);
+	char text[400];
+	int n = 0, i;
+
+	for (i = 0; attrs && attrs[i] && i < 24 && n < (int)sizeof(text) - 12; i++)
+		n += snprintf(text + n, sizeof(text) - n, " %ld", attrs[i]);
+	text[n] = 0;
+	rdn_log("CGLChoosePixelFormat(%s) -> %ld, %ld formats", text, err,
+		npix ? *npix : -1L);
+	return err;
+}
+
 static void rebind(const struct mach_header *mh, intptr_t slide)
 {
 	const struct load_command *lc = (const struct load_command *)(mh + 1);
@@ -137,6 +183,18 @@ static void rebind(const struct mach_header *mh, intptr_t slide)
 				    !strcmp(strings + symbols[sym].n_un.n_strx, HOOKED) &&
 				    pointers[k] != (void *)hooked_set_current)
 					pointers[k] = (void *)hooked_set_current;
+				if (real_create_pbuffer &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLCreatePBuffer") &&
+				    pointers[k] != (void *)hooked_create_pbuffer)
+					pointers[k] = (void *)hooked_create_pbuffer;
+				if (real_set_pbuffer &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLSetPBuffer") &&
+				    pointers[k] != (void *)hooked_set_pbuffer)
+					pointers[k] = (void *)hooked_set_pbuffer;
+				if (real_choose &&
+				    !strcmp(strings + symbols[sym].n_un.n_strx, "_CGLChoosePixelFormat") &&
+				    pointers[k] != (void *)hooked_choose)
+					pointers[k] = (void *)hooked_choose;
 				if (real_tex_image &&
 				    !strcmp(strings + symbols[sym].n_un.n_strx, HOOKED_TEX) &&
 				    pointers[k] != (void *)hooked_tex_image)
@@ -208,5 +266,23 @@ void rdn_hook_tex_image_pbuffer(int (*handler)(void *cgl_ctx, void *pbuffer,
 		return;
 	}
 	tex_image_handler = handler;
+	watch_images();
+}
+
+/* The CGL calls above go to the log. */
+void rdn_hook_cgl_log(void)
+{
+	if (real_create_pbuffer)
+		return;
+	real_create_pbuffer = (long (*)(long, long, long, long, long, void **))
+		dlsym(RTLD_DEFAULT, "CGLCreatePBuffer");
+	real_set_pbuffer = (long (*)(void *, void *, long, long, long))
+		dlsym(RTLD_DEFAULT, "CGLSetPBuffer");
+	real_choose = (long (*)(const long *, void **, long *))
+		dlsym(RTLD_DEFAULT, "CGLChoosePixelFormat");
+	if (!real_create_pbuffer || !real_set_pbuffer || !real_choose) {
+		real_create_pbuffer = NULL;
+		return;
+	}
 	watch_images();
 }
