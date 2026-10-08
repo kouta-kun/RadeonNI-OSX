@@ -27,6 +27,7 @@
 
 #include <dlfcn.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <mach/mach.h>
@@ -170,6 +171,7 @@ static long hooked_cgls_destroy_pbuffer(void *pbuffer)
 static mach_msg_return_t (*real_mach_msg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
 					  mach_msg_size_t, mach_port_t, mach_msg_timeout_t, mach_port_t);
 static unsigned (*idle_handler)(void);
+static pthread_t mach_thread;
 static void (*idle_timeout)(void);
 
 static mach_msg_return_t hooked_mach_msg(mach_msg_header_t *msg, mach_msg_option_t option,
@@ -177,16 +179,31 @@ static mach_msg_return_t hooked_mach_msg(mach_msg_header_t *msg, mach_msg_option
 					 mach_port_t rcv_name, mach_msg_timeout_t timeout,
 					 mach_port_t notify)
 {
-	if ((option & MACH_RCV_MSG) && !(option & (MACH_SEND_MSG | MACH_RCV_TIMEOUT))) {
+	if (rdn_logging && pthread_equal(pthread_self(), mach_thread)) {
+		/* Debug: which kinds of wait the thread makes. */
+		static unsigned seen[16][2];
+		unsigned key = option & 0x3f, i;
+
+		for (i = 0; i < 16 && seen[i][0]; i++)
+			if (seen[i][0] == key + 1)
+				break;
+		if (i < 16 && seen[i][0] == 0) {
+			seen[i][0] = key + 1;
+			rdn_log("mach_msg option 0x%x timeout %u (first of its kind)", (unsigned)option, (unsigned)timeout);
+		}
+	}
+	if ((option & MACH_RCV_MSG) && !(option & MACH_SEND_MSG)) {
 		unsigned ms = idle_handler();
 
-		if (ms) {
+		if (ms && (!(option & MACH_RCV_TIMEOUT) || ms < timeout)) {
 			mach_msg_return_t r = real_mach_msg(msg, option | MACH_RCV_TIMEOUT, send_size,
 							    rcv_size, rcv_name, ms, notify);
 
 			if (r != MACH_RCV_TIMED_OUT)
 				return r;
 			idle_timeout();
+			if (option & MACH_RCV_TIMEOUT)
+				timeout -= ms;
 		}
 	}
 	return real_mach_msg(msg, option, send_size, rcv_size, rcv_name, timeout, notify);
@@ -488,5 +505,6 @@ void rdn_hook_mach_msg(unsigned (*idle)(void), void (*timeout)(void))
 		return;
 	idle_handler = idle;
 	idle_timeout = timeout;
+	mach_thread = pthread_self();
 	watch_images();
 }

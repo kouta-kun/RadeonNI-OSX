@@ -4835,3 +4835,47 @@ user's yes was for stage 5; this was the same work).
 
 On the G5 now: bundle d484fe00, window server started with it, no log
 files, no switch files but the older `glthread` and `vertexrange`.
+
+## 2026-10-08: the ripple's remaining flickers, and the G5 out of processes
+
+**The user:** slightly less flickered, but still a couple of flickers.
+
+Every present of the screen context was logged with a time
+(`/tmp/rdngld.time`, a `PRESENT` line for each copy to the screen) and,
+with `/tmp/rdngld.dump`, a downsampled picture of the area was written
+for each (build/ only; removed again, not in the tree). Frames that
+differ from both neighbours while the neighbours match each other: one in
+twenty, each the frame without the dragged widget, followed 4 ms later
+by the whole one. The window server composes a frame in passes (the
+layers up to the filtered one, the filter, then the layers above) and
+ends each with a `glFlush`, which copies to the screen; a real driver
+shows the same partial picture for microseconds.
+
+**Fix:** copies to the screen are put off and merged for up to 6 ms
+(`OSMesaDeferPresent`, `OSMesaPresentPending`, `osmesa_present_pending_now`;
+the places are kept in the screen's own coordinates, and made at once
+before the drawable is dropped). The window server has no run loop (a
+`CFRunLoopTimer` test never fired), so the timer is `mach_msg`: its thread
+waits with a 16 ms timeout between frames, and `rdn_hook_mach_msg` makes
+that wait only as long as the copy has left of its 6 ms, presents on
+timeout and then waits out the rest; a message that comes first is handed
+on. It turns itself on after the thread has gone idle ten times;
+`/Library/Application Support/RadeonNI/nodefer` turns it off. 786 flushes
+became 395 copies, and none is closer to the one before than 8 ms (80
+pairs were 3 to 7 ms apart). Desktop correct after the animation and after
+dragging a Finder window (grabs). Also: `OSMesaTexCopyDrawable` no longer
+waits for the GPU. Not seen again by the user.
+
+**The G5 ran out of processes.** Each restart of the window server leaves
+a few processes of the old session behind (about two, among them a Dock;
+90 after some 45 restarts), and `tiger` hit its limit: every fork failed
+("Resource temporarily unavailable"), ssh included except for shell
+built-ins. Cleared with the shell's own `kill` over the pids below the
+current session's (the user allowed it); a restart with the cleaning step
+(`kill -9` of tiger's pids between 77 and the new loginwindow's, from a
+shell started after it) keeps the count at about 45. Do that after every
+window server restart.
+
+On the G5 now: bundle 7439dfcb (the test debris of this round is out of
+it only in part: the mach_msg first-of-a-kind log and the present log run
+only with the bundle's log on).
