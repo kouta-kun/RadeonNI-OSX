@@ -33,6 +33,19 @@ Not done: modes the monitor does not list (1366x768 on a 1080p panel, 1280x800
 and so on), GTF/CVT timings for standard-timing entries DMT lacks, scaling by
 the card (the monitor's scaler does it), interlaced modes.
 
+**Found on the G5 (2026-10-08):** the list works (54 modes: 18 sizes at 3
+depths), and a mode set to 640x480, 800x600 or 1024x768 made the desktop
+come out with streaks and every other row missing. The mode set was right;
+the window server's OpenGL contexts drew into the screen with the pitch of
+1920x1080, because the device (`mesa/target/rdn_device_darwin.c`) read the
+screen's size and pitch once, when it was opened. Fixed: the device asks the
+kext again (`dev_screen_refresh`, at most every 20 ms) and a context
+attached to the screen attaches again when they change (`rdn_make_current`).
+Needs a window server restart to take effect. Also: `cgmode set` used
+`CGDisplaySwitchToMode`, whose mode is put back when the program exits; it
+now takes a number of seconds to stay (`cgmode set 0 640 480 32 10`), and
+prints bytes a row.
+
 **Check on the G5** (after the kext is installed and the Mac restarted):
 `~/gl/cgmode` lists the display's modes; Quake 3 with `r_mode 3` (640x480) and
 Doom 3 from the Finder start; System Preferences > Displays shows the list.

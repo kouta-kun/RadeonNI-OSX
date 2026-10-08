@@ -5085,3 +5085,20 @@ textures and a PBO, which is more than 768 MB + 256 MB of aperture + the
 512 MB limit leave; no eviction would help, all of it is live. No change in
 the other texture tests (118 run). The finding about eviction: the one piece
 of evidence for it was a bug in the GART chunks.
+
+## 2026-10-08: modes, display power and hot-plug on the G5 (first run)
+
+New kext binary installed (`~/RadeonNI.kext.before-modes` is the old one), the
+G5 restarted with the user's go. The mode list is as designed (54 modes).
+Mode switches looked like nothing happened: `cgmode set` exits and Quartz puts
+the mode back; `cgmode set ... seconds` holds it. Held, the kext's timing
+changed (IOFBCurrentPixelCount 420000, 663168, 1083264 for 640x480, 800x600,
+1024x768: the totals of those timings) but the desktop was streaked: the
+window server's GL contexts kept the screen's 1920x1080 pitch, which the
+device had read once at open. `dev_screen_refresh` and the re-attach fixed it:
+after the window server restarted (the user logged out and in; the
+auto-mode check refused `killall WindowServer` twice, see the session), grabs
+at 640x480, 800x600 and 1024x768 show a clean desktop. Display sleep and
+hot-plug have not been tried; the dmesg ring is full of `setShape` lines, so
+the kext's own start-up lines are gone; read /var/log/system.log or lower the
+surface logging first.
