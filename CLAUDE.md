@@ -267,12 +267,34 @@ been planned in detail.
   from it, and nothing bounds how far its thread runs ahead of the GPU).
   Off; the G5's list has the game on copies. `RDN_SUBDATA_COPY` and the
   list also turn on glthread's direct `glBufferSubData` upload.
+- Apple's small extensions (2026-10-07, journal, "Apple's other
+  extensions"): for every program but the window server the bundle has
+  `GL_APPLE_fence` as real waits (Mesa sync objects; the engine's own
+  never waited), `GL_APPLE_texture_range`, `GL_APPLE_flush_render`,
+  `GL_APPLE_transform_hint` and `GL_APPLE_vertex_array_object`, all
+  named, and answers `GL_EXT_gpu_program_parameters`' two functions when
+  a program looks them up by name (World of Warcraft: 164.6 to 166.8
+  frames a second at its login screen). `RDN_NO_APPLE=1` and
+  `RDN_NO_PROGPARAMS=1` turn those off. `~/gl/appletest`
+  (`tools/guest/appletest.c`) checks all of it. Not seen by the user; DVD
+  Player and iChat, which use fences, not run. The journal entry lists
+  the 38 names Tiger's OpenGL knows that we lack and who asks for each.
+- Core Image filters on the CPU for three reasons, found on 2026-10-07
+  (`docs/2D-ACCELERATION.md`): it requires `GL_APPLE_client_storage`, it
+  only uses renderers it knows by ID or by the start of `GL_RENDERER`
+  ("ATI Radeon ", "NVIDIA GeForce ", ...), and then it needs pbuffers.
+  `RDN_EXT_ADD="GL_a GL_b"` (any names into the list) and
+  `RDN_RENDERER="ATI Radeon HD 7570"` in a program's environment give it
+  the first two; it then takes the card and draws nothing. Both are
+  experiment switches, off by default. `~/gl/proglimits` prints the
+  program limits it asks for.
 - The Tiger device layer binds at most 512 MB behind the GART for one
   program (`GART_MOST_BYTES`): with about 860 MB bound the kext's bind
   call never returned and the process could not be killed (G5 restarted;
   cause not known, a guess is the G5's DART). Buffers above 16 MB get a
   chunk of their own that is unbound when freed.
-- A6 has not started; A7 has (GART).
+- A6 has not started (what it needs is known: the Core Image bullet
+  above); A7 has (GART).
 - What is on by default since 2026-10-06, all decided by the user: the
   performance clocks and the memory controller's microcode, the GART,
   glthread for every program but the window server, the true extension
@@ -309,7 +331,8 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
   composites with OpenGL, and how far it gets with us.
 - `docs/2D-ACCELERATION.md`: Quartz Extreme and Core Image as audited and
   measured on 2026-10-07 (Quartz Extreme is real; Core Image filters on the
-  CPU and its picture comes out wrong), what was built, what is next.
+  CPU and its picture comes out wrong, and why), what was built, what is
+  next.
 - `docs/EXTENDED-DESKTOP-TODO.md`: the expected steps for two monitors as
   two displays (a plan from 2026-10-07; nothing started).
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.

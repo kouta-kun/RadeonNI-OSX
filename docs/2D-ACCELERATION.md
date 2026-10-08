@@ -78,6 +78,31 @@ server starts), with the CPU path as fallback.
 So System Profiler's "Core Image: Supported" means only that a gate is
 passed. A6 is not started in any real sense.
 
+### Why it filters on the CPU [V, 2026-10-07, later the same day]
+
+Found with `ciprobe gl` under a full GL trace and by reading QuartzCore's
+`accel_load_screen_info`, `fe_accel_new` and `fe_accel_get` in disassembly
+(journal). Core Image uses a renderer only when all of this holds:
+
+1. `GL_APPLE_client_storage` and `GL_EXT_texture_rectangle` are in the
+   list. We do not name the first (texture data is copied, so naming it
+   would be true enough; it is left out because of what follows).
+2. The renderer has a class: from its ID (0x21800 ATI Radeon, 0x21900
+   Radeon X1000, 0x22400 NVIDIA, 0x24000 Intel) or from the start of
+   `GL_RENDERER` ("ATI Radeon X1", "ATI Radeon ", "NVIDIA GeForce ",
+   "NVIDIA Quadro ", "NVIDIA GeForce FX ", "NVIDIA NV34", "Intel "). One
+   without a class gets no buffer formats and a speed of 0, below the
+   software renderer's 1. Ours has none.
+3. Pbuffers. Once 1 and 2 are given (`RDN_EXT_ADD="GL_APPLE_client_storage
+   GL_APPLE_float_pixels" RDN_RENDERER="ATI Radeon HD 7570"`) it makes two
+   contexts that share with the program's, one with 32 bits of colour and
+   one with 64 (floating point), cannot set a pbuffer on either, and draws
+   nothing.
+
+`GL_APPLE_float_pixels` and the two program extensions only set flags.
+The program limits it reads (`tools/guest/proglimits.c`) are all larger on
+our renderer than on Apple's software renderer.
+
 ## What exists for the next round
 
 - Front end: `OSMesaMakeCurrentStore` (a context draws into video memory
@@ -98,13 +123,15 @@ passed. A6 is not started in any real sense.
 
 1. The off-screen clipping bug: a context taken over before its drawable
    exists, then given an off-screen one, draws only 16x16 pixels.
-2. Why Core Image declines hardware filtering after reading the GL
-   strings (renderer name, vendor, an extension it wants, or the renderer
-   ID). Compare with what it does on Apple's own drivers if one is at
-   hand **[I]**: it may be a list of known renderers.
-3. Pbuffers (`CGLSetPBuffer`'s refusal first) and shared contexts in the
-   bundle, only if a trace then shows Core Image asking for them.
-4. The window server's own filters (Dashboard's ripple): never traced.
+2. Done (above): Core Image wants `GL_APPLE_client_storage`, a renderer
+   it knows by ID or name, and pbuffers.
+3. Pbuffers (`CGLSetPBuffer`'s refusal first), one of them with floating
+   point colour, and shared contexts in the bundle. Core Image asks for
+   them as soon as it takes the card.
+4. Then, the user's to decide: which renderer to be for Core Image. The
+   name is what programs see too, and games read it for their own
+   workarounds; the ID is what CGL files the driver under.
+5. The window server's own filters (Dashboard's ripple): never traced.
 
 ## Known problems left by this round
 

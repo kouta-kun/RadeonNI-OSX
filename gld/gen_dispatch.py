@@ -1092,14 +1092,29 @@ VAR_OWN = {
     'vertex_array_range_EXT': '\tvar_range(ctx, count, pointer);',
     'flush_vertex_array_range_EXT': '\tvar_flush(ctx, count, pointer);',
     'vertex_array_parameteri_EXT': '\t(void)pname;\n\t(void)param;',
+}
+
+# GL_APPLE_fence's entries: ours when var_on() or apple_on() (APPLE_HELP).
+FENCE_OWN = {
     'gen_fences_APPLE': '\tvar_fences(n, fences);',
-    'delete_fences_APPLE': '\t(void)n;\n\t(void)fences;',
-    'set_fence_APPLE': '\tvar_fence_set(fence);',
+    'delete_fences_APPLE': '\tfence_delete(n, fences);',
+    'set_fence_APPLE': '\tfence_set(fence);',
     'is_fence_APPLE': '\treturn fence != 0;',
-    'test_fence_APPLE': '\t(void)fence;\n\treturn 1;',
-    'finish_fence_APPLE': '\tvar_fence_finish(fence);',
-    'test_object_APPLE': '\t(void)object;\n\t(void)name;\n\treturn 1;',
-    'finish_object_APPLE': '\t(void)object;\n\t(void)name;\n\tif (var_on() == 2)\n\t\tm_finish();',
+    'test_fence_APPLE': '\treturn fence_test(fence);',
+    'finish_fence_APPLE': '\tfence_finish(fence);',
+    'test_object_APPLE': '\treturn object_test(object, name);',
+    'finish_object_APPLE': '\tobject_finish(object, name);',
+}
+
+# GL_APPLE_texture_range's and GL_APPLE_flush_render's: ours when
+# apple_on().
+APPLE_OWN = {
+    'texture_range_APPLE': '\tapple_range(ctx, target, length, pointer);',
+    'get_tex_parameter_pointerv_APPLE':
+        '\tif (pname == 0x85B8)\t/* GL_TEXTURE_RANGE_POINTER_APPLE */\n'
+        '\t\t*params = (GLvoid *)apple_range_pointer(ctx, target);',
+    'flush_render_APPLE': '\tm_flush();',
+    'finish_render_APPLE': '\tm_finish();',
 }
 
 # Array pointers that may point into a mirror.
@@ -1242,7 +1257,7 @@ static GLsizeiptrARB map_known_size(void *ctx, GLenum target)
  * GL_APPLE_flush_buffer_range. Tiger's OpenGL has neither of its two
  * functions; a program that knows the extension looks them up by name,
  * and the bundle answers that lookup itself (rdn_hook.c,
- * flushrange_function below). World of Warcraft does, and without the
+ * byname_function below). World of Warcraft does, and without the
  * extension it maps buffers the GPU is drawing from 1500 times a second,
  * each a wait in Mesa (30 frames a second at its login screen, 165 with).
  *
@@ -1312,47 +1327,422 @@ static unsigned flushrange_bits(void *ctx, GLenum target)
 		return 0;
 	return 0x2 | (map_sizes[i].nowait ? 0x20 : 0) | (map_sizes[i].noflush ? 0x10 : 0);
 }
+"""
 
-/* A program looks a function up by name in a bundle (rdn_hook.c). */
-static void *flushrange_function(const char *name)
+# Apple's extensions that are small enough to be the bundle's own, and the
+# list of extensions as programs get it.
+#
+# For every program but the window server, which is right with the engine's
+# entries and stays as it is. RDN_NO_APPLE=1 in a program's environment:
+# the engine's entries for it too, and none of the names.
+#
+# GL_APPLE_fence, for programs without the vertex array range (there the
+# fences stay what VAR_HELP says). A fence is a sync object of Mesa's:
+# glTestFenceAPPLE asks it without waiting, glFinishFenceAPPLE waits. Both
+# flush first: a program may poll a fence without ever flushing.
+# glTestObjectAPPLE and glFinishObjectAPPLE ask whether the GPU is done
+# with memory of the program's that an object refers to (a texture with
+# client storage, a vertex array range); here such memory is copied when
+# it is given, so the answer is always yes. Only GL_FENCE_APPLE is a wait.
+#
+# GL_APPLE_texture_range: hints about memory the texture's data is in.
+# Nothing is done with them (texture data is copied); they are remembered
+# so that a program can ask for them again. A texture that is deleted
+# keeps its slot until another takes it: a new texture with the same name
+# would be told the old range.
+#
+# GL_APPLE_client_storage, GL_APPLE_transform_hint and GL_APPLE_float_pixels
+# add no function. The first two are values the entries in APPLE_ONLY take
+# and drop; glGet* answers with what was set. The third's formats have the
+# values of GL_ARB_texture_float's and GL_ARB_half_float_pixel's, which
+# Mesa has; GL_COLOR_FLOAT_APPLE (is the drawable's colour floating point)
+# is always false.
+#
+# GL_APPLE_flush_render: glFlush and glFinish without showing the picture,
+# which is what Mesa's own two are.
+#
+# The names: EXT_DEFAULT for every program apple_on() is true for, and
+# RDN_EXT_ADD="GL_one GL_two" in a program's environment adds any name,
+# true or not, to see what the program does with it.
+#
+# Functions Tiger's framework lacks that a program looks up by name
+# (rdn_hook.c): GL_APPLE_flush_buffer_range's two (MAP_BUFFER_HELP) and
+# GL_EXT_gpu_program_parameters' two. Mesa names that extension and has
+# the functions, but 10.4.11's libGL does not export them and its table
+# has no entries for them; World of Warcraft asks for both by name and
+# does without when it gets none. RDN_NO_PROGPARAMS=1: none from us
+# either. With the log on, every OpenGL name a program looks up is logged,
+# answered or not.
+APPLE_HELP = """
+static void *(*x_fence_sync)(GLenum condition, GLbitfield flags);
+static GLenum (*x_client_wait_sync)(void *sync, GLbitfield flags, unsigned long long timeout);
+static void (*x_delete_sync)(void *sync);
+
+static int apple_on(void)
 {
-	if (!strcmp(name, "glBufferParameteriAPPLE"))
-		return (void *)flushrange_parameteri;
-	if (!strcmp(name, "glFlushMappedBufferRangeAPPLE"))
-		return (void *)flushrange_flush;
-	return NULL;
+	static int on = -1;
+
+	if (on < 0) {
+		const char *name = getprogname();
+
+		on = name && strcmp(name, "WindowServer") && !getenv("RDN_NO_APPLE");
+		if (on)
+			rdn_log("GL_APPLE_fence, texture range and flush render: ours, for %s", name);
+	}
+	return on;
+}
+
+/* Fence names are var_fences()'s: one count for the whole program. */
+static void *fence_syncs[4096];
+static unsigned long fence_waits;
+
+static void fence_drop(GLuint fence)
+{
+	void **sync = &fence_syncs[fence & 4095];
+
+	if (*sync && x_delete_sync)
+		x_delete_sync(*sync);
+	*sync = NULL;
+}
+
+static void fence_set(GLuint fence)
+{
+	if (var_on()) {
+		var_fence_set(fence);
+		return;
+	}
+	fence_drop(fence);
+	if (!x_fence_sync || !x_client_wait_sync)
+		return;
+	/*
+	 * glFenceSync alone leaves out what glBegin and glEnd have gathered
+	 * and not yet drawn: the fence would be reached before those are.
+	 */
+	m_flush();
+	fence_syncs[fence & 4095] = x_fence_sync(0x9117, 0);	/* GL_SYNC_GPU_COMMANDS_COMPLETE */
+}
+
+static GLboolean fence_test(GLuint fence)
+{
+	void *sync = fence_syncs[fence & 4095];
+
+	if (var_on() || !sync)
+		return 1;
+	/* GL_SYNC_FLUSH_COMMANDS_BIT, no wait; GL_TIMEOUT_EXPIRED */
+	if (x_client_wait_sync(sync, 0x1, 0) == 0x911B)
+		return 0;
+	fence_drop(fence);
+	return 1;
+}
+
+static void fence_finish(GLuint fence)
+{
+	void *sync = fence_syncs[fence & 4095];
+	GLenum how = 0;
+	unsigned i;
+
+	if (var_on()) {
+		var_fence_finish(fence);
+		return;
+	}
+	if (!sync)
+		return;
+	/* A second at a time, and not for ever: a wait that fails ends it too. */
+	for (i = 0; i < 10; i++)
+		if ((how = x_client_wait_sync(sync, 0x1, 1000000000ull)) != 0x911B)
+			break;
+	fence_drop(fence);
+	fence_waits++;
+	if (!(fence_waits & (fence_waits - 1)))
+		rdn_log("fences: %lu waited for so far, the last ended with 0x%x after %u seconds",
+			fence_waits, (unsigned)how, i);
+}
+
+static void fence_delete(GLsizei n, const GLuint *fences)
+{
+	GLsizei i;
+
+	for (i = 0; !var_on() && i < n; i++)
+		fence_drop(fences[i]);
+}
+
+static GLboolean object_test(GLenum object, GLuint name)
+{
+	if (object == 0x8A0B && !var_on())	/* GL_FENCE_APPLE */
+		return fence_test(name);
+	return 1;
+}
+
+static void object_finish(GLenum object, GLuint name)
+{
+	if (object == 0x8A0B && !var_on())
+		fence_finish(name);
+	else if (var_on() == 2)
+		m_finish();
+}
+
+/* What a context was last told of the values that are dropped. */
+static struct apple_ctx {
+	void *ctx;
+	GLint client_storage, transform_hint;
+} apple_ctxs[16];
+
+static struct apple_ctx *apple_ctx(void *ctx)
+{
+	struct apple_ctx *c = &apple_ctxs[((unsigned long)ctx >> 4) & 15];
+
+	if (c->ctx != ctx) {
+		c->ctx = ctx;
+		c->client_storage = 0;
+		c->transform_hint = 0x1100;	/* GL_DONT_CARE */
+	}
+	return c;
+}
+
+static int apple_gets(GLenum pname)
+{
+	/* GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRANSFORM_HINT_APPLE, GL_COLOR_FLOAT_APPLE */
+	return pname == 0x85B2 || pname == 0x85B1 || pname == 0x8A0F;
+}
+
+static GLint apple_get(void *ctx, GLenum pname)
+{
+	if (pname == 0x85B2)
+		return apple_ctx(ctx)->client_storage;
+	if (pname == 0x85B1)
+		return apple_ctx(ctx)->transform_hint;
+	return 0;
+}
+
+static struct apple_tex {
+	void *ctx;
+	GLenum target;
+	GLuint name;
+	const GLvoid *pointer;
+	GLsizei length;
+	GLint hint;
+} apple_texs[256];
+
+/* The record of the texture bound to a target, a new one if asked. */
+static struct apple_tex *apple_tex(void *ctx, GLenum target, int make)
+{
+	/* 1D, 2D, 3D, rectangle, cube map: the binding to ask for. */
+	GLenum binding = target == 0x0DE0 ? 0x8068 : target == 0x0DE1 ? 0x8069 :
+			 target == 0x806F ? 0x806A : target == 0x84F5 ? 0x84F6 :
+			 target == 0x8513 ? 0x8514 : 0;
+	struct apple_tex *t;
+	GLint name = 0;
+
+	if (!binding || !m_get_integerv)
+		return NULL;
+	m_get_integerv(binding, &name);
+	t = &apple_texs[((GLuint)name ^ target ^ (unsigned long)ctx >> 4) & 255];
+	if (t->ctx == ctx && t->target == target && t->name == (GLuint)name)
+		return t;
+	if (!make)
+		return NULL;
+	t->ctx = ctx;
+	t->target = target;
+	t->name = (GLuint)name;
+	t->pointer = NULL;
+	t->length = 0;
+	t->hint = 0x85BD;	/* GL_STORAGE_PRIVATE_APPLE */
+	return t;
+}
+
+static void apple_range(void *ctx, GLenum target, GLsizei length, const GLvoid *pointer)
+{
+	struct apple_tex *t = apple_tex(ctx, target, 1);
+
+	if (t) {
+		t->pointer = pointer;
+		t->length = length;
+	}
+}
+
+static const GLvoid *apple_range_pointer(void *ctx, GLenum target)
+{
+	struct apple_tex *t = apple_tex(ctx, target, 0);
+
+	return t ? t->pointer : NULL;
+}
+
+/* GL_TEXTURE_STORAGE_HINT_APPLE was set (the window server's are not kept). */
+static void apple_hint(void *ctx, GLenum target, GLint hint)
+{
+	struct apple_tex *t = apple_on() ? apple_tex(ctx, target, 1) : NULL;
+
+	if (t)
+		t->hint = hint;
+}
+
+/* GL_TEXTURE_RANGE_LENGTH_APPLE (0x85B7) or GL_TEXTURE_STORAGE_HINT_APPLE. */
+static GLint apple_tex_get(void *ctx, GLenum target, GLenum pname)
+{
+	struct apple_tex *t = apple_tex(ctx, target, 0);
+
+	if (pname == 0x85B7)
+		return t ? t->length : 0;
+	return t ? t->hint : 0x85BD;
+}
+
+/* Looked up by name (rdn_hook.c). They come without a context, like
+ * GL_APPLE_flush_buffer_range's: the thread's last is meant. */
+static int byname, progparams;
+static unsigned long progparams_calls[2];
+
+static void progparams_env(GLenum target, GLuint index, GLsizei count, const GLfloat *params)
+{
+	if (rdn_logging && progparams_calls[0]++ < 4)
+		rdn_log("glProgramEnvParameters4fvEXT(0x%x, %u, %d)", (unsigned)target,
+			(unsigned)index, (int)count);
+	m_program_env_parameters4fv_EXT(target, index, count, params);
+}
+
+static void progparams_local(GLenum target, GLuint index, GLsizei count, const GLfloat *params)
+{
+	if (rdn_logging && progparams_calls[1]++ < 4)
+		rdn_log("glProgramLocalParameters4fvEXT(0x%x, %u, %d)", (unsigned)target,
+			(unsigned)index, (int)count);
+	m_program_local_parameters4fv_EXT(target, index, count, params);
+}
+
+static void *byname_function(const char *name)
+{
+	void *own = NULL;
+
+	if (name[0] != 'g' || name[1] != 'l')
+		return NULL;
+	if (flushrange && !strcmp(name, "glBufferParameteriAPPLE"))
+		own = (void *)flushrange_parameteri;
+	else if (flushrange && !strcmp(name, "glFlushMappedBufferRangeAPPLE"))
+		own = (void *)flushrange_flush;
+	else if (progparams && m_program_env_parameters4fv_EXT &&
+		 !strcmp(name, "glProgramEnvParameters4fvEXT"))
+		own = (void *)progparams_env;
+	else if (progparams && m_program_local_parameters4fv_EXT &&
+		 !strcmp(name, "glProgramLocalParameters4fvEXT"))
+		own = (void *)progparams_local;
+	rdn_log("looked up by name: %s, %s", name, own ? "ours" : "not ours");
+	return own;
+}
+
+/*
+ * RDN_RENDERER="name" in a program's environment: what glGetString says
+ * for GL_RENDERER instead of Mesa's name. Core Image sorts renderers by
+ * the renderer ID or, failing that, by how this name starts ("ATI Radeon
+ * X1", "ATI Radeon ", "NVIDIA GeForce ", "Intel ", ...); one it does not
+ * know gets no buffer formats and a speed of 0, and it filters on the CPU.
+ */
+static const char *renderer_name(void)
+{
+	static const char *name;
+	static int asked;
+
+	if (!asked) {
+		asked = 1;
+		name = getenv("RDN_RENDERER");
+		if (name && !*name)
+			name = NULL;
+		if (name)
+			rdn_log("GL_RENDERER is \\"%s\\" for this program (RDN_RENDERER)", name);
+	}
+	return name;
+}
+
+/* Names for every program apple_on() is true for. */
+static const char *const ext_default[] = {
+@DEFAULTS@	NULL
+};
+
+static int ext_ours(void)
+{
+	static int ours = -1;
+
+	if (ours < 0)
+		ours = flushrange || var_on() || (apple_on() && ext_default[0]) ||
+		       getenv("RDN_EXT_ADD") != NULL;
+	return ours;
+}
+
+/* One more name at the end of the list, unless it is there. */
+static void ext_add(char *list, const char *name, size_t len)
+{
+	const char *at = list, *end;
+
+	for (; *at; at = end) {
+		while (*at == ' ')
+			at++;
+		for (end = at; *end && *end != ' '; end++)
+			;
+		if ((size_t)(end - at) == len && !strncmp(at, name, len))
+			return;
+	}
+	if (*list)
+		strcat(list, " ");
+	strncat(list, name, len);
 }
 
 /* The list of extensions with ours at its end. */
-static const GLubyte *flushrange_extensions(const GLubyte *mesa)
+static const GLubyte *ext_list(const GLubyte *mesa)
 {
-	static const char more[] = " GL_APPLE_flush_buffer_range";
 	static const char *const range[] = {
 		"GL_APPLE_vertex_array_range", "GL_APPLE_fence",
 		"GL_APPLE_vertex_array_object", "GL_APPLE_element_array",
 	};
 	static char *list;
+	const char *add = getenv("RDN_EXT_ADD"), *end;
+	size_t room;
 	unsigned i;
 
-	if (!list && mesa) {
-		list = malloc(strlen((const char *)mesa) + sizeof(more) + 4 * 40);
-		if (list) {
-			strcpy(list, (const char *)mesa);
-			if (flushrange)
-				strcat(list, more);
-			for (i = 0; var_on() && i < 4; i++)
-				if (!strstr(list, range[i])) {
-					strcat(list, " ");
-					strcat(list, range[i]);
-				}
-			rdn_log("extensions of ours named in the list:%s%s",
-				flushrange ? more : "",
-				var_on() ? " GL_APPLE_vertex_array_range and what goes with it" : "");
-		}
+	if (list || !mesa)
+		return list ? (const GLubyte *)list : mesa;
+	room = strlen((const char *)mesa) + 64 + 4 * 40 + (add ? strlen(add) + 2 : 0);
+	for (i = 0; ext_default[i]; i++)
+		room += strlen(ext_default[i]) + 1;
+	list = malloc(room);
+	if (!list)
+		return mesa;
+	strcpy(list, (const char *)mesa);
+	if (flushrange)
+		ext_add(list, "GL_APPLE_flush_buffer_range", 27);
+	for (i = 0; var_on() && i < 4; i++)
+		ext_add(list, range[i], strlen(range[i]));
+	for (i = 0; apple_on() && ext_default[i]; i++)
+		ext_add(list, ext_default[i], strlen(ext_default[i]));
+	for (; add && *add; add = end) {
+		while (*add == ' ' || *add == ',')
+			add++;
+		for (end = add; *end && *end != ' ' && *end != ','; end++)
+			;
+		if (end > add)
+			ext_add(list, add, end - add);
 	}
-	return list ? (const GLubyte *)list : mesa;
+	rdn_log("extensions of ours named in the list:%s%s%s%s%s",
+		flushrange ? " GL_APPLE_flush_buffer_range" : "",
+		var_on() ? " GL_APPLE_vertex_array_range and what goes with it" : "",
+		apple_on() && ext_default[0] ? " the bundle's own Apple names" : "",
+		getenv("RDN_EXT_ADD") ? " and RDN_EXT_ADD's: " : "",
+		getenv("RDN_EXT_ADD") ? getenv("RDN_EXT_ADD") : "");
+	return (const GLubyte *)list;
 }
 """
+
+# The names in ext_default: what the bundle's own entries above make true.
+# Tried through RDN_EXT_ADD on the G5 first (Quake 3, which asks for the
+# transform hint, Call of Duty 2, Chess). Not GL_APPLE_client_storage and
+# GL_APPLE_float_pixels: with them and a renderer name it knows, Core
+# Image takes the card and then needs pbuffers, which we lack.
+# GL_APPLE_vertex_array_object is Mesa's GL_ARB_vertex_array_object under
+# Apple's names; one difference is left: Apple's lets a program bind a
+# name it never generated, Mesa's does not.
+EXT_DEFAULT = (
+    'GL_APPLE_transform_hint',
+    'GL_APPLE_fence',
+    'GL_APPLE_vertex_array_object',
+    'GL_APPLE_texture_range',
+    'GL_APPLE_flush_render',
+)
 
 MAP_BUFFER = """\tif (access == 0x88B9 && x_map_buffer_range && flushrange) {
 \t\tunsigned bits = flushrange_bits(ctx, target);
@@ -1412,13 +1802,40 @@ PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len);
 \tfree(own);"""
 
 APPLE_ONLY = {
-    'pixel_storei': ('pname', (0x85B2,)),
-    'pixel_storef': ('pname', (0x85B2,)),
-    'tex_parameteri': ('pname', (0x85BC,)),
-    'tex_parameterf': ('pname', (0x85BC,)),
-    'tex_parameteriv': ('pname', (0x85BC,)),
-    'tex_parameterfv': ('pname', (0x85BC,)),
-    'hint': ('target', (0x85B1,)),
+    'pixel_storei': ('pname', (0x85B2,), 'apple_ctx(ctx)->client_storage = param != 0;'),
+    'pixel_storef': ('pname', (0x85B2,), 'apple_ctx(ctx)->client_storage = param != 0;'),
+    'tex_parameteri': ('pname', (0x85BC,), 'apple_hint(ctx, target, (GLint)param);'),
+    'tex_parameterf': ('pname', (0x85BC,), 'apple_hint(ctx, target, (GLint)param);'),
+    'tex_parameteriv': ('pname', (0x85BC,), 'apple_hint(ctx, target, (GLint)params[0]);'),
+    'tex_parameterfv': ('pname', (0x85BC,), 'apple_hint(ctx, target, (GLint)params[0]);'),
+    'hint': ('target', (0x85B1,), 'apple_ctx(ctx)->transform_hint = (GLint)mode;'),
+}
+
+# glGet* of what the entries above took, and of GL_COLOR_FLOAT_APPLE: the
+# cast that stores the answer.
+APPLE_GETS = {
+    'get_booleanv': '(GLboolean)(%s != 0)',
+    'get_integerv': '%s',
+    'get_floatv': '(GLfloat)%s',
+    'get_doublev': '(GLdouble)%s',
+}
+
+# glGetProgramivARB for a vertex program of the counts only fragment
+# programs have (ALU and texture instructions, texture indirections, used
+# and most, native or not: 0x8805 to 0x8810). OpenGL says invalid enum, and
+# Mesa says so and leaves the answer unset; Apple's renderers answer 0
+# without an error, and Core Image asks for the three native limits of
+# both kinds of program before it decides whether to use the card.
+PROGRAM_GET = """\tif (__builtin_expect(target == 0x8620 && pname >= 0x8805 && pname <= 0x8810, 0) &&
+\t    apple_on()) {
+\t\t*params = 0;
+\t\treturn;
+\t}"""
+
+# glGetTexParameter* of GL_APPLE_texture_range's two values.
+APPLE_TEX_GETS = {
+    'get_tex_parameteriv': '%s',
+    'get_tex_parameterfv': '(GLfloat)%s',
 }
 
 # Entries that carry data for a buffer object. With glthread, more than
@@ -1563,28 +1980,49 @@ def main():
     out.append(WEIGHT)
     out.append(MAP_BUFFER_HELP.replace('static int flushrange;', 'static int flushrange;\nstatic int var_on(void);', 1))
     out.append(VAR_HELP)
+    out.append(APPLE_HELP.replace('@DEFAULTS@', ''.join('\t"%s",\n' % n for n in EXT_DEFAULT)))
     out.append(DRAW_RANGE_HELP)
+    bodies = dict(OWN)
+    for more in (VAR_OWN, FENCE_OWN, APPLE_OWN):
+        bodies.update(more)
+    for name in list(bodies) + list(APPLE_ONLY) + list(APPLE_GETS) + list(APPLE_TEX_GETS):
+        if name not in index:
+            sys.exit('no entry %s' % name)
     for ret, name, params, names in entries:
         full = 'GLIContext ctx' + (', ' + params if params else '')
         call = 'm_%s(%s)' % (name, ', '.join(names))
         out.append('static %s t_%s(%s)' % (ret, name, full))
         out.append('{')
         out.append('\tRDN_ENTER(ctx);')
-        if name in OWN or name in VAR_OWN:
+        if name in bodies:
             out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
             out.append('\t\t%s;' % trace_call(name, params, names))
-            out.append(OWN.get(name) or VAR_OWN[name])
+            out.append(bodies[name])
             out.append('}')
             out.append('')
             continue
         out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
         out.append('\t\t%s;' % trace_call(name, params, names))
         if name in APPLE_ONLY:
-            arg, values = APPLE_ONLY[name]
+            arg, values, note = APPLE_ONLY[name]
             if arg not in names:
                 sys.exit('%s has no %s' % (name, arg))
-            out.append('\tif (%s)' % ' || '.join('%s == 0x%X' % (arg, v) for v in values))
+            out.append('\tif (%s) {' % ' || '.join('%s == 0x%X' % (arg, v) for v in values))
+            out.append('\t\t%s' % note)
             out.append('\t\treturn;')
+            out.append('\t}')
+        if name in APPLE_GETS:
+            out.append('\tif (__builtin_expect(apple_gets(pname), 0) && apple_on()) {')
+            out.append('\t\t*params = %s;' % (APPLE_GETS[name] % 'apple_get(ctx, pname)'))
+            out.append('\t\treturn;')
+            out.append('\t}')
+        if name == 'get_programiv_ARB':
+            out.append(PROGRAM_GET)
+        if name in APPLE_TEX_GETS:
+            out.append('\tif (__builtin_expect(pname == 0x85B7 || pname == 0x85BC, 0) && apple_on()) {')
+            out.append('\t\t*params = %s;' % (APPLE_TEX_GETS[name] % 'apple_tex_get(ctx, target, pname)'))
+            out.append('\t\treturn;')
+            out.append('\t}')
         if name == 'map_buffer':
             out.append(MAP_BUFFER)
         if name in ('draw_range_elements', 'draw_elements', 'draw_arrays'):
@@ -1609,8 +2047,10 @@ def main():
             out.append('\tif (var_on())')
             out.append('\t\tvar_delete(ctx, n, ids);')
         if name == 'get_string':
-            out.append('\tif (name == 0x1F03 && (flushrange || var_on()))\t/* GL_EXTENSIONS */')
-            out.append('\t\treturn flushrange_extensions(m_get_string(name));')
+            out.append('\tif (name == 0x1F03 && ext_ours())\t/* GL_EXTENSIONS */')
+            out.append('\t\treturn ext_list(m_get_string(name));')
+            out.append('\tif (name == 0x1F01 && renderer_name())\t/* GL_RENDERER */')
+            out.append('\t\treturn (const GLubyte *)renderer_name();')
         if name == 'bind_buffer':
             out.append('\tif (map_mode() || flushrange || var_on()) {')
             out.append('\t\tGLuint *bound = map_bound(ctx, target);')
@@ -1681,9 +2121,14 @@ def main():
     out.append('')
     out.append('\tx_map_buffer_range = lookup("glMapBufferRange");')
     out.append('\tx_flush_mapped_buffer_range = lookup("glFlushMappedBufferRange");')
-    out.append('\tflushrange = x_map_buffer_range && x_flush_mapped_buffer_range &&')
-    out.append('\t\tstrcmp(getprogname(), "WindowServer") && !getenv("RDN_NO_FLUSHRANGE") &&')
-    out.append('\t\trdn_hook_function_lookup(flushrange_function);')
+    out.append('\tx_fence_sync = lookup("glFenceSync");')
+    out.append('\tx_client_wait_sync = lookup("glClientWaitSync");')
+    out.append('\tx_delete_sync = lookup("glDeleteSync");')
+    out.append('\tbyname = strcmp(getprogname(), "WindowServer") &&')
+    out.append('\t\trdn_hook_function_lookup(byname_function);')
+    out.append('\tflushrange = byname && x_map_buffer_range && x_flush_mapped_buffer_range &&')
+    out.append('\t\t!getenv("RDN_NO_FLUSHRANGE");')
+    out.append('\tprogparams = byname && !getenv("RDN_NO_PROGPARAMS");')
     out.append('\tfor (i = 0; i < sizeof(lookups) / sizeof(lookups[0]); i++) {')
     out.append('\t\t*lookups[i].mesa = lookup(lookups[i].name);')
     out.append('\t\tif (*lookups[i].mesa)')
@@ -1738,6 +2183,7 @@ def main():
     # Wrap what Mesa lacks, in a table install has just been through.
     out.append('#define KEEP(field, entry) \\')
     out.append('\tif (!m_##field && FITS(field) && disp->field && disp->field != w_##field && \\')
+    out.append('\t    disp->field != t_##field && \\')
     out.append('\t    kept_wanted(#field, k++)) { \\')
     out.append('\t\tt->real[entry] = kept_last[entry] = (void *)disp->field; \\')
     out.append('\t\tdisp->field = w_##field; \\')
@@ -1802,6 +2248,12 @@ def main():
             continue
         if name in VAR_OWN:
             out.append('\tif (var_on() && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name))
+            continue
+        if name in FENCE_OWN:
+            out.append('\tif ((var_on() || apple_on()) && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name))
+            continue
+        if name in APPLE_OWN:
+            out.append('\tif (apple_on() && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name))
             continue
         out.append('\tif (m_%s && FITS(%s)) { disp->%s = t_%s; n++; }' % (name, name, name, name))
     out.append('\tif (FITS(swap_APPLE) && disp->swap_APPLE != rdn_swap_entry) {')

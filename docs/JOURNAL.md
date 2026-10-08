@@ -4279,3 +4279,124 @@ that marks mirrors in blocks malloc has moved: "It seems to be gone".
 That build (bundle md5 4555f6d9f8777c8a199997979bb6d047) is the one on the
 G5, with `Call of Duty 2` in the vertex range list (copies). The bundle
 from before this work on the game is `~/RadeonNIGLDriver.wow5` there.
+
+## 2026-10-07: Apple's other extensions: what is missing, who asks, and the small ones built
+
+The user's question: are there more Apple-only extensions of the kind
+Call of Duty 2 and World of Warcraft needed.
+
+**How it was looked for.** Our list (`~/gl/glext` on the G5, 295 names)
+against the 107 extension names in 10.4.11's `GLEngine`, which is every
+name any Tiger driver can give: 38 are not ours, 13 of them `APPLE`. Then
+who asks: the extension names, the GL function names and the imports in
+Apple's frameworks and applications and in the games on the G5. Apple's
+frameworks call GL through CGL macros, so their imports say nothing about
+the GL entries they use; only a trace does.
+
+| Extension | Who looks for it | Before | Now |
+|---|---|---|---|
+| `GL_APPLE_client_storage` | Core Image requires it | enum dropped, not named | `glGet` answers; named only with `RDN_EXT_ADD` |
+| `GL_APPLE_float_pixels` | Core Image, window server, Quartz Composer | not named | `GL_COLOR_FLOAT_APPLE` answers false; named only with `RDN_EXT_ADD` |
+| `GL_APPLE_pixel_buffer` | Core Image, Core Video, Quartz Composer, the USB camera digitizer, World of Warcraft (AGL) | `CGLSetPBuffer` refused | the same: not done |
+| `GL_EXT_gpu_program_parameters` | World of Warcraft, by name | named, the functions not to be had | answered by name |
+| `GL_APPLE_texture_range` | window server, Core Image, iTunes Artwork, camera digitizer, all without asking | the engine's entries | ours, named |
+| `GL_APPLE_transform_hint` | Quake 3 | hint dropped, not named | named, `glGet` answers |
+| `GL_APPLE_fence` | Call of Duty 2 asks; DVD Player and iChat import its functions | the engine's entries, which never wait | ours, real waits, named |
+| `GL_APPLE_vertex_array_object` | Call of Duty 2 | Mesa's functions, named only with the vertex range | named |
+| `GL_APPLE_flush_render` | nobody found | the engine's entries | ours, named |
+| `GL_ATI_array_rev_comps_in_4_bytes` | Call of Duty 2 and World of Warcraft have the name | nothing | nothing: neither uses it (below) |
+| `GL_APPLE_ycbcr_422` | iChat; video players | nothing | nothing: r600 cannot sample YUV (`r600_state_common.c`, "XXX") |
+
+Not worth building, because every program found that names them prefers a
+path we have, or Mesa has removed them: `GL_ATI_text_fragment_shader`,
+`GL_ATI_pn_triangles`, `GL_NV_register_combiners*`, `GL_NV_texture_shader*`,
+`GL_NV_vertex_program*`, `GL_EXT_paletted_texture`, `GL_ARB_imaging`,
+`GL_SGI_color_matrix`, `GL_ARB_shadow_ambient`, `GL_APPLE_specular_vector`,
+`GL_APPLE_vertex_program_evaluators`. Not Apple's, seen on the way: Doom 3
+and Quake 4 use `GL_EXT_depth_bounds_test` when it is named, and r600 has
+none.
+
+**Built** (`gld/gen_dispatch.py`, `APPLE_HELP`), for every program but the
+window server, `RDN_NO_APPLE=1` turns it off:
+
+- Fences on Mesa's sync objects. The engine's own, which programs got
+  until now, never wait: `tools/guest/appletest.c` draws 4000 blended
+  quads of 1024x1024, sets a fence and finishes it; before, 0.0 ms and
+  then 822 ms in `glFinish`; now 820 ms and 0.1 ms. Programs with the
+  vertex array range keep the fences they had.
+- Mesa's `glFenceSync` does not draw what `glBegin` and `glEnd` have
+  gathered: the fence was reached at once while the quads were still to
+  come (the first build failed the test that way). The bundle calls
+  `glFlush` before it makes the sync object.
+- `glTextureRangeAPPLE`, the storage hint, client storage and the
+  transform hint are remembered and answered by the `glGet` calls. Core
+  Image asks for `GL_UNPACK_CLIENT_STORAGE_APPLE` with `glGetIntegerv` to
+  put it back afterwards; until now that was a GL error and no answer.
+- `glProgramEnvParameters4fvEXT` and `glProgramLocalParameters4fvEXT` by
+  name (`RDN_NO_PROGPARAMS=1`: not). World of Warcraft looks both up and
+  then uses the first (98 parameters in one call, 21, 1): 164.6 frames a
+  second at its login screen without, 166.8 with, twice each. In the
+  world: not measured.
+- With the log on, every `gl` name a program looks up through
+  `CFBundleGetFunctionPointerForName` is logged, answered or not.
+- `RDN_EXT_ADD="GL_a GL_b"` adds any names to the list and
+  `RDN_RENDERER="name"` replaces `GL_RENDERER`, for one program.
+
+Names made defaults after a run with `RDN_EXT_ADD`: transform hint,
+fence, vertex array object, texture range, flush render. Quake 3 says
+"using GL_APPLE_transform_hint", 148.2 against 148.3 frames a second.
+
+**Core Image, why it filters on the CPU** (`ciprobe gl 0x21a00`, every GL
+call traced, and QuartzCore's `accel_load_screen_info`, `fe_accel_new`
+and `fe_accel_get` read in disassembly to learn what it asks):
+
+1. It requires `GL_APPLE_client_storage` and `GL_EXT_texture_rectangle`;
+   without either the renderer is not used. With our list as it was it
+   stopped here. `GL_ARB_vertex_program`, `GL_ARB_fragment_program` and
+   `GL_APPLE_float_pixels` each set a flag.
+2. With `RDN_EXT_ADD="GL_APPLE_client_storage GL_APPLE_float_pixels"` it
+   goes on to ask for eight program limits of each kind. Three of them
+   are fragment-only counts asked of the vertex program too: Mesa says
+   invalid enum and leaves the answer unset, Apple's software renderer
+   answers 0 with no error (`tools/guest/proglimits.c`). The bundle now
+   answers 0. It made no difference to the outcome.
+3. It gives the renderer a class, from the renderer ID (0x21800 ATI
+   Radeon, 0x21900 Radeon X1000, 0x22400 NVIDIA, 0x24000 Intel, 0x20200
+   and 0x20400 Apple's own) or else from how `GL_RENDERER` starts
+   ("NVIDIA GeForce FX ", "NVIDIA NV34", "NVIDIA GeForce ", "NVIDIA Quadro
+   ", "ATI Radeon X1", "ATI Radeon ", "Intel ", "Generic"). A renderer in
+   no class has no buffer format it may use and a speed of 0 (ATI Radeon
+   100, Radeon X1000 and GeForce 200, software 1). Ours is in none. This
+   is where it turned to the CPU.
+4. With `RDN_RENDERER="ATI Radeon HD 7570"` as well it takes the card:
+   two more contexts that share with the program's, one with 32 bits of
+   colour and one with 64, both attached with no drawable (the pbuffers
+   it could not set), "CoreImage: ROI is not tilable" on standard error,
+   and no drawing at all in the program's context. 1.5 ms a render
+   against 12, of nothing: every pixel differs from the software picture.
+
+So hardware Core Image needs the two names, a renderer it knows (the ID
+or the name) and pbuffers, one of them floating point. None of the three
+is on by default.
+
+**`GL_ATI_array_rev_comps_in_4_bytes`** has one enum, 0x897C, and no
+public text. Named for one run of each game, with the enables, client
+states, hints and array pointers traced: neither World of Warcraft at its
+login screen nor Call of Duty 2 in its menu passes 0x897C anywhere, and
+their colour arrays stay four unsigned bytes. Nothing to build.
+Call of Duty 2 disables `GL_TEXT_FRAGMENT_SHADER_ATI` (0x8200) every
+frame without asking, which Mesa refuses; harmless.
+
+**On the G5:** bundle 1a200fd0 installed, the one from before is
+`~/RadeonNIGLDriver.before-ext` (4555f6d9). `appletest` passes; `vartest`
+with copies as before; Doom 3 `bench` 48.6, Quake 3 148.6, World of
+Warcraft's login screen 166, Call of Duty 2's menu 394 frames a second;
+that menu and Chess right by readback. The G5 was restarted by someone
+else in the middle of this, so its window server runs the third build of
+this work (49b5e401), which does not differ for it. Not seen by the user:
+any of it. Not run: DVD Player and iChat, which are the programs the real
+fences are new for.
+
+Wrong in the plan written before the work: it said the fence entries were
+already ours for every program. They were only for programs with the
+vertex array range.

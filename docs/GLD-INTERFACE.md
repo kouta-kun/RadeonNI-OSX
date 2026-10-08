@@ -120,6 +120,21 @@ Found by flipping one bit at a time and asking CGL (`glprobe -v`).
   `GL_APPLE_flush_buffer_range` if it looks the functions up by name:
   World of Warcraft does, with `CFBundleGetFunctionPointerForName` on
   `com.apple.opengl`, and the bundle hooks that call (`gld/rdn_hook.c`).
+- The same holds for `GL_EXT_gpu_program_parameters`: Mesa names it,
+  10.4.11's libGL exports neither of its functions and its table has no
+  entries for them (the SDK's header declares two it does not have), and
+  World of Warcraft looks them up by name too. The bundle answers
+  (2026-10-07). With the log on it logs every `gl` name looked up that way.
+- 10.4.11's `GLEngine` holds 107 extension names, all that any Tiger
+  driver can give. Of those, Mesa on this card lacks 38; the journal
+  (2026-10-07, "Apple's other extensions") has who asks for which.
+- The engine's own fence entries (`glSetFenceAPPLE` and the rest), which a
+  program gets when the driver replaces none, never wait for our GPU. The
+  bundle's are Mesa sync objects. Mesa's `glFenceSync` does not draw what
+  `glBegin` and `glEnd` have gathered, so a `glFlush` goes before it.
+- Apple's renderers answer 0 with no error when a vertex program is asked
+  for the counts only fragment programs have (`glGetProgramivARB`, 0x8805
+  to 0x8810); Mesa gives an error and no answer. Core Image asks.
 - CGL removes `kCGLPFAAccelerated` and the renderer ID from the attribute
   list before the plug-in sees it, and decides acceptance from the flags in
   the returned pixel format.
