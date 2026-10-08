@@ -1,0 +1,36 @@
+diff --git a/tests/util/piglit-dispatch-init.c b/tests/util/piglit-dispatch-init.c
+index 3d9772d..f4ed072 100644
+--- a/tests/util/piglit-dispatch-init.c
++++ b/tests/util/piglit-dispatch-init.c
+@@ -151,6 +151,31 @@ get_ext_proc_address(const char *function_name)
+ 		"/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL";
+ 	static void *opengl_lib = NULL;
+ 
++	void *p;
++	static void *(*mesa_lookup)(const char *);
++	static int mesa_tried;
++
++	/* osx-gpu: the framework only exports Tiger's OpenGL 2.1 entry
++	 * points. With RDN_PIGLIT_MESA set, anything it lacks is asked of
++	 * the Mesa inside our driver bundle (OSMesaGetProcAddress), which
++	 * is what a program would get if the bundle answered every name. */
++	if (!opengl_lib)
++		opengl_lib = dlopen(opengl_path, RTLD_LAZY);
++	p = opengl_lib ? dlsym(opengl_lib, function_name) : NULL;
++	if (p)
++		return p;
++	if (getenv("RDN_PIGLIT_MESA")) {
++		if (!mesa_tried) {
++			void *h = dlopen("/System/Library/Extensions/RadeonNIGLDriver.bundle/"
++					 "Contents/MacOS/RadeonNIGLDriver", RTLD_LAZY);
++			mesa_tried = 1;
++			if (h)
++				mesa_lookup = (void *(*)(const char *))
++					dlsym(h, "OSMesaGetProcAddress");
++		}
++		if (mesa_lookup)
++			return mesa_lookup(function_name);
++	}
+ 	return do_dlsym(&opengl_lib, opengl_path, function_name);
+ }
+ 

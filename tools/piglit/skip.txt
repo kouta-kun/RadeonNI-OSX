@@ -1,0 +1,2 @@
+# regular expressions on piglit test names that are not run on the G5
+# (memory exhaustion, known hangs); one per line

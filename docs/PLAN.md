@@ -25,7 +25,7 @@ wherever its criterion involves video output.
 | Monitor connected to the 7570 | M0 (EDID, modeset trace) | done: DVI-I via DVI-to-HDMI adapter |
 | Approval of the M0 host actions listed below | M0 | given 2026-10-04 (rebinding, module load/unload; trace in an x86 guest, no mmiotrace) |
 | Host reboot after the kernel oops of 2026-10-04 | M1, M2 | done; `radeon` stays unloaded |
-| Whether the slightly yellow white is the monitor or the signal (try `rdn_tool -d modeset`) | later | open, user said to ignore for now |
+| Whether the slightly yellow white is the monitor or the signal (try `rdn_tool -d modeset`) | later | closed 2026-10-08: it was the old TV; the new monitor shows no tint |
 | Which resolution counts as native | M2, M3 | decided: the EDID's preferred timing, 1366x768@59.79 |
 | Mac OS X 10.4 PowerPC install DVD image | M1 | done: `media/tiger-install.iso` |
 | Mac OS X 10.4.11 Combo Update (PPC) `.dmg`, if the DVD is older | M1 | not needed: Apple's Software Update still serves it |
@@ -137,8 +137,9 @@ Driver:
   No standard or established timings, no CEA modes, no scaling.
 - **HDMI** signalling is used when the EDID asks for it, with the AVI
   infoframe (since 2026-10-05) but without audio. The boot argument
-  `rdn_dvi=1` makes the kext use DVI signalling instead. The user saw white looking slightly yellow; untested whether
-  that is the monitor or this. `rdn_tool -d modeset` forces DVI signalling.
+  `rdn_dvi=1` makes the kext use DVI signalling instead. The yellow-tinted
+  white seen on the first TV was the TV (user, 2026-10-08); the new monitor
+  shows none.
 - ~~Line buffer and watermark setup~~ Ported 2026-10-06
   (`hw/rdn_watermark.c`, CRTC 0, one display); the user saw rows of
   stripes without it once the engine clock was raised, and none with it.
