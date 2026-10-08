@@ -59,6 +59,7 @@
 	X(void, BindTexture, (GLenum, GLuint)) \
 	X(void, TexParameteri, (GLenum, GLenum, GLint)) \
 	X(void, TexImage2D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *)) \
+	X(void, GetTexImage, (GLenum, GLint, GLenum, GLenum, GLvoid *)) \
 	X(void, ReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *)) \
 	X(void, Scissor, (GLint, GLint, GLsizei, GLsizei)) \
 	X(GLuint, GenLists, (GLsizei)) \
@@ -346,21 +347,84 @@ static int store_test(OSMesaContext a, uint8_t *buf, const char *out)
 	return bad != 0;
 }
 
+/*
+ * -K: upload one texel of every packed pixel type as RGBA8 and read it
+ * back as bytes (piglit's teximage-colors, 2026-10-08, failed for these on
+ * the G5). The data are written as host-order words with the channels
+ * R=0x11/0xff.. distinct, so a swapped or reversed type shows at once.
+ */
+static int packed_test(void)
+{
+	/* Red 10 (of 15), green 5, blue 15, alpha 0 for 4_4_4_4 and so on. */
+	static const struct {
+		const char *name;
+		GLenum format, type;
+		unsigned bits;
+		uint32_t word;
+		uint8_t want[4];	/* RGBA, 8 bits, +-4 */
+	} t[] = {
+		{ "RGBA 4_4_4_4", GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, 16, 0xa5f0, { 170, 85, 255, 0 } },
+		{ "RGBA 4_4_4_4_REV", GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4_REV, 16, 0x0f5a, { 170, 85, 255, 0 } },
+		{ "BGRA 4_4_4_4", GL_BGRA, GL_UNSIGNED_SHORT_4_4_4_4, 16, 0xf5a0, { 170, 85, 255, 0 } },
+		{ "RGBA 5_5_5_1", GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1, 16, 0xf801, { 255, 0, 0, 255 } },
+		{ "RGBA 1_5_5_1_REV", GL_RGBA, GL_UNSIGNED_SHORT_1_5_5_5_REV, 16, 0x801f, { 255, 0, 0, 255 } },
+		{ "BGRA 5_5_5_1", GL_BGRA, GL_UNSIGNED_SHORT_5_5_5_1, 16, 0xf801, { 0, 0, 255, 255 } },
+		{ "RGB 5_6_5", GL_RGB, GL_UNSIGNED_SHORT_5_6_5, 16, 0xf800, { 255, 0, 0, 255 } },
+		{ "RGB 5_6_5_REV", GL_RGB, GL_UNSIGNED_SHORT_5_6_5_REV, 16, 0x001f, { 255, 0, 0, 255 } },
+		{ "RGBA 10_10_10_2", GL_RGBA, GL_UNSIGNED_INT_10_10_10_2, 32, 0xffc00003, { 255, 0, 0, 255 } },
+		{ "RGBA 2_10_10_10_REV", GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV, 32, 0xc00003ff, { 255, 0, 0, 255 } },
+		{ "RGBA 8_8_8_8", GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, 32, 0x11223344, { 0x11, 0x22, 0x33, 0x44 } },
+		{ "RGBA 8_8_8_8_REV", GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, 32, 0x44332211, { 0x11, 0x22, 0x33, 0x44 } },
+		{ "RGB 3_3_2", GL_RGB, GL_UNSIGNED_BYTE_3_3_2, 8, 0xe0, { 255, 0, 0, 255 } },
+		{ "RGB 2_3_3_REV", GL_RGB, GL_UNSIGNED_BYTE_2_3_3_REV, 8, 0x07, { 255, 0, 0, 255 } },
+	};
+	int i, k, bad = 0;
+	GLuint tex;
+
+	rglGenTextures(1, &tex);
+	rglBindTexture(GL_TEXTURE_2D, tex);
+	rglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	rglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	for (i = 0; i < (int)(sizeof t / sizeof t[0]); i++) {
+		uint8_t src[4] = { 0 }, got[4] = { 0 };
+		uint16_t w16 = (uint16_t)t[i].word;
+		uint32_t w32 = t[i].word;
+		uint8_t w8 = (uint8_t)t[i].word;
+		int ok = 1;
+
+		if (t[i].bits == 16) memcpy(src, &w16, 2);
+		else if (t[i].bits == 32) memcpy(src, &w32, 4);
+		else memcpy(src, &w8, 1);
+		rglTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, t[i].format, t[i].type, src);
+		rglGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, got);
+		for (k = 0; k < 4; k++)
+			if (abs((int)got[k] - (int)t[i].want[k]) > 8)
+				ok = 0;
+		printf("%-22s %s  want %3d %3d %3d %3d  got %3d %3d %3d %3d\n", t[i].name,
+		       ok ? "ok  " : "FAIL", t[i].want[0], t[i].want[1], t[i].want[2],
+		       t[i].want[3], got[0], got[1], got[2], got[3]);
+		bad += !ok;
+	}
+	printf("%s\n", bad ? "FAILED" : "all passed");
+	return bad != 0;
+}
+
 int main(int argc, char **argv)
 {
 	const char *out = NULL;
 	int frames = 1, to_screen = 0, spitch = 0, opt, f, x, y, list_mode = 0;
-	int store_mode = 0;
+	int store_mode = 0, packed_mode = 0;
 	float start_angle = 0.0f;
 	volatile uint32_t *scan = NULL;
 	uint8_t *buf, tex_data[8 * 8 * 4];
 	OSMesaContext ctx;
 	GLuint tex;
 
-	while ((opt = getopt(argc, argv, "n:o:sa:b:DL:P")) != -1) {
+	while ((opt = getopt(argc, argv, "n:o:sa:b:DL:PK")) != -1) {
 		switch (opt) {
 		case 'L': list_mode = atoi(optarg); break;
 		case 'P': store_mode = 1; break;
+		case 'K': packed_mode = 1; break;
 		case 'n': frames = atoi(optarg); break;
 		case 'o': out = optarg; break;
 		case 'D': no_depth = 1; break;
@@ -383,6 +447,8 @@ int main(int argc, char **argv)
 	printf("GL_RENDERER: %s\n", rglGetString(GL_RENDERER));
 	printf("GL_VERSION:  %s\n", rglGetString(GL_VERSION));
 
+	if (packed_mode)
+		return packed_test();
 	if (store_mode)
 		return store_test(ctx, buf, out);
 
