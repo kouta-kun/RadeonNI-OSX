@@ -32,7 +32,8 @@ extern const unsigned rdn_dispatch_entries;
 void rdn_dispatch_kept_report(const char *when);
 
 /* rdn_mesa.c: the engine context whose Mesa context is current. */
-extern void *rdn_current_rend;
+/* Per thread: Mesa's current context is too. */
+extern __thread void *rdn_current_rend;
 void rdn_make_current(void *rend);
 
 /* rdn_mesa.c: what the bundle tells it about, as the gld* calls go by. */

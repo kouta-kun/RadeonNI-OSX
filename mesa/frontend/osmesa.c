@@ -82,6 +82,7 @@
 #include "util/box.h"
 #include "util/u_debug.h"
 #include "util/format/u_format.h"
+#include "util/u_pack_color.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_process.h"
@@ -947,6 +948,27 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       }
       out[i] = osbuffer->textures[statts[i]] =
          screen->resource_create(screen, &templat);
+      /*
+       * A new depth buffer holds what the memory held before, and a
+       * program that never clears it (Quake 3's menu draws with the depth
+       * test on and clears nothing) would then have fragments rejected at
+       * random, or all of them. Clear it to far and no stencil.
+       */
+      if (statts[i] == ST_ATTACHMENT_DEPTH_STENCIL && out[i] && st && st->pipe &&
+          templat.nr_samples <= 1) {
+         struct pipe_box box;
+         uint32_t d32;
+         uint64_t d64;
+
+         u_box_2d(0, 0, templat.width0, templat.height0, &box);
+         if (util_format_get_blocksize(templat.format) == 8) {
+            d64 = util_pack64_z_stencil(templat.format, 1.0, 0);
+            st->pipe->clear_texture(st->pipe, out[i], 0, &box, &d64);
+         } else {
+            d32 = util_pack_z_stencil(templat.format, 1.0, 0);
+            st->pipe->clear_texture(st->pipe, out[i], 0, &box, &d32);
+         }
+      }
       if (osbuffer->has_back) {
          pipe_resource_reference(&osbuffer->owned[statts[i]], out[i]);
          /* A front buffer made after swaps starts as the last picture swapped. */
@@ -1034,8 +1056,18 @@ osmesa_destroy_buffer(struct osmesa_buffer *osbuffer)
 static void
 osmesa_sync(OSMesaContext osmesa)
 {
-   if (osmesa && osmesa->st)
+   if (!osmesa || !osmesa->st)
+      return;
+   /*
+    * Finishing runs what is still in the batch in this thread, with this
+    * thread's current context. A context another thread recorded in and
+    * this one is about to take over is not it: hand the batch to
+    * glthread's thread and leave it at that.
+    */
+   if (OSMesaGetCurrentContext() == osmesa)
       _mesa_glthread_finish(osmesa->st->ctx);
+   else
+      _mesa_glthread_flush_batch(osmesa->st->ctx);
 }
 
 /*

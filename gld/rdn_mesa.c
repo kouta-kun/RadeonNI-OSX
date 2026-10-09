@@ -172,7 +172,7 @@ void rdn_mesa_pbuffer_layout(int window_server)
 	pbuffer_ws = window_server;
 }
 
-void *rdn_current_rend;
+__thread void *rdn_current_rend;
 int rdn_origin_x, rdn_origin_y;
 long rdn_async_limit, rdn_async_piece;
 int rdn_flush_waits;
@@ -1134,6 +1134,8 @@ void rdn_mesa_early_all(void *cgl_ctx)
 	int i;
 
 	if (!cgl_ctx) {
+		OSMesaContext m = OSMesaGetCurrentContext();
+
 		/*
 		 * The thread lets go of its context. Mesa's current context
 		 * is per thread: let go of it here too, which makes glthread
@@ -1141,33 +1143,21 @@ void rdn_mesa_early_all(void *cgl_ctx)
 		 * context's thread (a program that goes on in another
 		 * thread, like Quake 3 with r_smp, would else have the
 		 * second thread run it, with no current context there).
+		 * Not when another thread has taken the context since: Mesa
+		 * would unbind it there.
 		 */
-		if (OSMesaGetCurrentContext()) {
-			OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
-			rdn_current_rend = NULL;
-		}
+		for (i = 0; m && i < MAX_CONTEXTS; i++)
+			if (contexts[i].gld_ctx && contexts[i].mesa == m) {
+				if (pthread_equal(contexts[i].thread, pthread_self()))
+					OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
+				break;
+			}
+		rdn_current_rend = NULL;
 		return;
 	}
-	for (i = 0; i < MAX_CONTEXTS; i++) {
-		struct context *c = &contexts[i];
-
-		if (!c->gld_ctx)
-			continue;
-		rdn_mesa_early(c->gld_ctx);
-		/*
-		 * Mesa's current context is per thread, our rdn_current_rend
-		 * per process. A program that makes the context current in
-		 * another thread (Quake 3's r_smp render thread) would
-		 * otherwise reach Mesa's no-op entry points there: the next
-		 * GL call makes Mesa current in this thread too.
-		 */
-		if (c->mesa && c->thread_set && c->rend == rdn_current_rend &&
-		    !rdn_window_server && !pthread_equal(c->thread, pthread_self())) {
-			if (rdn_logging)
-				rdn_log("context %p is made current in another thread", c->gld_ctx);
-			rdn_current_rend = NULL;
-		}
-	}
+	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx)
+			rdn_mesa_early(contexts[i].gld_ctx);
 }
 
 void rdn_mesa_early(void *gld_ctx)

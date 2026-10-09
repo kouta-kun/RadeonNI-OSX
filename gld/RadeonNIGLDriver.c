@@ -260,6 +260,9 @@ static void setup(void)
 	log_all = rdn_trace;
 	/* The entries Mesa lacks are counted while there is a log. */
 	rdn_logging = logf != NULL;
+	/* Mesa reports the errors a program makes (to the program's standard error). */
+	if (logf && access("/tmp/rdngld.mesadebug", F_OK) == 0)
+		setenv("MESA_DEBUG", "1", 0);
 	if (logf)
 		atexit(kept_at_exit);
 #else
