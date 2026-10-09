@@ -493,6 +493,10 @@ int of_main(void)
 		if (heap)
 			memset(heap, 0, HEAP_BYTES);
 	}
+	if (STAGE < 0) {	/* null client: claims and gives back, touches nothing */
+		give_back();
+		return 0;
+	}
 	chosen = of_finddevice("/chosen");
 	crumb("start");
 	of_getprop(chosen, "stdout", &stdout_ih, 4);

@@ -1,4 +1,4 @@
-all: build/rdns.elf build/rdn8.elf build/rdn.elf build/rdn1.elf build/rdn0.elf
+all: build/rdnn.elf build/rdns.elf build/rdn8.elf build/rdn.elf build/rdn1.elf build/rdn0.elf
 # Open Firmware client (PowerPC ELF32); see docs/OPEN-FIRMWARE-PLAN.md.
 PPC_CC ?= ../third_party/ppc-toolchain/bin/powerpc-linux-gcc
 HW = rdn_gart rdn_mc rdn_watermark rdn_pm rdn_cursor rdn_mem rdn_gpu rdn_cp rdn_blit rdn_selftest rdn_pattern rdn_modeset rdn_dp rdn_mode rdn_dmt rdn_i2c rdn_post rdn_atom
@@ -39,3 +39,8 @@ build/rdns.elf: start.S of_main.c libc.c $(addprefix ../hw/,$(addsuffix .c,$(HW)
 	mkdir -p build
 	sed "s/LOADADDR/0x05000000/" link.ld > build/link-5.ld
 	$(PPC_CC) $(CF) -DSILENT -nostdlib -static -Wl,-T,build/link-5.ld -Wl,--no-warn-rwx-segments -o $@ start.S of_main.c libc.c $(addprefix ../hw/,$(addsuffix .c,$(HW))) ../hw/atom/atom.c $$($(PPC_CC) -m32 -print-libgcc-file-name) 2>&1
+
+build/rdnn.elf: start.S of_main.c libc.c $(addprefix ../hw/,$(addsuffix .c,$(HW))) ../hw/atom/atom.c link.ld
+	mkdir -p build
+	sed "s/LOADADDR/0x06000000/" link.ld > build/link-6.ld
+	$(PPC_CC) $(CF) -DSILENT -DSTAGE=-1 -nostdlib -static -Wl,-T,build/link-6.ld -Wl,--no-warn-rwx-segments -o $@ start.S of_main.c libc.c $(addprefix ../hw/,$(addsuffix .c,$(HW))) ../hw/atom/atom.c $$($(PPC_CC) -m32 -print-libgcc-file-name) 2>&1
