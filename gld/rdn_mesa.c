@@ -23,6 +23,7 @@
 #include <GL/gl.h>
 #include <GL/osmesa.h>
 
+#include <pthread.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -85,6 +86,9 @@ struct drawable {
 
 struct context {
 	void *gld_ctx;
+	/* The thread Mesa's context was last made current in. */
+	pthread_t thread;
+	int thread_set;
 	/* The context it shares objects with (gldCreateContext's fourth argument). */
 	void *share;
 	void *rend;
@@ -1129,10 +1133,41 @@ void rdn_mesa_early_all(void *cgl_ctx)
 {
 	int i;
 
-	(void)cgl_ctx;
-	for (i = 0; i < MAX_CONTEXTS; i++)
-		if (contexts[i].gld_ctx)
-			rdn_mesa_early(contexts[i].gld_ctx);
+	if (!cgl_ctx) {
+		/*
+		 * The thread lets go of its context. Mesa's current context
+		 * is per thread: let go of it here too, which makes glthread
+		 * run what this thread recorded while it is still the
+		 * context's thread (a program that goes on in another
+		 * thread, like Quake 3 with r_smp, would else have the
+		 * second thread run it, with no current context there).
+		 */
+		if (OSMesaGetCurrentContext()) {
+			OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
+			rdn_current_rend = NULL;
+		}
+		return;
+	}
+	for (i = 0; i < MAX_CONTEXTS; i++) {
+		struct context *c = &contexts[i];
+
+		if (!c->gld_ctx)
+			continue;
+		rdn_mesa_early(c->gld_ctx);
+		/*
+		 * Mesa's current context is per thread, our rdn_current_rend
+		 * per process. A program that makes the context current in
+		 * another thread (Quake 3's r_smp render thread) would
+		 * otherwise reach Mesa's no-op entry points there: the next
+		 * GL call makes Mesa current in this thread too.
+		 */
+		if (c->mesa && c->thread_set && c->rend == rdn_current_rend &&
+		    !rdn_window_server && !pthread_equal(c->thread, pthread_self())) {
+			if (rdn_logging)
+				rdn_log("context %p is made current in another thread", c->gld_ctx);
+			rdn_current_rend = NULL;
+		}
+	}
 }
 
 void rdn_mesa_early(void *gld_ctx)
@@ -1183,6 +1218,8 @@ void rdn_make_current(void *rend)
 	if (!c->mesa)
 		return;
 	async_data(c->mesa);
+	c->thread = pthread_self();
+	c->thread_set = 1;
 	if (rdn_trace) {
 		int ok = read_record(c, &d);
 

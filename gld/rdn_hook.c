@@ -49,7 +49,7 @@ static int hooked_set_current(void *ctx)
 {
 	int err = real_set_current(ctx);
 
-	if (ctx && !err)
+	if (!err)
 		after_set_current(ctx);
 	return err;
 }
