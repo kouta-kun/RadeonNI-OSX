@@ -5373,3 +5373,16 @@ attempt; the VBIOS checksum equals `private/vbios.rom`'s (0x51e700).
 - The G5 was left hung in the client at about 21:50 local (stage 0). Nothing was
   flashed, no card state was changed beyond memory decode and the ROM BAR
   enable (restored).
+
+## 2026-10-09 (morning): the client kills the whole G5, second and third time
+
+With the VBIOS embedded in the image (no ROM BAR read), `go` of the stage 0
+image printed nothing and the machine stopped answering, network card included
+(earlier, ROM-reading builds died after four lines). So the ROM read was not
+the (only) cause. Hypothesis now: the image's `.bss`, stack and heap were
+outside what Open Firmware loaded (`load` showed 0x28ce4 bytes for a 0x858c30
+byte segment) and overlap its own memory (network buffers of the telnet
+console). Next build: `.bss` and stack inside the file image, heap from
+`claim`. NVRAM breadcrumb `rdn-step` was never found in Tiger (`nvram` error -1:
+unset, or `interpret` of `$setenv` did not store). The client files are not in
+git under `of/build/` (they hold the VBIOS); history was redone once for that.
