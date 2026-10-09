@@ -469,7 +469,7 @@ static const char *const console_chunks[] = {
 	"swap 780 * + + 14 0 do 1e 0 do ff over j 780 * + i + c! loop loop drop "
 	"rdn-bus close-dev ; "
 	": rdn-mem ( on? -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
-	"80004 \" config-w@\" rdn-bus $call-method swap if 2 or else fffd and then "
+	"80004 \" config-w@\" rdn-bus $call-method swap if 2 or else fff9 and then "
 	"80004 \" config-w!\" rdn-bus $call-method rdn-bus close-dev ; "
 	": open ( -- ok? ) true rdn-mem 90000000 to frame-buffer-adr 780 to line-bytes 780 to width "
 	"438 to height default-font set-font width height width char-width / "
@@ -640,7 +640,12 @@ int of_main(void)
 	crumb("bridge-open");
 	say("rdn: id %x", (unsigned)cfg_read(CARD_BUS_ADDR));
 	/* memory decode and bus master on: Open Firmware leaves memory off */
+#ifdef FB8
+	/* the display needs memory decode only (NVIDIA's driver never sets bus master) */
+	cfg_write(CARD_BUS_ADDR | 0x04, (cfg_read(CARD_BUS_ADDR | 0x04) & 0xffffu) | 2);
+#else
 	cfg_write(CARD_BUS_ADDR | 0x04, (cfg_read(CARD_BUS_ADDR | 0x04) & 0xffffu) | 6);
+#endif
 
 	regs = map_in(0x83080018, REG_PHYS, REG_SIZE);
 	aper = map_in(0xc3080010, APER_PHYS, APER_MAP);
