@@ -53,6 +53,18 @@ System Preferences and a software cursor.
   trained only at a mode set), 2.7 Gbit/s on a real sink, passive
   adapters. The kext before it on the G5 is `~/RadeonNI.kext.before-dp`
   (journal 2026-10-07; `docs/HARDWARE.md`, "DisplayPort connector").
+- Open Firmware (2026-10-09, `docs/OPEN-FIRMWARE.md`, journal): a client in
+  `of/` (built from `hw/`, VBIOS embedded at build time, never committed) POSTs
+  the card from Open Firmware and sets 1920x1080 (the user saw the colour bars);
+  with `of/display.fs` Open Firmware's console text and `ok` prompt show on
+  the 7570's monitor (seen by the user); and a hand-over works: the client
+  sets a marker and clears PCI decode and bus master as its last act, the
+  kext (`rdn_handover_take`, ioreg property `HandOver` = 1) skips its POST and
+  Tiger comes up (readback and the user). Only from a telnet console session
+  driven by `scripts/of-run.py` (`serve`, `do`); a one-shot `boot-command`
+  without a console still fails. After a hang expect two power cycles; the
+  user's wireless keyboard cannot reset NVRAM. Never store long lines in
+  `boot-command`.
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including

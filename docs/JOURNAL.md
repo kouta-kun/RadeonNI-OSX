@@ -5587,3 +5587,21 @@ Not yet done: the same from a short one-shot `boot-command` without a console
 (needs the display node to survive `mac-boot`, and BootX's use of it),
 automatic at every boot (M5; risk: a hang needs two power cycles, and the
 user's keyboard cannot reset NVRAM).
+
+## 2026-10-09: one-shot `boot-command` without a console still fails
+
+`" <orig>" " boot-command" $setenv dev / load hd:3,\Users\tiger\of\rdns.elf go
+mac-boot` (88 characters, silent client with the decode-off tail, `exit`
+service, heap and load-base released): the monitor showed nothing at all (not
+even the colour bars) and Tiger never started; one power cycle recovered it.
+The same client run from a telnet console session (`load`, `go`, then
+`mac-boot`) works (`HandOver` = 1). So the difference is the autoboot context.
+Not understood; ideas: `exit` ends the whole autoboot command line or reboots,
+the client's output/`stdout` handling at that stage, a different state of the
+PCI bus or of `/chosen` before the console exists. Open Firmware without a
+console gives no way to see which, so the next step would be to put the
+console on the card's own display first (the node works) or to drive the
+telnet session from the host at every boot (`scripts/of-run.py serve` already
+does the whole sequence). M5 (automatic) is therefore not done and not needed
+for the Open Firmware text on the 7570, which exists only in a console
+session after the node is created.
