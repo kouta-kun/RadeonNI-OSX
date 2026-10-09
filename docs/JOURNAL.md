@@ -5845,3 +5845,32 @@ held Space, then type `mac-boot`; expect the boot icon and Tiger.
 Not done: writing the colour table to the card's LUT in `color!` /
 `set-colors` (the hardware keeps the gray ramp the mode set loaded), `set-mode` /
 `get-mode`, `quiesce`.
+
+## 2026-10-09: booting from the console gets as far as a panic-like gray box (no kext)
+
+State after many runs (user at the keyboard):
+- With the screen-driver methods and properties on the console node, `mac-boot`
+  typed at the console now draws Apple's boot logo (gray on black: the palette
+  was not loaded into the card) and proceeds into the kernel. With the kext
+  installed: the spinner is drawn 4x small on top of the kext's colour-bar
+  pattern (the kext switched to 32 bpp while the kernel draws for 8 bpp), the
+  fans stay at 100% and Tiger never answers on the network. With the kext moved
+  aside: the spinner looks right, then a solid gray square in the centre of the
+  screen, the size of Tiger's kernel-panic dialog, then nothing; no network, and
+  no new entry in /Library/Logs/panic.log after the power cycle (the panic text
+  cannot be drawn; the record is probably lost with the NVRAM flush).
+- Cause of the odd colours: Apple's code loads its 256-colour table through the
+  node's `set-colors`/`color!`; the node only stored it in software. Now both write
+  the card's colour table (registers 0x69E0/E4/F0/F8 through the register
+  window, Forth `rdn-lut`): verified over the console, palette entry 255 set to
+  red turned the on-screen markers red.
+- Testing over the telnet console: lines longer than ~500 characters overflow the
+  console's line editor (tokens cut in the middle, "Invalid memory access at
+  0xFF84604C"); the client's `interpret` calls are not affected. Send one
+  definition per line when testing. A `dev` followed by definitions on the same
+  line does not change the word lookup until the next line.
+- A stale `ready` file in the queue directory made one run send its first
+  commands before the session cleared the queue (they were lost): wait for a
+  `ready` newer than the start of `serve`.
+Next: the keyboard run with the colour table loaded and the kext aside; the panic
+text, if that is what the gray box is, should become readable.
