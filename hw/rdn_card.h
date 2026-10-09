@@ -106,6 +106,20 @@ bool rdn_card_posted(struct rdn_card *card);
 int rdn_card_post(struct rdn_card *card);
 
 /*
+ * Hand-over from firmware. A client run from Open Firmware (of/) that POSTed
+ * the card and set a mode calls rdn_handover_mark() last; the driver that
+ * starts afterwards (the kext) calls rdn_handover_take() before
+ * rdn_card_post(). Returns 1 if the marker was there and the card looks
+ * sound (video memory size set, CRTC 0 and its surface enabled), 0 if there
+ * was no marker, -1 if the marker was there but the card does not look
+ * running. The marker is cleared either way, so that a later start of the
+ * driver does not trust a stale one. A card without a valid hand-over is
+ * treated exactly as before (rdn_card_post() decides by its own check).
+ */
+void rdn_handover_mark(struct rdn_card *card);
+int rdn_handover_take(struct rdn_card *card);
+
+/*
  * Program the line buffer and the display watermarks of CRTC 0 for the
  * mode and clocks recorded in the card. rdn_modeset() and rdn_pm_set()
  * call it.

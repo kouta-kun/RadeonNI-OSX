@@ -33,7 +33,7 @@ CFLAGS_UPSTREAM = $(CFLAGS_COMMON) -Wno-sign-compare -Wno-type-limits \
 HW_OBJS   = hw/rdn_gart.o hw/rdn_mc.o hw/rdn_watermark.o hw/rdn_pm.o hw/rdn_cursor.o hw/rdn_mem.o hw/rdn_gpu.o hw/rdn_cp.o hw/rdn_blit.o hw/rdn_selftest.o hw/rdn_pattern.o hw/rdn_modeset.o hw/rdn_dp.o hw/rdn_mode.o hw/rdn_dmt.o hw/rdn_i2c.o hw/rdn_post.o hw/rdn_atom.o hw/atom/atom.o
 HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h hw/linux/*.h)
 
-TESTS     = atom_replay edid_modes i2c_edid dp_link modeset_replay accel_replay blit_ops mem_alloc pm_states mc_replay gart_replay
+TESTS     = atom_replay edid_modes i2c_edid dp_link modeset_replay accel_replay blit_ops mem_alloc pm_states mc_replay gart_replay handover
 
 X86_TESTS = $(addprefix build/x86/,$(TESTS))
 PPC_TESTS = $(addprefix build/ppc/,$(TESTS))
@@ -109,6 +109,7 @@ test: all
 		if [ -f $(REF_INIT) ]; then \
 			$(call run_test,gart_replay,$(REF_INIT)); \
 		else echo "SKIP gart_replay: need $(REF_INIT)"; fi; \
+		$(call run_test,handover,); \
 	fi
 
 # Mesa-based tests need scripts/build-mesa.sh to have run.

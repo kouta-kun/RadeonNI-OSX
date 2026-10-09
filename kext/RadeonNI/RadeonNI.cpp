@@ -316,6 +316,13 @@ bool RadeonNI::bringUp()
 	UInt32 i;
 	int r;
 
+	r = rdn_handover_take(&fCard);
+	if (r > 0)
+		IOLog("RadeonNI: the card was POSTed and a mode set by the Open Firmware client; "
+		      "no POST here\n");
+	else if (r < 0)
+		IOLog("RadeonNI: the Open Firmware client's marker is there but the card does not look "
+		      "running; going on as without it\n");
 	r = rdn_card_post(&fCard);
 	if (r) {
 		IOLog("RadeonNI: POST failed (%d)\n", r);

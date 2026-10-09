@@ -557,6 +557,12 @@ int of_main(void)
 	status("after modeset");
 	delay_us(0, 200000);
 	status("200 ms later");
+#ifndef FB8
+	if (!r) {
+		rdn_handover_mark(&card);
+		puts_crlf("rdn: hand-over marker set");
+	}
+#endif
 out:
 	return r;
 }

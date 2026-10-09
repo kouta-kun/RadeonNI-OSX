@@ -261,3 +261,25 @@ int rdn_card_post(struct rdn_card *card)
 	}
 	return 0;
 }
+
+/* SCRATCH_REG7: the command processor code only uses registers 0 to 2. */
+#define RDN_HANDOVER_REG	0x851c
+#define RDN_HANDOVER_MAGIC	0x4f46524eu	/* "OFRN" */
+
+void rdn_handover_mark(struct rdn_card *card)
+{
+	rdn_wreg(card, RDN_HANDOVER_REG, RDN_HANDOVER_MAGIC);
+}
+
+int rdn_handover_take(struct rdn_card *card)
+{
+	int ok;
+
+	if (rdn_rreg(card, RDN_HANDOVER_REG) != RDN_HANDOVER_MAGIC)
+		return 0;
+	rdn_wreg(card, RDN_HANDOVER_REG, 0);
+	ok = rdn_rreg(card, CONFIG_MEMSIZE) != 0 &&
+	     (rdn_rreg(card, EVERGREEN_CRTC_CONTROL) & EVERGREEN_CRTC_MASTER_EN) &&
+	     rdn_rreg(card, EVERGREEN_GRPH_ENABLE) == 1;
+	return ok ? 1 : -1;
+}
