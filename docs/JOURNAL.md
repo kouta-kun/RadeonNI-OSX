@@ -5304,3 +5304,11 @@ Outline for the next sessions written: `docs/OPEN-FIRMWARE-PLAN.md` (questions f
 the user, step 0 in Tiger with `ioreg -p IODeviceTree`, Open Firmware over
 telnet, M0/M1 register reads, then the client program, the display node, the
 hand-over, the rules).
+
+`docs/OPEN-FIRMWARE-PLAN.md` rewritten as an unattended runbook (user's request:
+the work should run while they sleep): one up-front approval, a host-side
+orchestrator (`scripts/of-run.py`, not written yet), an Open Firmware console
+over telnet driven from the host, a one-shot `boot-command` that restores
+itself first, timeouts everywhere, the card reset before Tiger boots, a gated
+hand-over, a parked final state. Limits stated in it: the monitor can only be
+seen by the user (readback until then), and a hard hang needs a power cycle.
