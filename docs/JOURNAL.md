@@ -5480,3 +5480,34 @@ Quartz Extreme in use (so the kext change itself is harmless).
   be read from Tiger after a power cycle: the card is cold after one, so use
   `nvram`), then retry attempt 2; compare with a control that runs the client
   from a telnet console and ends with `reset-all` (known good) vs `mac-boot`.
+
+## 2026-10-09 (later): hand-over (M4) still stuck; bisecting the boot
+
+Everything below is with a person watching the monitor and no console (a
+one-shot `boot-command`: restore itself, `dev / load hd:3,\Users\tiger\of\X.elf
+go mac-boot`; each failure needed one power cycle, `boot-command` was always
+restored by its own first words).
+- `rdns.elf` (silent client: POST, mode set, marker, no console writes, no
+  NVRAM breadcrumbs; links at 0x5000000): colour bars seen for a moment, then
+  no signal, Tiger never started (no kernel log at all for that boot).
+- `load` only (no `go`) then `mac-boot`: Tiger never started. A null client
+  (`rdnn.elf`: claims the heap, gives it back, returns, touches no hardware)
+  then `mac-boot`: Tiger never started either. So the card's state is not what
+  breaks the boot; anything loaded before `mac-boot` does.
+- Hypothesis tested last (not confirmed): the loader's file buffer at
+  `load-base` 0x800000 stays claimed after `load` (visible as a hole in
+  `/memory`'s `available` list, also after the image itself is released) and
+  `mac-boot` loads BootX there. The client now releases that gap, the image's
+  gap and its heap by reading `available` (never release memory that is free:
+  it corrupts the free list; `reset-all` clears that). With that fix `rdns.elf`
+  from `boot-command` still gave no display and no Tiger.
+- From the telnet console the same sequence (load, go, then `mac-boot`) hung
+  the same way (colour bars stay).
+- Still unknown. Ideas, cheapest first: (1) after the console run, check with
+  `available` what remains claimed before `mac-boot`; (2) set `load-base` to
+  another address for the client's load; (3) skip `mac-boot` and use
+  `boot hd:3,\\:tbxi` or reboot via `reset-all` with a different way of keeping
+  the card (not possible: it resets the bus); (4) look at what BootX needs
+  (`/chosen`, `memory-map`), and whether leaving `/chosen/stdout` or
+  `screen` unset matters once a client has run; (5) QEMU/OpenBIOS cannot
+  reproduce Apple's BootX.
