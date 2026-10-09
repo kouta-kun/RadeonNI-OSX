@@ -1,8 +1,13 @@
 # Display modes, display power management and hot-plug
 
-Written 2026-10-08. Status: **code written and compile-checked, the library
-parts tested on the host; not yet run on the G5.** What each part is, what is
-not known about IOGraphics, and how to check it on the G5.
+Written 2026-10-08. Status: **the mode list works on the G5 (54 modes; Quake 3
+and Doom 3 start from scratch). Hot-plug works on the DVI-I connector (user
+unplugged and replugged the cable: "the monitor was unplugged", "the monitor is
+back", 1920x1080 set again, desktop back; seen by the user and a grab).
+Display sleep is untested: the idle timer never reached the kext (see section
+2). Not tried: DisplayPort and moving the cable to the other connector, system
+sleep.** What each part is, what is not known about IOGraphics, and how to
+check it on the G5.
 
 ## 1. The mode list (`hw/rdn_mode.c`, `hw/rdn_dmt.c`)
 
@@ -74,8 +79,16 @@ first display sleep and fix the mapping if it is wrong.
 
 Boot argument `rdn_dpms=0` ignores all of it (the old behaviour).
 
+**2026-10-08, G5:** `pmset -a displaysleep 1` and 3 minutes idle: no sleep and
+no request in the log. Tiger's `pmset` has no `displaysleepnow`, and writing a
+property to `IODisplayWrangler` (I tried `IORequestIdle`) panics Tiger, whose
+`setProperties` dereferences NULL for any dictionary without its first key
+(journal). Do not write to the wrangler. Ways left: Energy Saver in System
+Preferences, a hot corner set to "Put Display to Sleep" in Exposé, system
+sleep.
+
 **Check on the G5:** System Preferences > Energy Saver, display sleep after 1
-minute (or `pmset displaysleepnow` over ssh): the monitor must go to standby,
+minute (`pmset displaysleepnow` does not exist on Tiger): the monitor must go to standby,
 and wake on a key or the mouse with the same picture; `dmesg | grep RadeonNI`
 shows "output off: 0" and "output back on: 0". Also: a system sleep and wake
 (`pmset sleepnow`) with the monitor attached.

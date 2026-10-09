@@ -209,8 +209,10 @@ been planned in detail.
 - Modes (2026-10-08, `docs/HOTPLUG.md`): the kext builds the mode list from the
   EDID (54 modes at three depths on the Mi Monitor, 640x480 to 1920x1080);
   Doom 3 starts in 800x600 and enters a map, and a 640x480/800x600/1024x768
-  desktop is clean once the device re-reads the screen's pitch. Display sleep
-  and hot-plug code is in the kext, not yet tried. `cgmode set ... seconds`
+  desktop is clean once the device re-reads the screen's pitch. Hot-plug
+  works on DVI-I (2026-10-08, seen by the user); display sleep is untried
+  (the idle timer never reaches the kext; never write properties to
+  `IODisplayWrangler`: Tiger panics, journal). `cgmode set ... seconds`
   holds a mode (it is put back when the program ends). Never `killall` a game
   on the G5: the user may be playing it.
 - Piglit (2026-10-08, `docs/PIGLIT.md`): 4,869 of 4,963 GL 2.1 tests pass

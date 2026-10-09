@@ -5229,3 +5229,13 @@ something to write to again. The tool is deleted. Display sleep
 remains untested: the idle timer did not reach the kext at all, so whether
 Tiger sends a power request to our framebuffer on this display is still open.
 Left as before: `displaysleep 0`.
+
+### Hot-plug on the G5 (DVI-I)
+
+The user unplugged the DVI cable and plugged it back in. Kernel log:
+18:48:29 "DVI-I: the monitor was unplugged" (the polling saw the line low and
+held for its second), 18:49:35 "the monitor is back", then the same mode set as
+at start (1920x1080, 148500 kHz, `mode 18 depth 2`). A grab shows the desktop
+in its place; `cgmode list` still has the 54 modes. The user saw the picture
+return "at apparently 1080p". Not tried: DisplayPort, the other connector,
+a different monitor, unplugging while a game runs.
