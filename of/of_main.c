@@ -434,6 +434,15 @@ void of_exit(void)
 {
 	uint32_t out[1];
 
+#ifdef CHAIN_BOOT
+	{			/* in a boot-command line, returning aborts the line: boot from here */
+		static const char cmd[] = "mac-boot";
+		uint32_t in[1] = { (uint32_t)cmd }, o2[2];
+
+		prom("interpret", 1, 2, in, o2);
+	}
+#endif
+
 	prom("exit", 0, 0, out, out);
 }
 
