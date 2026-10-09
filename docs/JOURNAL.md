@@ -5511,3 +5511,27 @@ restored by its own first words).
   (`/chosen`, `memory-map`), and whether leaving `/chosen/stdout` or
   `screen` unset matters once a client has run; (5) QEMU/OpenBIOS cannot
   reproduce Apple's BootX.
+
+## 2026-10-09 (end): console-from-boot-command test, and a lesson about recovery
+
+- Found why every `go` aborted the command line: a client that ends with `blr`
+  returns to address 0 (`go` sets no LR) and Open Firmware prints "Decrementer
+  exception at SRR0 0" and drops the rest of the line, `mac-boot` included. Fix
+  in `of/`: leave through the client interface's `exit` service (`of_exit`,
+  called after `of_main`); mock-tested only, not yet run on the G5 (the run
+  that would have tried it never started: see below).
+- The last test (a 937 character one-shot `boot-command`: client, display
+  node, `output`, two lines of text, no `mac-boot`) left the G5 dark and off the
+  network, and **one power cycle did not recover it; two did**. So the restore
+  at the front of a one-shot line is not always committed to NVRAM before a
+  hang. Rule from now on: expect to need two power cycles after a hang; keep
+  one-shot lines short; do not store lines of several hundred characters.
+  The user's keyboard (wireless Logitech receiver) is not seen by the firmware,
+  so Cmd-Opt-P-R (Win+Alt+P+R on a PC keyboard) is not available as a fallback
+  unless a plain wired USB keyboard is plugged straight into the G5.
+- State now: Tiger up, `boot-command` `mac-boot`, kext with the hand-over check
+  installed (previous bundle `~/RadeonNI.kext.before-posted`), no marker is ever
+  set unless the client runs, so the kext behaves as before.
+- Next (not run): rerun the null client and `rdns` with the `exit` fix from a
+  short one-shot line; then the console test (put the display node Forth into a
+  file loaded with `load`, not into `boot-command`).
