@@ -638,7 +638,7 @@ int of_main(void)
 		puts_crlf("rdn: hand-over marker set");
 	}
 #endif
-#if !defined(TAIL) || TAIL == 1
+#if (!defined(TAIL) && !defined(FB8)) || (defined(TAIL) && TAIL == 1)
 	/* experiment A: leave the mode running but decode and bus master off */
 	cfg_write(CARD_BUS_ADDR | 0x04, cfg_read(CARD_BUS_ADDR | 0x04) & ~6u);
 #elif defined(TAIL) && TAIL == 2
