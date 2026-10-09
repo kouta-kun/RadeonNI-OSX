@@ -116,14 +116,55 @@ M4 one to two. Several sessions in all.
 - `docs/RESEARCH.md` section 4 (no FCode, assigned-addresses, ROM at
   0x80120000), `docs/HARDWARE.md` (the ROM image).
 
-## Findings (2026-10-09, first night of `docs/OPEN-FIRMWARE-PLAN.md`; by console transcript)
+## Findings (2026-10-09, first night of `docs/OPEN-FIRMWARE-PLAN.md`)
 
-- Open Firmware 5.2.7f1 on the G5; telnet console works on the **second**
-  Ethernet port when named by its full path (`/ht@0,f2000000/pci@2/bcom5714@4,1`),
-  not through `enet`; the console exists only while one connection stays open.
-- The card is `/ht@0,f2000000/pci@5/pci1028,2b20@0`; open the bridge
-  (`open-dev`) and call `map-in`, `config-l@`, `config-l!` on it. Memory decode
-  is **off** at the prompt (command 0x0004); with 0x0006 registers read as in
-  Tiger (0x8010 = 0x3828) and scratch writes read back (M1, by readback).
-- `load hd:3,\path` loads an ELF client; `go` passes the client interface in r5.
-- M2 is not reached: the client hangs after reading the VBIOS (journal).
+Status: **M0 to M3 done and seen by the user** (M2: eight colour bars from the
+client; M3: Open Firmware's console text and `ok` prompt on the 7570's monitor).
+M4 (hand-over to Tiger) and M5 (automatic) not done. The journal entries of
+2026-10-09 have the story; this is what is worth knowing.
+
+### Facts about the G5's Open Firmware (5.2.7f1, PowerMac11,2)
+- The telnet console works with the NIC named by its full path, on the second
+  Ethernet port here: `" /ht@0,f2000000/pci@2/bcom5714@4,1:telnet,<ip>" io`
+  after `dev /packages/telnet`. `enet:` is the first port. The console exists
+  only while one connection stays open; it dies when stdout is switched away.
+- The card is `/ht@0,f2000000/pci@5/pci1028,2b20@0` (bridge `pci@5`, bus 8).
+  BARs as in Tiger: aperture 0x90000000 (256 MB), registers 0x80140000, ROM
+  0x80120000. Memory decode is OFF at the prompt: set command bits 1 and 2
+  (`6 080004 " config-w!" bus $call-method`) before any register read.
+- Method calls: `" /ht@0,f2000000/pci@5" open-dev`, then `map-in` (stack:
+  lo mid hi size), `config-l@`, `config-l!` with `$call-method`. From a client:
+  the `call-method` service (args top of stack first).
+- Open Firmware numbers are hexadecimal everywhere (1920 is 0x780).
+- `load hd:3,\path` loads an ELF client at its link address and claims it for
+  good (a second load there fails with "CLAIM failed"); `go` passes the client
+  interface in r5 and the client must return with LR and SP restored.
+- A client that never returns (my first `start.S` looped after `of_main`) looks
+  exactly like a dead machine: no console, no ping, buffered output lost.
+- The card's own ROM was not needed: the VBIOS is embedded into the client at
+  build time (never committed). Reading the ROM BAR from Open Firmware was
+  never shown to work or to fail (a wrong suspect).
+- `fb8-install` plus `default-font set-font` give `draw-character`,
+  `erase-screen`, `line#`, `column#`, `#lines`, `#columns`; the node must define
+  `line-bytes`, `width`, `height` itself. 8 bpp only: the palette is the linear
+  ramp the mode set loads, so set `255 to foreground-color`.
+- `output` on a display node without `write` hangs Open Firmware. The terminal
+  emulator package would not open from the node (reason unknown); the node has
+  its own `write` (`of/display.fs`), no scrolling.
+- Open Firmware ignored the user's USB keyboard on the 7570's console.
+
+### The client (`of/`)
+Freestanding C: `start.S`, `link.ld` (one load address per stage), `libc.c`,
+`of_main.c` = client interface + `rdn_os` + front end, linking `hw/` unchanged.
+Stages 0 (VBIOS checksum), 1 (ATOM parser), 99 (POST, EDID, mode set), `rdn8`
+(same at 8 bpp for the text console). `make -C of` (needs `private/vbios.rom`),
+`of/mockf.c` runs it against a mock Open Firmware under `qemu-ppc`. Images hold
+the VBIOS and are never committed (`/of/build/` is ignored). Host driver:
+`scripts/of-run.py` (`serve`, `do`; always end a session with `touch
+build/of-run/q/stop`, which sends `reset-all`).
+
+### Not done / next
+Scrolling, cursor, the terminal emulator, a persistent node (re-created from the
+console each time), M4 (kext skips POST when the client left the card running),
+M5 (`boot-command`/`nvramrc`: a hang there would hang every boot until NVRAM is
+reset). Open Firmware's `screen` alias and `output-device` were never changed.
