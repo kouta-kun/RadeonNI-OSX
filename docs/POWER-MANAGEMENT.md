@@ -16,9 +16,10 @@ and the journal entries "display sleep, first try" and "System sleep".
 ## The cause (found by reading Apple's IOGraphics, checked in Tiger's binary)
 
 The sources used are Apple's, tag `IOGraphics-179`
-(`github.com/apple-oss-distributions/IOGraphics`), which is the nearest tag
-with the same wrangler properties as the G5's IOGraphicsFamily 1.4.2; the
-tags before it (123 to 128) lack them. They are APSL: read to understand, never
+(`github.com/apple-oss-distributions/IOGraphics`). Tiger 10.4.11 shipped
+IOGraphics 179.2.1 (`docs/RESEARCH.md`), so this is the same release line
+(tag 179, not 179.2.1: small differences are possible); the tags before it
+(123 to 128) lack the wrangler properties the G5's kext has. They are APSL: read to understand, never
 copied (CLAUDE.md). Files kept under `build/tmp/iog/` (git-ignored).
 
 1. `IOFramebuffer::extEntry()` is the first thing every call from user space

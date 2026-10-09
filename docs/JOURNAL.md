@@ -5289,3 +5289,13 @@ and nothing sets it again; `extEntry`, the first step of every user-space call
 into the framebuffer, sleeps uninterruptibly while it is clear. That is the
 frozen display, the window server hung in `IOFBRebuild`, the unkillable
 process and the half shutdown. Fix plan and test order in the document.
+
+## 2026-10-08: Open Firmware output for the 7570, evaluated (`docs/OPEN-FIRMWARE.md`)
+
+Research only. The card's ROM has no FCode, so Open Firmware has no display
+node for it and no boot screen. Realistic route: a native client program
+(from `hw/` with an Open Firmware OS layer) that POSTs and sets a mode, then
+creates the display node with `interpret`; FCode by hand or flashing are out.
+Development loop: Open Firmware over telnet (`/packages/telnet`) or the 6600 LE
+as the screen; milestones M0 to M5 in the document; several sessions; not
+needed for phase 1 or 2, useful for boot logo, `-v`, and kernel panic text.
