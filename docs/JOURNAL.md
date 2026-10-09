@@ -5415,3 +5415,18 @@ Notes: the VBIOS is embedded in the (git-ignored) image, not read from the ROM
 BAR (not needed, and untested: the first suspect for the "hangs" was wrong). The
 loader claims the image at its link address and does not release it, so the
 three stages link at 0x1000000, 0x2000000, 0x3000000.
+
+## 2026-10-09: M3 first try, display node (by transcript; user's look)
+
+User confirmed M2 on the monitor: eight colour bars from the Open Firmware
+client (first sight of the card driven before Tiger). M3: `rdn8.elf` (8 bpp,
+cleared) then Forth over the console: node `/rdn-display` (`device-type
+display`; values `line-bytes`, `width`, `height` must be defined by the node,
+`depth` cannot be set with `to`; `frame-buffer-adr` can), an `open` that sets
+the font and calls `fb8-install`; `" /rdn-display" open-dev` returns an ihandle.
+`" /rdn-display" output` makes the monitor show signal but all black, also
+after `255 to foreground-color` and `page` (the 8 bpp palette is the kext's
+linear ramp: index 15 is nearly black, 255 white). Switching stdout also cut the
+telnet console (the G5 stopped answering ping), so the run ended there; a power
+cycle is needed. Next: keep telnet as stdout, draw with `draw-character` and
+read the aperture back to see whether pixels are written at all.
