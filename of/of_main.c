@@ -425,6 +425,34 @@ static void status(const char *tag)
 	    (unsigned)rdn_rreg(&card, CRTC_STATUS_FRAME_COUNT));
 }
 
+
+#ifdef CONSOLE_NODE
+/* Forth for the display node: Open Firmware's console on this card (8 bpp).
+ * Numbers are hex: 780 = 1920, 438 = 1080. */
+static const char console_fs[] =
+	"dev / new-device \" rdn-display\" device-name \" display\" device-type "
+	"0 value line-bytes 0 value width 0 value height "
+	": open ( -- ok? ) 90000000 to frame-buffer-adr 780 to line-bytes 780 to width "
+	"438 to height default-font set-font width height width char-width / "
+	"height char-height / fb8-install 255 to foreground-color "
+	"0 to background-color true ; "
+	": close ( -- ) ; "
+	": rnl ( -- ) 0 to column# line# 1+ dup #lines >= if drop 0 to line# else to line# then ; "
+	": put1 ( c -- ) dup 0d = if drop 0 to column# else dup 0a = if drop rnl else "
+	"draw-character column# 1+ dup #columns >= if drop rnl else to column# then then then ; "
+	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
+	"finish-device device-end "
+	"\" /rdn-display\" output "
+	"\" Open Firmware console on the Radeon HD 7570\" type cr ";
+
+static void make_console(void)
+{
+	uint32_t in[1] = { (uint32_t)console_fs }, out[2];
+
+	prom("interpret", 1, 2, in, out);
+}
+#endif
+
 extern char _start[], _stack_top[];
 
 /* The client interface's exit: control goes back to whoever ran `go`. Returning
@@ -656,6 +684,10 @@ int of_main(void)
 	status("scanout off");
 #endif
 out:
+#ifdef CONSOLE_NODE
+	if (!r)
+		make_console();
+#endif
 	give_back();
 	return r;
 }
