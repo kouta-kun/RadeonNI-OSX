@@ -5397,3 +5397,21 @@ restores them. All earlier "hang" observations (stage 0 and 1 after the VBIOS
 read) are the end of a client that had in fact finished. The `.bss`/stack in
 the image and the claimed heap stay (harmless, safer). Untested on the G5 at
 the time of writing.
+
+## 2026-10-09: M2 from Open Firmware works (by readback, not yet seen)
+
+With `start.S` returning properly (previous entry) the client runs: stage 0
+(VBIOS checksum 0x51e700 equal to `private/vbios.rom`), stage 1 (ATOM parser:
+"ATOM BIOS: TURKS", card not posted: CONFIG_MEMSIZE 0), and the full client
+(`load hd:3,\Users\tiger\of\rdn.elf`, `go`): `rdn_card_post` returned 0
+(CONFIG_MEMSIZE 0x400 = 1024 MB), the EDID came over DDC on DVI-I (256 bytes,
+1920x1080 at 148500 kHz), display init 0, PLL 148.5 MHz, watermarks, modeset 0,
+CRTC0 control 0x410311 and the frame counter 2, then 0xe 200 ms later (60 Hz).
+The test pattern (hw/rdn_pattern.c) was drawn into the aperture first: the
+user should see colour bars and "1920x1080" now. At the end Open Firmware
+printed "Decrementer exception at SRR0 0" and returned to its prompt (cause not
+looked into; the client's return, or the timer).
+Notes: the VBIOS is embedded in the (git-ignored) image, not read from the ROM
+BAR (not needed, and untested: the first suspect for the "hangs" was wrong). The
+loader claims the image at its link address and does not release it, so the
+three stages link at 0x1000000, 0x2000000, 0x3000000.
