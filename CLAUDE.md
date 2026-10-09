@@ -60,10 +60,14 @@ System Preferences and a software cursor.
   the 7570's monitor (seen by the user); and a hand-over works: the client
   sets a marker and clears PCI decode and bus master as its last act, the
   kext (`rdn_handover_take`, ioreg property `HandOver` = 1) skips its POST and
-  Tiger comes up (readback and the user). Only from a telnet console session
-  driven by `scripts/of-run.py` (`serve`, `do`); a one-shot `boot-command`
-  without a console still fails. After a hang expect two power cycles; the
-  user's wireless keyboard cannot reset NVRAM. Never store long lines in
+  Tiger comes up (readback and the user). It also works as a short one-shot
+  `boot-command` with no console: `" <orig>" " boot-command" $setenv " dev /
+  load hd:3,\Users\tiger\of\rdnc.elf" evaluate go` (`load` eats the rest of
+  its line, so wrap it in `evaluate`; a client that returns or exits ends the
+  whole line, so `rdnc.elf` chains `mac-boot` itself). `scripts/of-run.py`:
+  `serve`/`do` (console session), `capture` (console inside the line, host
+  listens). Not permanent (M5 not done). After a hang expect two power cycles;
+  the user's wireless keyboard cannot reset NVRAM. Never store long lines in
   `boot-command`.
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).

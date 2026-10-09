@@ -5605,3 +5605,29 @@ telnet session from the host at every boot (`scripts/of-run.py serve` already
 does the whole sequence). M5 (automatic) is therefore not done and not needed
 for the Open Firmware text on the 7570, which exists only in a console
 session after the node is created.
+
+## 2026-10-09: the one-shot line works without a console (M4 from `boot-command`)
+
+The reason every earlier one-shot line failed, found by putting the telnet
+console inside the line and letting the host only listen (`of-run.py capture`):
+1. **`load` takes the rest of the input line as its argument string**, so
+   `load X go mac-boot` never ran `go` or `mac-boot` ("Fell through" to the
+   prompt). Interactively every command has its own line, which hid it. Wrap it:
+   `" dev / load hd:3,\path" evaluate`.
+2. **A client that returns, or calls `exit`, ends the whole command line**
+   ("CI EXIT called", then Open Firmware restarts its banner and prompt). So
+   `mac-boot` after `go` never ran either. The client's last act is now
+   `interpret` of `mac-boot` (`-DCHAIN_BOOT`, `of/build/rdnc.elf`), after it
+   has released its heap and the `load-base` gap and cleared decode and bus
+   master.
+Result: `" <orig>" " boot-command" $setenv " dev / load hd:3,\Users\tiger\of\rdnc.elf"
+evaluate go` (91 characters), then `reboot`: the card is POSTed and set to
+1920x1080 by the client, Tiger boots, `ioreg` shows `HandOver` = 1 and
+`PCICommandAtStart` = 2, Quartz Extreme in use, `boot-command` restored by its
+own first words. By readback; the user watched the boot earlier in the telnet
+form (bars, flicker, bars, Tiger).
+Still open: making it permanent (M5) means a `boot-command` that does not
+restore itself; a hang would then repeat on every boot and needs two power
+cycles plus a wired keyboard for an NVRAM reset: only with the user's yes.
+Open Firmware text through Tiger's boot (the display node surviving `mac-boot`)
+is a different, untried step.
