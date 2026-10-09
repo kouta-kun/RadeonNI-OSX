@@ -5205,3 +5205,27 @@ User's check: with `r_smp "0"` in the config (the old one is
 hang needs the render thread agrees with the reading above; it does not show
 the old thread is no slower with our driver than with Apple's. To tell: run
 the same map end with `r_smp 1` on the GeForce 6600 LE.
+
+## 2026-10-08: display sleep, first try: kernel panic from my own test tool
+
+`pmset -a displaysleep 1` and then 3 minutes of idleness (HIDIdleTime 198 s):
+the display did not sleep and the kext logged no power request (not even an
+attempt; `pmset displaysleepnow` does not exist on Tiger). So I wrote a tool
+that sets `IORequestIdle` on `IODisplayWrangler` (what the hot corner does on
+later systems, remembered, never checked on Tiger) and ran it: **kernel
+panic** (the user restarted the G5; `/Library/Logs/panic.log`):
+`0x300 - Data access DAR=0 PC=0x68419320` in `com.apple.iokit.IOGraphicsFamily`
+(1.4.2), user thread in `mach_msg_trap`, our kext not in the backtrace.
+The load address minus a header offset of 0x1000 puts PC in
+`IODisplayWrangler::setProperties` at 0x8320: that function casts its argument
+to an `OSDictionary`, looks up one key, casts the result to a dictionary into
+the same register, and when the key is missing branches to code that calls a
+method through that register, now NULL. So any property write on Tiger's
+`IODisplayWrangler` without that key panics. The keys it knows (strings in the
+kext) are `DEBUG`, `COMPRESS_TIME`, `AnnoyancePenalties`, `AnnoyanceCaps`,
+`IdleTimeoutMin`, `IdleTimeoutMax`, `AdaptiveDimming`, `DisplayDims`. There is
+no `IORequestIdle`. Not a fault of the kext, and the display wrangler is not
+something to write to again. The tool is deleted. Display sleep
+remains untested: the idle timer did not reach the kext at all, so whether
+Tiger sends a power request to our framebuffer on this display is still open.
+Left as before: `displaysleep 0`.
