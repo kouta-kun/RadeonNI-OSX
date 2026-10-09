@@ -5706,3 +5706,28 @@ markers) patches (a) `quit` to start the console client (8 bpp, display node,
 files on the boot volume found with `hd:,`. A key held while the client starts
 could choose between them (user's request). Cleanup: oem-banner empty,
 nvramrc empty.
+
+## 2026-10-09: the console on the 7570 from a firmware hook, with the keyboard (M3 at boot)
+
+`scripts/of-hook.py` builds the nvramrc text that patches, in RAM, `quit` (first
+prompt entry: run the console client `rdnk.elf`) and `mac-boot` (a key pressed:
+console client; else the hand-over client `rdnc.elf`), after checking the two
+body cells hold the 5.2.7f1 values. Tested one-shot (the text clears itself):
+- Test 1 (no key): the `mac-boot` hook ran `rdnc.elf`, Tiger booted, `HandOver`
+  = 1, Quartz Extreme (by readback).
+- Test 2 (console forced): the user saw Open Firmware's banner and `ok` prompt
+  on the 7570's monitor. Typing did nothing at first.
+- Not hot-plug: the keyboard was connected before boot in the second attempt and
+  Tiger lists it. Open Firmware does see it (`/ht/pci@8/@b/device@1/keyboard@0`,
+  `/pseudo-hid/keyboard`) and reading `" keyboard" open-dev` + `read` returns the
+  keys (verified over the telnet console while the user typed). So the prompt
+  was reading another stdin. Fix: the console client also runs `" keyboard"
+  input` after `output` (and its `write` now swallows ANSI escape sequences:
+  the `[4C` `[K` the user saw were Open Firmware's prompt redraw codes).
+  Result: typing works (user: "keyboard input is responding correctly").
+- `reset-all` at that prompt is the way back to Tiger without a power cycle;
+  `mac-boot` typed there is NOT safe (decode on, display as console: the
+  combination that hung Tiger's boot).
+Next: the held-key check polls the keyboard device (as the test did); then the
+real tests (no key -> Tiger, key held -> console, Cmd-Opt-O-F -> `quit` hook),
+then a permanent install with markers and a kext check.
