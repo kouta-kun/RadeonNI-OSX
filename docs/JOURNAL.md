@@ -5535,3 +5535,36 @@ restored by its own first words).
 - Next (not run): rerun the null client and `rdns` with the `exit` fix from a
   short one-shot line; then the console test (put the display node Forth into a
   file loaded with `load`, not into `boot-command`).
+
+## 2026-10-09 (late morning): what the hand-over boot needs, and what still hangs
+
+Found by running the client from the telnet console and reading what Open
+Firmware said (the screen shows nothing useful when the card is the problem):
+- `go` of a client that ends with `blr` jumps to address 0 ("Decrementer
+  exception at SRR0 0") and aborts the command line, so a `mac-boot` after it
+  never ran. A client must leave through the client interface's `exit`
+  service (`of_exit()`), done.
+- A client that released its own image faulted ("Invalid memory access at SRR0
+  0x06000238"): Open Firmware unmaps released memory. The client now releases
+  only the heap and the `load-base` gap (exact gap from `/memory` `available`,
+  never memory that is free: that corrupts the free list); the image stays
+  claimed, which does not matter.
+- With those two fixed, a client that does not touch the card (`rdnn.elf`)
+  followed by `mac-boot` boots Tiger (8:40, kernel log intact, Quartz Extreme
+  in use): **loading and running a client before `mac-boot` is fine.**
+- The full client (POST, 1920x1080 colour bars, marker set, no reset) followed
+  by `mac-boot`: the monitor stays on the colour bars, Tiger never answers ssh.
+  Also with the kext moved out of `/System/Library/Extensions` (restored since;
+  `~/RadeonNI.kext.installed` is a copy), so **the hang is not in the kext**.
+  It is in OF/BootX/the kernel's early start with the card left running (or in
+  something the client does besides the mode set).
+- Open: what exactly Tiger trips over. Candidates: the card is left with
+  memory decode and bus mastering on, a CRTC scanning, a non-zero
+  `CONFIG_MEMSIZE`; Tiger's PCI/device-tree setup (the device's `assigned-
+  addresses`), or `AAPL,` properties the kernel expects; the PCIe link or
+  error state. Next experiments, cheapest first: end the client with the
+  card's decode and bus master off (`command` 0) but the mode left running; or
+  stop the CRTC at the end; or leave the POST done but blank the display
+  (so the hang is on the scanout or on the POST). Each is one `boot-command`
+  run and about two power cycles.
+- Reminder: after a hang the one-shot line may need two power cycles.
