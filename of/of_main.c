@@ -425,6 +425,54 @@ static void status(const char *tag)
 	    (unsigned)rdn_rreg(&card, CRTC_STATUS_FRAME_COUNT));
 }
 
+extern char _start[], _stack_top[];
+
+/*
+ * Give back what Open Firmware claimed for us: the loader claims the image and
+ * never releases it, and BootX needs its own ranges for the kernel. How much
+ * the loader claims is not the segment's size, and releasing memory that is
+ * already free corrupts the free list, so the gap in /memory's "available"
+ * list that holds an address is what gets released.
+ */
+static void release_gap(uint32_t a)
+{
+	uint32_t av[64], in[2], out[1], mem = of_finddevice("/memory");
+	int n, i;
+	uint32_t lo = 0, hi = 0;
+
+	if (mem == (uint32_t)-1)
+		return;
+	n = of_getprop(mem, "available", av, sizeof(av));
+	if (n < 8)
+		return;
+	n /= 8;
+	for (i = 0; i < n; i++) {		/* the free ranges, ascending */
+		uint32_t s = av[2 * i], e = av[2 * i] + av[2 * i + 1];
+
+		if (s <= a && a < e)
+			return;			/* already free */
+		if (e <= a && e > lo)
+			lo = e;
+		if (s > a && (!hi || s < hi))
+			hi = s;
+	}
+	if (!hi || hi <= lo || a < lo || a >= hi)
+		return;
+	in[0] = lo;
+	in[1] = hi - lo;
+	prom("release", 2, 0, in, out);
+}
+
+static void give_back(void)
+{
+	release_gap((uint32_t)_start);
+	if (heap) {			/* our own claim, of known size */
+		uint32_t in[2] = { (uint32_t)heap, HEAP_BYTES }, out[1];
+
+		prom("release", 2, 0, in, out);
+	}
+}
+
 int of_main(void)
 {
 	static struct rdn_os os;
@@ -570,5 +618,6 @@ int of_main(void)
 	}
 #endif
 out:
+	give_back();
 	return r;
 }
