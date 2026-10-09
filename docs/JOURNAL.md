@@ -5874,3 +5874,28 @@ State after many runs (user at the keyboard):
   `ready` newer than the start of `serve`.
 Next: the keyboard run with the colour table loaded and the kext aside; the panic
 text, if that is what the gray box is, should become readable.
+
+## 2026-10-09: booting Tiger from the Open Firmware console works (kext aside) - the panic was ours
+
+With `boot-args` -v the kernel showed its panic on the monitor: `XCP 0x300` (data
+access), `DAR 0`, PC inside `IONDRVSupport`. Apple's IOGraphics-179 source
+(`third_party/iographics-src/`, fetched from github.com/apple-oss-distributions)
+explains it: `IONDRVFramebuffer::start()` on a display node with no device memory
+takes `nub->getParentEntry(gIODTPlane)->getDeviceMemory()` and calls `retain()` on
+the result; our console node was a child of the **root** of the device tree, which
+has no device memory, so it is NULL. Real cards are the display node themselves
+(NVIDIA's FCode defines the methods on the card's own node) or sit under it.
+Fix: the console's properties and methods are now defined on the card's own node
+(`/ht@0,f2000000/pci@5/pci1028,2b20@0`, `device_type display`), `screen` aliased
+to it, no `new-device`. With that, from the console, `mac-boot`: Apple's logo (right
+colours since the colour table is loaded into the card), verbose kernel text, and
+**the desktop** (user: "a very strange black and white dithered desktop"; with the
+kext aside Tiger uses Apple's generic `.Display_boot` IONDRVFramebuffer in 8 bpp,
+1920x1080; WindowServer running; ssh up). Quartz Extreme not in use.
+Other findings on the way: the generic boot framebuffer (IOBootNDRV) is built from
+the node's `address`, `linebytes`, `width`, `height`, `depth` (and `display-type`
+"NONE" disables it); the kernel's early spinner is drawn with the boot-video
+geometry (8 bpp, 1920 bytes per row) even after our kext has switched the card to
+32 bpp, so it appears 4x small on top of the colour bars (cosmetic).
+Next: put the RadeonNI kext back and boot the same way; expect the kext to take
+the screen from the generic driver.
