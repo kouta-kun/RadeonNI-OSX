@@ -38,12 +38,12 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
     if oneshot:
         parts.append('" false" " use-nvramrc?" $setenv " " " nvramrc" $setenv ')
     parts += [
-        '0 value rdn-q? 0 value rdn-b? ',
+        '0 value rdn-q? 0 value rdn-b? 0 value rdn-con? ',
         ': rdn-con ( -- ) " dev / load hd:,%s\\rdnk.elf" evaluate go ; ' % dir,
         ': rdn-ho ( -- ) " dev / load hd:,%s\\rdnc.elf" evaluate go ; ' % dir,
         key,
         ': rdn-q ( -- ) rdn-q? 0= if true to rdn-q? rdn-con then ff86f0a0 execute ; ',
-        ': rdn-b ( -- ) rdn-b? 0= if true to rdn-b? rdn-key? if true to rdn-q? rdn-con '
+        ': rdn-b ( -- ) rdn-con? if " rdn-boot" evaluate exit then rdn-b? 0= if true to rdn-b? rdn-key? if true to rdn-q? rdn-con '
         'else rdn-ho then then ff975d80 execute ; ',
         ': rdn-patch ( -- ) ff852d00 l@ ff975d80 = ff852960 l@ ff86f0a0 = and if '
         '" rdn-q" $find drop ff852960 l! " rdn-b" $find drop ff852d00 l! then ; ',

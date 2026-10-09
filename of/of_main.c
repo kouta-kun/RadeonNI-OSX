@@ -448,8 +448,14 @@ static const char console_fs[] =
 	"draw-character column# 1+ dup #columns >= if drop rnl else to column# then ; "
 	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
 	"finish-device device-end "
-	"\" /rdn-display\" output \" keyboard\" input "
-	"\" Open Firmware console on the Radeon HD 7570\" type cr ";
+	": rdn-away ( -- ) \" /ipc\" output ; "
+	"0 value rdn-bus "
+	": rdn-boot ( -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
+	"4f46524e lbflip 80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method 851c + l! "
+	"0 80004 \" config-w!\" rdn-bus $call-method "
+	"' rdn-away catch drop ff975d80 execute ; "
+	"\" /rdn-display\" output \" keyboard\" input true to rdn-con? "
+	"\" Open Firmware console on the Radeon HD 7570. Type mac-boot to start Tiger.\" type cr ";
 
 static void make_console(void)
 {
