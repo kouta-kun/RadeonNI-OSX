@@ -464,11 +464,24 @@ static const char console_fs[] =
 	"\" /rdn-display\" output \" keyboard\" input "
 	"\" Open Firmware console on the Radeon HD 7570. \" type cr ";
 
+static void cmark(unsigned x, unsigned y)
+{
+	unsigned r, c;
+
+	for (r = 0; r < 20; r++)
+		for (c = 0; c < 30; c++)
+			aper[(y + r) * 1920u + x + c] = 0xff;
+}
+
 static void make_console(void)
 {
 	uint32_t in[1] = { (uint32_t)console_fs }, out[2];
 
+	cmark(40, 350);			/* reached the interpret call */
 	prom("interpret", 1, 2, in, out);
+	cmark(80, 350);			/* the call returned */
+	if (out[0] == 0)
+		cmark(120, 350);	/* ... and reported no error */
 }
 #endif
 
