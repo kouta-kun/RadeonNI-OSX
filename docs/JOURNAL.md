@@ -5199,3 +5199,9 @@ condition the old one is still using. Whether the old thread ends in time is
 luck; here it did not and the condition variable is stuck. Not verified that
 a real Apple driver never loses this race, nor how often it happens with ours.
 `r_smp 0` (the user's first config had it) does not start a render thread.
+
+User's check: with `r_smp "0"` in the config (the old one is
+`q3config.cfg.before-smp0`) the end of a map goes back to the menu. That the
+hang needs the render thread agrees with the reading above; it does not show
+the old thread is no slower with our driver than with Apple's. To tell: run
+the same map end with `r_smp 1` on the GeForce 6600 LE.
