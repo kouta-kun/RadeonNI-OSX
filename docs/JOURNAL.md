@@ -5655,3 +5655,23 @@ Options this leaves: (1) `boot-command` made permanent with the working line
 client when typed at the prompt); (2) `nvramrc` redefining `mac-boot` so our
 code runs first and then calls the original; (3) the on-disk `:tbxi` loader.
 None done. Cleanup: `nvramrc` empty, `use-nvramrc?` false, `oem-banner` empty.
+
+## 2026-10-09: the disk cannot be reached from nvramrc, polling or not
+
+Further throwaway one-shot nvramrc lines (self-clearing, breadcrumbs in
+`oem-banner`):
+- Polling `<disk>:3` `open-dev` every 0.5 s for 32 s: never opened (result -1).
+- Which opens work at nvramrc time: bit mask 0x20, i.e. only the SATA controller
+  node `/ht@0,f2000000/pci@9/k2-sata-root@c/k2-sata@0`; not `disk@0`, not
+  `disk@0:3`, not `:,`, not `hd:3`, not `hd:,`.
+- Calling the controller's `openwait` first (the controller node also has
+  `sata-device-available?`, `reset-phy`, `reset-drive`, `ata-quiesce`): the disk
+  stays closed.
+Conclusion: from nvramrc the boot disk is out of reach and Open Firmware is
+single-threaded, so waiting cannot help; the client (430 KB) cannot live in the
+8 KB NVRAM, and the network was not up either (the telnet console failed).
+Open Firmware on the 7570 at Cmd-Opt-O-F without typing is therefore not
+possible with these means. What stays: the host-driven console (works), the
+one-shot hand-over line (works), and optionally an nvramrc word typed blind at
+the prompt (not built). Cleanup done: nvramrc empty, use-nvramrc? false,
+oem-banner empty.
