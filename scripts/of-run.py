@@ -204,6 +204,40 @@ def serve(ip):
     return 0
 
 
+def capture(ip, steps, secs=150):
+    """One-shot boot-command that opens the telnet console first and then runs
+    `steps` (Forth, short); the host only listens.  Prints what Open Firmware
+    says."""
+    orig = save_original()
+    forth = ('" %s" " boot-command" $setenv dev /packages/telnet '
+             '" %s:telnet,%s" io %s' % (orig, NIC, ip, steps))
+    print("boot-command (%d chars): %s" % (len(forth), forth), file=sys.stderr)
+    ok, o = set_boot_command(forth)
+    if not ok or boot_command() != forth:
+        raise SystemExit("could not set boot-command")
+    g5("sudo", "reboot", timeout=30)
+    wait_down()
+    try:
+        c = OFConsole(ip, 150)
+    except TimeoutError as e:
+        print("FAIL:", e)
+        return 2
+    out = b""
+    end = time.time() + secs
+    while time.time() < end:
+        d = c._read(2)
+        if d:
+            out += d
+        else:
+            try:
+                c.s.send(b"")
+            except OSError:
+                break
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]|\[\d*[CK]", "", out.decode("latin-1"))
+    print(text)
+    return 0
+
+
 def do(text, timeout=300):
     q = os.path.join(OUT, "q")
     n = "%d" % int(time.time() * 1000)
@@ -226,6 +260,8 @@ if __name__ == "__main__":
         print(restore())
     elif a[0] == "serve":
         sys.exit(serve(a[1] if len(a) > 1 else OF_IP))
+    elif a[0] == "capture":
+        sys.exit(capture(OF_IP, " ".join(a[1:])))
     elif a[0] == "do":
         print(do(" ".join(a[1:]) if len(a) > 1 else sys.stdin.read()))
     elif a[0] == "console":
