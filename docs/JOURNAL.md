@@ -5430,3 +5430,27 @@ linear ramp: index 15 is nearly black, 255 white). Switching stdout also cut the
 telnet console (the G5 stopped answering ping), so the run ended there; a power
 cycle is needed. Next: keep telnet as stdout, draw with `draw-character` and
 read the aperture back to see whether pixels are written at all.
+
+## 2026-10-09: M3, Open Firmware's console on the 7570 (seen by the user)
+
+The user saw, on the monitor attached to the 7570: Open Firmware's own console
+output (a line printed with `." ..."` after `" /rdn-display" output`, a second
+line, the `ok` prompt) from a node I created by hand (`of/display.fs`). The way
+there, mostly negative:
+- Open Firmware numbers are HEX. `1920 to line-bytes` was 0x1920: the font
+  code's stride was 6432, so one glyph showed as scattered dots. Use 780/438.
+- `draw-character` (from `fb8-install`) worked with the white foreground set
+  (the 8 bpp palette is a linear ramp: index 15 is nearly black; `255 to
+  foreground-color`). It does not advance the cursor; `line#`, `column#`,
+  `#lines`, `#columns` are the package's values.
+- `output` on a node without `write` hangs Open Firmware (no network, no
+  screen). `/packages/terminal-emulator`'s `open-package` returned 0 from the
+  node's `open` (reason not found); instead the node has its own small `write`
+  (CR, LF, wrap, no scrolling) over `draw-character`.
+- Switching stdout drops the telnet console (its NIC stops answering); my
+  attempt to switch back put the next line on the monitor instead.
+- Numbers pushed by mistake (`0d 0a " write" ...`) were read as an address
+  and length: a harmless read of low memory, drawn as garbage.
+Not done: scrolling, a cursor, colours beyond white on black, making the node
+persistent across Open Firmware's own restart, `boot-command` with the client,
+hand-over to Tiger (M4), and the second node setting `screen` / `output-device`.

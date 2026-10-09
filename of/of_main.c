@@ -531,7 +531,20 @@ int of_main(void)
 	fb.height = mode.vdisplay;
 	fb.pitch_pixels = (mode.hdisplay + 63u) & ~63u;
 	fb.big_endian_pixels = RDN_BIG_ENDIAN;
+#ifdef FB8
+	fb.bpp = 8;			/* Open Firmware's text words are 8 bit */
+	{
+		volatile uint32_t *p = (volatile uint32_t *)aper;
+		size_t w, nw = (size_t)fb.pitch_pixels * fb.height / 4;
+
+		for (w = 0; w < nw; w++)
+			p[w] = 0;		/* index 0: black in the linear ramp */
+	}
+	say("rdn: fb8 at %x, %u x %u, linebytes %u", APER_PHYS, fb.width, fb.height,
+	    fb.pitch_pixels);
+#else
 	rdn_pattern_draw((volatile uint32_t *)aper, fb.width, fb.height, fb.pitch_pixels);
+#endif
 	crumb("display-init");
 	r = rdn_display_init(&card);
 	say("rdn: display init %d", r);
