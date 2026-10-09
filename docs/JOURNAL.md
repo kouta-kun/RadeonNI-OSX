@@ -5784,3 +5784,31 @@ expected to work if Open Firmware also closes the console before BootX; to be
 tested with the user.
 Practical rule from this: never close the console node while it is in use
 without re-opening it (decode would be off).
+
+## 2026-10-09: the console node's open/close pair, and booting from the console (not solved)
+
+Findings (user at the keyboard, readings from the screen; NVRAM breadcrumbs written
+right before a hang do not survive the power cycle, Open Firmware flushes its
+variables lazily):
+- `devalias` takes the rest of its input line (like `load`): inside a one-line
+  Forth text it swallowed the `output` command that followed, so the console was
+  never switched and the screen stayed black. Wrapped in `evaluate` it works
+  (console on the monitor, keyboard working, node blocks visible).
+- Event blocks drawn into the framebuffer (visible on the frozen screen) are a
+  reliable log that survives a freeze: rows at ~32% (client: before interpret, after
+  interpret, no error), ~37% (node opens), ~41% (closes), ~46% (last close).
+- By hand: closing the node leaves PCI command 4 (memory decode off, bus master
+  on), reopening restores 6; `install-console` re-opens the console from the
+  `screen` alias and brings the keyboard up. So the node's open/close pair
+  works as NVIDIA's does.
+- Typing `mac-boot` at the console prompt (decode on, display as console) still
+  does not boot Tiger: the screen flickers to "a rainbow" (the kext's pattern,
+  so the kernel got as far as the kext, unlike the older hangs at the colour
+  bars) and then stays stuck; one power cycle recovers. Not known whether `close`
+  ran before the freeze (no blocks were reported after `mac-boot`, and the
+  marker is only set in the last close).
+- What works and is the recommended way out of the console: `reset-all`, which
+  restarts and takes the normal hand-over path to Tiger.
+Open: what exactly freezes after the kext starts when Tiger is booted from the
+console (BootX writing to the display with decode off? the kext meeting a card in
+8 bpp mode without the marker?). Nothing in the permanent install depends on it.
