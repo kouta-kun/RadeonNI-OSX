@@ -478,7 +478,8 @@ static void give_back(void)
 	/* the buffer the loader read this file into (load-base) stays claimed, and
 	 * mac-boot loads BootX into the same address */
 	release_gap(0x800000);
-	release_gap((uint32_t)_start);
+	/* not our own image: code that runs from released memory faults; the
+	 * image is released from Forth after `go` */
 	if (heap) {			/* our own claim, of known size */
 		uint32_t in[2] = { (uint32_t)heap, HEAP_BYTES }, out[1];
 
