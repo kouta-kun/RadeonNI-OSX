@@ -455,11 +455,19 @@ static const char *const console_chunks[] = {
 	": read-rectangle ( adr x y w h -- ) to rdn-rh to rdn-rw to rdn-ry to rdn-rx to rdn-ra "
 	"rdn-rh 0 ?do frame-buffer-adr rdn-ry i + line-bytes * + rdn-rx + rdn-ra i rdn-rw * + rdn-rw move loop ; "
 	"dev / ",
-	/* 2: colours (software palette) */
+	/* 2: colours: a software copy and the card's colour table (Apple's boot code loads its palette here) */
 	"dev /rdn-display "
-	": color! ( r g b n -- ) 3 * rdn-pal + >r r@ 2+ c! r@ 1+ c! r> c! ; "
+	": rdn-w ( val reg base -- ) + swap lbflip swap l! ; "
+	": rdn-lut ( adr start cnt -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
+	"80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method >r "
+	"0 69e0 r@ rdn-w 7 69f8 r@ rdn-w over 69e4 r@ rdn-w nip "
+	"0 ?do dup i 3 * + dup c@ 16 lshift over 1+ c@ c lshift or swap 2+ c@ 2 lshift or "
+	"69f0 r@ rdn-w loop drop r> drop rdn-bus close-dev ; "
+	": rdn-sw! ( r g b n -- ) 3 * rdn-pal + >r r@ 2+ c! r@ 1+ c! r> c! ; "
+	": color! ( r g b n -- ) dup >r rdn-sw! r> dup 3 * rdn-pal + swap 1 rdn-lut ; "
 	": color@ ( n -- r g b ) 3 * rdn-pal + >r r@ c@ r@ 1+ c@ r> 2+ c@ ; "
-	": set-colors ( adr n cnt -- ) 3 * >r 3 * rdn-pal + r> move ; "
+	": set-colors ( adr n cnt -- ) to rdn-rh to rdn-rx to rdn-ra "
+	"rdn-ra rdn-rx 3 * rdn-pal + rdn-rh 3 * move rdn-ra rdn-rx rdn-rh rdn-lut ; "
 	": get-colors ( adr n cnt -- ) 3 * >r 3 * rdn-pal + swap r> move ; "
 	"dev / ",
 	/* 3: event markers, memory decode, open */
@@ -474,7 +482,7 @@ static const char *const console_chunks[] = {
 	": open ( -- ok? ) true rdn-mem 90000000 to frame-buffer-adr 780 to line-bytes 780 to width "
 	"438 to height default-font set-font width height width char-width / "
 	"height char-height / fb8-install 255 to foreground-color "
-	"0 to background-color 100 0 do i i i i color! loop rdn-uses 1+ to rdn-uses "
+	"0 to background-color 100 0 do i i i i rdn-sw! loop rdn-uses 1+ to rdn-uses "
 	"rdn-no 1+ dup to rdn-no 28 * 190 rdn-mark true ; "
 	"dev / ",
 	/* 4: close and the text writer */
