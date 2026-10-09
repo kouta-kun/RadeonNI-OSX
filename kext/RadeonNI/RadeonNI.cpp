@@ -317,6 +317,9 @@ bool RadeonNI::bringUp()
 	int r;
 
 	r = rdn_handover_take(&fCard);
+	/* For ioreg: 1 handed over by firmware, 0 no marker, -1 marker but card not running */
+	setProperty("HandOver", (UInt64)(SInt64)r, 32);
+	setProperty("PCICommandAtStart", (UInt64)fDevice->configRead16(kIOPCIConfigCommand), 16);
 	if (r > 0)
 		IOLog("RadeonNI: the card was POSTed and a mode set by the Open Firmware client; "
 		      "no POST here\n");
