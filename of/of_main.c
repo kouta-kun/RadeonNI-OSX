@@ -431,12 +431,17 @@ static void status(const char *tag)
  * Numbers are hex: 780 = 1920, 438 = 1080. */
 static const char console_fs[] =
 	"dev / new-device \" rdn-display\" device-name \" display\" device-type "
-	"0 value line-bytes 0 value width 0 value height "
+	"0 value line-bytes 0 value width 0 value height 0 value rdn-uses "
 	": open ( -- ok? ) 90000000 to frame-buffer-adr 780 to line-bytes 780 to width "
 	"438 to height default-font set-font width height width char-width / "
 	"height char-height / fb8-install 255 to foreground-color "
-	"0 to background-color true ; "
-	": close ( -- ) ; "
+	"0 to background-color rdn-uses 1+ to rdn-uses true ; "
+	"0 value rdn-bus "
+	": rdn-last ( -- ) \" close called\" \" oem-banner\" $setenv "
+	"\" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
+	"4f46524e lbflip 80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method 851c + l! "
+	"0 80004 \" config-w!\" rdn-bus $call-method rdn-bus close-dev ; "
+	": close ( -- ) rdn-uses 1- dup to rdn-uses 0= if rdn-last then ; "
 	": rnl ( -- ) 0 to column# line# 1+ dup #lines >= if drop 0 to line# else to line# then ; "
 	"0 value esc "
 	": put1 ( c -- ) esc 1 = if 5b = if 2 to esc else 0 to esc then exit then "
@@ -448,14 +453,8 @@ static const char console_fs[] =
 	"draw-character column# 1+ dup #columns >= if drop rnl else to column# then ; "
 	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
 	"finish-device device-end "
-	": rdn-away ( -- ) \" /ipc\" output ; "
-	"0 value rdn-bus "
-	": rdn-boot ( -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
-	"4f46524e lbflip 80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method 851c + l! "
-	"0 80004 \" config-w!\" rdn-bus $call-method "
-	"' rdn-away catch drop ff975d80 execute ; "
-	"\" /rdn-display\" output \" keyboard\" input true to rdn-con? "
-	"\" Open Firmware console on the Radeon HD 7570. Type mac-boot to start Tiger.\" type cr ";
+	"\" /rdn-display\" output \" keyboard\" input "
+	"\" Open Firmware console on the Radeon HD 7570. \" type cr ";
 
 static void make_console(void)
 {
