@@ -238,6 +238,36 @@ def capture(ip, steps, secs=150):
     return 0
 
 
+def capture_nvramrc(ip, steps, secs=150):
+    """Like capture(), but the line is installed as nvramrc (use-nvramrc? true).
+    Its first words switch use-nvramrc? off and clear nvramrc, so it runs once."""
+    rc, o = g5("ssh", "nvram nvramrc use-nvramrc?")
+    print("before:", o.strip().replace("\n", " | "), file=sys.stderr)
+    forth = ('" false" " use-nvramrc?" $setenv " " " nvramrc" $setenv '
+             'dev /packages/telnet " %s:telnet,%s" io %s' % (NIC, ip, steps))
+    assert "'" not in forth
+    print("nvramrc (%d chars): %s" % (len(forth), forth), file=sys.stderr)
+    rc, o = g5("sudo", "nvram nvramrc='%s'; nvram 'use-nvramrc?'=true" % forth)
+    rc, o = g5("ssh", "nvram nvramrc use-nvramrc?")
+    if forth not in o:
+        raise SystemExit("nvramrc not stored as given:\n" + o)
+    g5("sudo", "reboot", timeout=30)
+    wait_down()
+    try:
+        c = OFConsole(ip, 150)
+    except TimeoutError as e:
+        print("FAIL:", e)
+        return 2
+    out = b""
+    end = time.time() + secs
+    while time.time() < end:
+        d = c._read(2)
+        if d:
+            out += d
+    print(re.sub(r"\x1b\[[0-9;]*[A-Za-z]|\[\d*[CK]", "", out.decode("latin-1")))
+    return 0
+
+
 def do(text, timeout=300):
     q = os.path.join(OUT, "q")
     n = "%d" % int(time.time() * 1000)
@@ -260,6 +290,8 @@ if __name__ == "__main__":
         print(restore())
     elif a[0] == "serve":
         sys.exit(serve(a[1] if len(a) > 1 else OF_IP))
+    elif a[0] == "capture-nvramrc":
+        sys.exit(capture_nvramrc(OF_IP, " ".join(a[1:])))
     elif a[0] == "capture":
         sys.exit(capture(OF_IP, " ".join(a[1:])))
     elif a[0] == "do":
