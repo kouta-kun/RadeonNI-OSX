@@ -5631,3 +5631,27 @@ restore itself; a hang would then repeat on every boot and needs two power
 cycles plus a wired keyboard for an NVRAM reset: only with the user's yes.
 Open Firmware text through Tiger's boot (the display node surviving `mac-boot`)
 is a different, untried step.
+
+## 2026-10-09: nvramrc runs before the disk is usable (tests with breadcrumbs)
+
+Throwaway nvramrc lines (first words `" false" " use-nvramrc?" $setenv " " "
+nvramrc" $setenv`, so each ran once; progress left in the spare variable
+`oem-banner` and read from Tiger afterwards, then cleared; `of-run.py
+capture-nvramrc` for the console variant):
+- The telnet console could not be opened from nvramrc (`dev /packages/telnet ...
+  io`: no connection; Tiger booted normally, nvramrc had run and cleared itself).
+- `load hd:3,\Users\tiger\of\rdnn.elf` evaluated from nvramrc did not complete
+  (breadcrumb stuck before it); the boot went on to Tiger.
+- `" <disk path>:3" open-dev` from nvramrc returned 0: **partition 3 of the SATA
+  disk does not open at nvramrc time** (the disk node itself exists:
+  `dev /ht@0,f2000000/pci@9/k2-sata-root@c/k2-sata@0/disk@0` works).
+So a hook that must read the boot volume cannot run from nvramrc itself. The
+one-shot `boot-command` form (`" dev / load hd:3,..." evaluate go`) works
+because autoboot runs after the disks are ready. Also seen: `boot-device` is
+`hd:,\\:tbxi` (no partition number; the firmware chooses), so a path built from
+it needs no partition number.
+Options this leaves: (1) `boot-command` made permanent with the working line
+(and `nvramrc` defining a word, e.g. `rdn-console`, that loads the console
+client when typed at the prompt); (2) `nvramrc` redefining `mac-boot` so our
+code runs first and then calls the original; (3) the on-disk `:tbxi` loader.
+None done. Cleanup: `nvramrc` empty, `use-nvramrc?` false, `oem-banner` empty.
