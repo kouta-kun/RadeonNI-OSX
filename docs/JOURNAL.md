@@ -5239,3 +5239,29 @@ at start (1920x1080, 148500 kHz, `mode 18 depth 2`). A grab shows the desktop
 in its place; `cgmode list` still has the 54 modes. The user saw the picture
 return "at apparently 1080p". Not tried: DisplayPort, the other connector,
 a different monitor, unplugging while a game runs.
+
+### System sleep (Apple menu > Sleep) on the G5, first try
+
+The user chose Sleep from the Apple menu (Tiger's `pmset` has neither
+`sleepnow` nor `displaysleepnow`; HOTPLUG.md said so and was wrong). The
+display froze and the Mac still answered over ssh. `system.log`:
+18:52:06 `loginwindow` set the hot keys to "all disabled" (windowserver.log),
+18:52:08 "IOI2CDevice@b0::readI2C device is offline", 18:52:10 "System Doze",
+then the ethernet (restartAdapter, link up, 1000 Mbit), FireWire bus reset and
+network reconfiguration within 10 s: the Mac went into its doze state and came
+back at once (the user's key or mouse). **The kext logged nothing during all of
+it**: no "power attribute", no "connection syncs", no output off or back on.
+Afterwards the window server was alive (`WindowServer` 0.4 % CPU) but
+`cgmode list` printed no display (and `cgmode set` said "no such display"),
+`loginwindow` had not set the hot keys back to normal, and `kextstat` still had
+the kext. `UpdateSystemActivity(UsrActivity)` (`tools/guest/useractivity.c`)
+returned 0 and changed nothing. The card's memory still held a current desktop
+(a grab shows the clock at 6:52 PM); what the monitor got was a frozen picture
+(user's words).
+
+So: with this kext Tiger's power manager puts the display side into a state it
+does not come out of, and nothing in our code is told about it. What Tiger
+expects of an `IOFramebuffer` subclass for system sleep is not known; the log
+of a working driver (the GeForce 6600 LE's) for the same Sleep has not been
+read. Open. Whether the card itself survives the doze (PCIe link, clocks,
+memory contents; the G5 may cut the slot's power) is unknown too.
