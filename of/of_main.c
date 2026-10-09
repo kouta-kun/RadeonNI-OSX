@@ -480,6 +480,7 @@ static const char *const console_chunks[] = {
 	/* 4: close and the text writer */
 	"dev /rdn-display "
 	": rdn-last ( -- ) rdn-nl 1+ dup to rdn-nl 28 * 1f4 rdn-mark "
+	"\" /rdn-display\" find-device \" rdn-hidden\" encode-string \" device_type\" property device-end "
 	"\" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
 	"4f46524e lbflip 80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method 851c + l! "
 	"rdn-bus close-dev false rdn-mem ; "
