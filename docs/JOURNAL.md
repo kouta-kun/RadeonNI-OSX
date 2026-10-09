@@ -5899,3 +5899,23 @@ geometry (8 bpp, 1920 bytes per row) even after our kext has switched the card t
 32 bpp, so it appears 4x small on top of the colour bars (cosmetic).
 Next: put the RadeonNI kext back and boot the same way; expect the kext to take
 the screen from the generic driver.
+
+## 2026-10-09: Tiger boots from the Open Firmware console with our kext (by the user and readback)
+
+With the console methods and properties on the card's own node (previous entry),
+the kext back in `/System/Library/Extensions`, and `boot-args` -v: Space held,
+`mac-boot` typed at the console prompt (keyboard): Apple's logo in the right
+colours, the verbose kernel text, then our kext's colour bars (the text is still
+drawn over them, it assumes the 8 bpp boot video) and **the desktop** (login
+window), `Quartz Extreme in use`. The kext's log for that boot: `command 0006`
+(decode and bus master were still on: Open Firmware did not call `close` on the
+console before the hand-over, so the marker was never set), "card is posted on
+entry", POST skipped, 1920x1080. So **the PCI command bits were never the cause
+of the earlier hangs; the NULL dereference in IONDRVSupport was**. Everything the
+kext needs is the card posted and the mode set, which the console client did.
+`boot-args` cleared again afterwards (it was -v for these tests only).
+What remains: confirm the no-key path and Cmd-Opt-O-F still work with the node
+now on the card; make the clients read the VBIOS from the ROM; the installer, the
+uninstaller and the kext check; the 8 bpp -> 32 bpp early spinner/text overlap
+(cosmetic); `close` is not called by `mac-boot` so the marker is not set on this
+path (harmless).
