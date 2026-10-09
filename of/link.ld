@@ -2,7 +2,7 @@ OUTPUT_FORMAT("elf32-powerpc")
 ENTRY(_start)
 SECTIONS
 {
-	. = 0x01000000;
+	. = LOADADDR;
 	.text : { *(.text.start) *(.text .text.*) }
 	.rodata : { *(.rodata .rodata.* .sdata2 .sbss2) }
 	/* .bss is part of the file image: only memory Open Firmware loaded */
