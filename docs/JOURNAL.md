@@ -5175,3 +5175,27 @@ start worked: 640x480 full screen, `r_smp 1`, and the intro video shows. The
 black intro of the earlier runs was with `r_mode -1`, 1920x1080 custom
 (and the old 3-mode kext). Why the video was black there is not known; whether
 it comes back at 1920x1080 with the full kext is untested.
+
+### Quake 3 froze at the end of the first map (r_smp 1)
+
+The user finished a deathmatch ("hit the fraglimit", "Disconnected from
+server"); Quake 3 hung. Read-only (`sample`, `gdb -batch` attach and detach):
+
+- main thread: `Com_Error` (the disconnect) → `CL_StartHunkUsers` →
+  `CL_InitRenderer` → `RE_RegisterShader` → `R_SyncRenderThread` →
+  `GLimp_FrontEndSleep` (`macosx_glsmp_mutex.m:104`) → `pthread_mutex_lock`,
+  waiting for the render thread;
+- render thread: `RB_RenderThread` → `GLimp_RendererSleep` (`:83`) →
+  `pthread_cond_wait`, spinning in the C library's spin lock (98 % CPU);
+- the GPU completed nothing, no GL call in flight, no crash report, no
+  Mesa error. Not our code anywhere in the stack.
+
+The console log shows what the game did: `RE_Shutdown( 0 )`, then at once
+`R_Init`, "Trying SMP acceleration... succeeded", and only then "Render thread
+terminating" (the old thread) before "Render thread starting" (the new one).
+Quake 3's Mac SMP code starts a new render thread right after waking the old
+one with NULL, without waiting for it to end, and re-initialises the mutex and
+condition the old one is still using. Whether the old thread ends in time is
+luck; here it did not and the condition variable is stuck. Not verified that
+a real Apple driver never loses this race, nor how often it happens with ours.
+`r_smp 0` (the user's first config had it) does not start a render thread.
