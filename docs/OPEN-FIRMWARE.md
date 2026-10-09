@@ -313,3 +313,14 @@ the AtomBIOS interpreter and the VBIOS):
   marker), plus enabling only the memory bit in the client. Whether Open
   Firmware really calls `close` on the console before `mac-boot` hands over is
   the one thing to verify (a breadcrumb written from `close`).
+
+### Update: why booting from the console likely fails, and the fix under test (2026-10-09)
+
+Apple's `mac-boot` draws its boot icon on the console through a generic screen
+driver that calls the standard display methods (`fill-rectangle`,
+`draw-rectangle`, `read-rectangle`, `color!`, `color@`, `set-colors`,
+`get-colors`, `dimensions`) and reads the node's `width`/`height`/`depth`/
+`linebytes`/`address` properties. NVIDIA's FCode implements all of them; our node
+did not. The node now has them (software palette; rectangles in Forth). Whether
+this is the whole story is open until it is tried from the console (type
+`mac-boot` after Space or Cmd-Opt-O-F). `reset-all` is the safe way out meanwhile.

@@ -5812,3 +5812,36 @@ variables lazily):
 Open: what exactly freezes after the kext starts when Tiger is booted from the
 console (BootX writing to the display with decode off? the kext meeting a card in
 8 bpp mode without the marker?). Nothing in the permanent install depends on it.
+
+## 2026-10-09: tagged `open-firmware-console-hook`; why `mac-boot` may fail from the console (offline analysis)
+
+Tag `open-firmware-console-hook` marks the working hook (hand-over, held Space,
+Cmd-Opt-O-F, keyboard). Investigation without the user, from the 1.7 MB firmware
+dump (`build/of-run/ofdec.py`, not committed) and the NVIDIA FCode:
+- Apple's `mac-boot` implementation (0xFF975D80) is a long routine with the
+  three phases (Override, Boot-Device, Search) and, around them, calls to
+  `stdout`, `install-console`, `stdout-is-display?`, `platform-preferred-bit-depth`,
+  `preferred-depth`, `_screen-ihandle`, `close-dev`, `show-search?` and
+  `flash-icon-statehold`: when the console is a display it draws the boot-icon /
+  spinner on it and sets its depth.
+- The firmware has a generic **screen driver** (words `call-screen`, `fillrect`,
+  `drawrect`, `setscreen`, `set-aapl-colors`, `screen-color`, `drawfwicon`,
+  `centerfwicon`, `battonscreen`, `screen-semaphore`; messages "Screen method
+  failure" and "Reentered screen driver") that talks to the screen device only
+  through the standard display methods: `fill-rectangle`, `draw-rectangle`,
+  `read-rectangle`, `color!`, `color@`, `set-colors`, `get-colors`, `dimensions`.
+  NVIDIA's node exports all of them (and `set-mode`, `get-mode`,
+  `power-switch-*`, `ddc2-*`); our hand-written node had none, and none of the
+  properties `width`, `height`, `depth`, `linebytes`, `address`.
+- With a non-display console (the hand-over path) none of this runs, which is why
+  the hand-over works and booting from the display console does not: the boot
+  routine's icon drawing calls methods our node lacks. This also fits the
+  lifecycle finding (NVIDIA's `close` disables decode; ours now does too).
+Change made, **untested on the G5**: the console node now has those eight
+methods (software palette, 8 bpp rectangles in Forth) and the five properties;
+the client interprets the node text in chunks of at most ~900 characters (the
+whole text is now ~3100). Test (needs the user at the keyboard): console via
+held Space, then type `mac-boot`; expect the boot icon and Tiger.
+Not done: writing the colour table to the card's LUT in `color!` /
+`set-colors` (the hardware keeps the gray ramp the mode set loaded), `set-mode` /
+`get-mode`, `quiesce`.
