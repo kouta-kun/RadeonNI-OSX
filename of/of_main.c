@@ -436,7 +436,7 @@ static void status(const char *tag)
  */
 static const char *const console_chunks[] = {
 	/* 0: the node, its properties and data */
-	"dev / new-device \" rdn-display\" device-name \" display\" device-type "
+	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 \" display\" device-type "
 	"0 value line-bytes 0 value width 0 value height 0 value rdn-uses 0 value rdn-bus "
 	"0 value rdn-no 0 value rdn-nc 0 value rdn-nl "
 	"780 encode-int \" width\" property 438 encode-int \" height\" property "
@@ -444,9 +444,9 @@ static const char *const console_chunks[] = {
 	"90000000 encode-int \" address\" property "
 	"0 value rdn-ra 0 value rdn-rx 0 value rdn-ry 0 value rdn-rw 0 value rdn-rh "
 	"create rdn-pal 300 allot "
-	"finish-device device-end ",
+	"dev / ",
 	/* 1: geometry and rectangles */
-	"dev /rdn-display "
+	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
 	": dimensions ( -- w h ) width height ; "
 	": fill-rectangle ( idx x y w h -- ) to rdn-rh to rdn-rw to rdn-ry to rdn-rx to rdn-ra "
 	"rdn-rh 0 ?do frame-buffer-adr rdn-ry i + line-bytes * + rdn-rx + rdn-rw rdn-ra fill loop ; "
@@ -456,7 +456,7 @@ static const char *const console_chunks[] = {
 	"rdn-rh 0 ?do frame-buffer-adr rdn-ry i + line-bytes * + rdn-rx + rdn-ra i rdn-rw * + rdn-rw move loop ; "
 	"dev / ",
 	/* 2: colours: a software copy and the card's colour table (Apple's boot code loads its palette here) */
-	"dev /rdn-display "
+	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
 	": rdn-w ( val reg base -- ) + swap lbflip swap l! ; "
 	": rdn-lut ( adr start cnt -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
 	"80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method >r "
@@ -471,7 +471,7 @@ static const char *const console_chunks[] = {
 	": get-colors ( adr n cnt -- ) 3 * >r 3 * rdn-pal + swap r> move ; "
 	"dev / ",
 	/* 3: event markers, memory decode, open */
-	"dev /rdn-display "
+	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
 	": rdn-mark ( x y -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
 	"90000000 0 c3080010 200000 \" map-in\" rdn-bus $call-method "
 	"swap 780 * + + 14 0 do 1e 0 do ff over j 780 * + i + c! loop loop drop "
@@ -486,9 +486,8 @@ static const char *const console_chunks[] = {
 	"rdn-no 1+ dup to rdn-no 28 * 190 rdn-mark true ; "
 	"dev / ",
 	/* 4: close and the text writer */
-	"dev /rdn-display "
+	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
 	": rdn-last ( -- ) rdn-nl 1+ dup to rdn-nl 28 * 1f4 rdn-mark "
-	"\" /rdn-display\" find-device \" rdn-hidden\" encode-string \" device_type\" property device-end "
 	"\" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
 	"4f46524e lbflip 80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method 851c + l! "
 	"rdn-bus close-dev false rdn-mem ; "
@@ -505,8 +504,8 @@ static const char *const console_chunks[] = {
 	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
 	"dev / ",
 	/* 5: make it the console */
-	"\" devalias screen /rdn-display\" evaluate "
-	"\" /rdn-display\" output \" keyboard\" input "
+	"\" devalias screen /ht@0,f2000000/pci@5/pci1028,2b20@0\" evaluate "
+	"\" /ht@0,f2000000/pci@5/pci1028,2b20@0\" output \" keyboard\" input "
 	"\" Open Firmware console on the Radeon HD 7570. \" type cr ",
 	0
 };
