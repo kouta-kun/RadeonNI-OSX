@@ -5731,3 +5731,13 @@ body cells hold the 5.2.7f1 values. Tested one-shot (the text clears itself):
 Next: the held-key check polls the keyboard device (as the test did); then the
 real tests (no key -> Tiger, key held -> console, Cmd-Opt-O-F -> `quit` hook),
 then a permanent install with markers and a kext check.
+
+## 2026-10-09: tests A and B of the hook (by the user's eyes)
+
+- A, no key: Tiger boots through the `mac-boot` hook (hand-over client), `HandOver` = 1.
+- B, Space held from the restart: the hook's key poll (reads `" keyboard" open-dev`
+  directly for about 1.2 s) saw it, ran the console client, and Open Firmware's
+  banner and prompt appeared on the 7570's monitor (user: "It works!"); the
+  keyboard then worked there; `reset-all` returns to Tiger.
+The first B attempt was missed by the user (not watching), the machine simply
+booted Tiger. Next: C, Cmd-Opt-O-F.
