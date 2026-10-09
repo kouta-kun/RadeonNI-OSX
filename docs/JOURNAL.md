@@ -5265,3 +5265,17 @@ expects of an `IOFramebuffer` subclass for system sleep is not known; the log
 of a working driver (the GeForce 6600 LE's) for the same Sleep has not been
 read. Open. Whether the card itself survives the doze (PCIe link, clocks,
 memory contents; the G5 may cut the slot's power) is unknown too.
+
+After the Sleep above, killing the window server (the user's yes) did not bring
+the display back: the new `WindowServer` (pid 4166, state `Us`, uninterruptible,
+1 MB, 0.02 s of CPU) logged only "Server is starting up" and stayed there.
+`sample`: `CGXServer` → `CGXDisplayDriverInitialize` → `CGXMappedDisplayStart` →
+`IOFBCreateSharedCursor` → `IOFramebufferServerOpen` → `IOFBRebuild` →
+`IOConnectMethodScalarIScalarO` → `mach_msg_trap`, i.e. waiting in the kernel for
+the framebuffer's `IOFBRebuild` (the call that asks the driver for modes and
+connections) and never answered. The card itself answers (`rdnuc reg 0 4` reads
+real values, `0x8010` as before), `ioreg` shows RadeonNI "busy 0". Not found:
+what the kernel thread waits for (the framebuffer gate, a call into our kext,
+or the doze's leftover state). The way out was a restart of the Mac.
+**Do not use Apple menu > Sleep on the G5 with this kext until the sleep
+path is understood.**
