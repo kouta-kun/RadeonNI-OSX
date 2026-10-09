@@ -5112,3 +5112,54 @@ ran `killall "Doom 3 Demo"` while the user was starting the game and probably
 killed one of their runs: never kill games on the G5 in a script; start them
 with an environment of their own and quit only what the script started (by
 the pid it saw).
+
+## 2026-10-08: Quake 3's menu (r_smp, threads), intro still black
+
+Quake 3 from the Finder stuck after the intro on the intro's last frame, for
+hours of tests, and "the menu worked at some point". The cause was not the
+driver of the day but the config: the first config (`Quake3.bak`) had
+`r_smp "0"`; the folder was recreated at 16:13 with the default `r_smp "1"`,
+and r_smp 1 draws from a second thread (the render thread), which we had never
+run.
+
+What was wrong, in the order found:
+
+1. `rdn_current_rend` (which context Mesa has current) was one per process;
+   Mesa's current context is per thread (emulated TLS). The render thread called
+   Mesa's no-op entry points: `sample` showed `noopEnableClientState`, and
+   `MESA_DEBUG=1` (`/tmp/rdngld.mesadebug` with the log on) printed 141,000
+   "GL User Error: ... called without a rendering context". The GPU completed
+   no command buffers while the game ran at 50 frames a second. Now
+   `__thread`.
+2. A context made current in a second thread while the first still had
+   recorded calls in glthread's batch made `OSMesaMakeCurrentDirect` run them
+   in the new thread (`_mesa_glthread_finish`), with no current context there:
+   crash in `set_scissor_no_notify` (`smptest` reproduced it). Fixed by
+   `osmesa_sync` finishing only in the context's own thread (else it flushes the
+   batch) and by the hook on `CGLSetCurrentContext(NULL)`.
+3. A second thread now only adopts the context (`OSMesaAdoptContext`: the
+   thread's current context and dispatch table, nothing attached again) when it
+   is attached already. `RDN_GLD_NO_ADOPT=1` makes it make it current again.
+4. A new depth buffer is cleared (far, no stencil). Not the cause here
+   (hypothesis from Quake 3's menu, which never clears depth), but a buffer the
+   program never clears holds what the memory held.
+
+Ruled out on the way: the kext, the back buffer, glthread (Quake 3 with
+`-Quake3` in the glthread file behaves the same), the display path, the clock.
+The `CGLSetCurrentContext` hook never fires in Quake 3 (it gets the context
+through AGL); nothing depends on it.
+
+Result (user, G5): the menu appears (the CD-key screen the first time). The
+intro video is black. By grabs every 0.7 s the screen is black for about 2.5 s
+(max pixel value 0). Quake 3 draws the video from its main thread (a
+256x256 `glTexSubImage2D`, a `glBegin` quad at `glColor3f(0.5,...)`) and the
+render thread only swaps. `smptest intro` (`tools/guest/smptest.c`) does the
+same in strict turns and shows its picture (the first version of it forgot the
+texture filter and drew white). So two threads taking turns are fine and the
+cause of the black intro is not found. Before the render thread had a Mesa
+context (bundle `~/RadeonNIGLDriver.smp3`) the intro showed and the menu did not.
+Tag `quake3-menu-reached` is the state with the menu.
+
+Left on the G5: `~/RadeonNIGLDriver.before-smp` (the bundle before this work
+today), `.smp1` to `.smp5`, `.perthread`; `~/glthread.keep` is the glthread
+file as it was (restored). No debug files in `/tmp`.

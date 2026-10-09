@@ -70,6 +70,7 @@
 
 #include "state_tracker/st_context.h"
 #include "main/glthread.h"
+#include "main/context.h"
 #include "main/mtypes.h"
 
 #include "glapi/glapi/glapi.h"  /* for OSMesaGetProcAddress below */
@@ -2078,6 +2079,26 @@ OSMesaGetCurrentContext(void)
    return st ? (OSMesaContext) st->frontend_context : NULL;
 }
 
+
+
+/*
+ * The calling thread uses a context that is already bound to its drawable
+ * (by another thread): only this thread's current context and dispatch
+ * table are set, nothing is attached again. For programs that draw from
+ * two threads in turn (Quake 3 with r_smp).
+ */
+GLAPI GLboolean GLAPIENTRY
+OSMesaAdoptContext(OSMesaContext osmesa)
+{
+   struct gl_context *ctx;
+
+   if (!osmesa || !osmesa->st)
+      return GL_FALSE;
+   ctx = osmesa->st->ctx;
+   _mesa_glapi_set_context(ctx);
+   _mesa_set_dispatch(ctx, ctx->GLApi);
+   return GL_TRUE;
+}
 
 
 GLAPI void GLAPIENTRY

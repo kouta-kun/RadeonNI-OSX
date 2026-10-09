@@ -49,6 +49,8 @@ static int hooked_set_current(void *ctx)
 {
 	int err = real_set_current(ctx);
 
+	if (rdn_trace)
+		rdn_log("CGLSetCurrentContext(%p) -> %d", ctx, err);
 	if (!err)
 		after_set_current(ctx);
 	return err;

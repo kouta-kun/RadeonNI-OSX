@@ -218,6 +218,10 @@ OSMesaMakeCurrent( OSMesaContext ctx, void *buffer, GLenum type,
 GLAPI OSMesaContext APIENTRY
 OSMesaGetCurrentContext( void );
 
+/* The calling thread takes over a context bound by another thread; nothing is attached again. */
+GLAPI GLboolean GLAPIENTRY
+OSMesaAdoptContext( OSMesaContext ctx );
+
 
 
 /*

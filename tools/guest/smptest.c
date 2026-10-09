@@ -26,7 +26,11 @@
 
 static CGLContextObj ctx;
 static int seconds = 9;
-static int menu, lock;
+static int menu, lock, intro;
+static volatile int stop;
+static pthread_mutex_t turn_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t turn_cond = PTHREAD_COND_INITIALIZER;
+static int turn;	/* 0: the main thread draws, 1: the render thread swaps */
 
 /* A frame like Quake 3's menu: client arrays, unsigned int indices, depth test on and never cleared, blending, ortho, a texture. */
 static void menu_frame(int frame)
@@ -105,6 +109,26 @@ static void *render(void *arg)
 
 	(void)arg;
 	CGLSetCurrentContext(ctx);
+	if (intro) {
+		/* Quake 3's cinematic: this thread only swaps; the main thread draws. */
+		while (!stop) {
+			pthread_mutex_lock(&turn_lock);
+			while (turn != 1 && !stop)
+				pthread_cond_wait(&turn_cond, &turn_lock);
+			pthread_mutex_unlock(&turn_lock);
+			if (stop)
+				break;
+			glDrawBuffer(GL_BACK);
+			glFinish();
+			CGLFlushDrawable(ctx);
+			pthread_mutex_lock(&turn_lock);
+			turn = 0;
+			pthread_cond_broadcast(&turn_cond);
+			pthread_mutex_unlock(&turn_lock);
+		}
+		CGLSetCurrentContext(NULL);
+		return NULL;
+	}
 	for (frame = 0; frame < seconds * 60; frame++) {
 		float *c = col[(frame / 60) % 3];
 
@@ -141,6 +165,7 @@ int main(int argc, char **argv)
 	if (argc > 1)
 		seconds = atoi(argv[1]);
 	menu = argc > 2 && !strncmp(argv[2], "menu", 4);
+	intro = argc > 2 && !strcmp(argv[2], "intro");
 	lock = argc > 2 && !strcmp(argv[2], "menulock");
 	attr[7] = CGDisplayIDToOpenGLDisplayMask(d);
 	if (CGLChoosePixelFormat(attr, &pf, &n) || !pf || CGLCreateContext(pf, NULL, &ctx)) {
@@ -151,6 +176,76 @@ int main(int argc, char **argv)
 	CGLSetFullScreen(ctx);
 	CGLSetCurrentContext(ctx);
 	printf("main thread: GL_RENDERER %s\n", glGetString(GL_RENDERER));
+	if (intro) {
+		/* The context stays current here too, as with Quake 3 (Apple allows it). */
+		int f;
+		GLuint tx;
+		unsigned char img[64 * 64 * 4];
+
+		pthread_create(&t, NULL, render, NULL);
+		glGenTextures(1, &tx);
+		glBindTexture(GL_TEXTURE_2D, tx);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		for (f = 0; f < seconds * 90; f++) {
+			int i;
+
+			for (i = 0; i < 64 * 64; i++) {
+				img[i * 4] = (f * 3) & 255;
+				img[i * 4 + 1] = ((i % 64) * 4) & 255;
+				img[i * 4 + 2] = ((i / 64) * 4) & 255;
+				img[i * 4 + 3] = 255;
+			}
+			glFinish();
+			if (getenv("SMP_DRAWBACK"))
+				glDrawBuffer(GL_BACK);
+			if (f == 0) {
+				GLint db = -1;
+
+				glGetIntegerv(GL_DRAW_BUFFER, &db);
+				printf("main thread: draw buffer 0x%x\n", (unsigned)db);
+			}
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
+			glViewport(0, 0, 1920, 1080);
+			glMatrixMode(GL_PROJECTION);
+			glLoadIdentity();
+			glOrtho(0, 1920, 1080, 0, 0, 1);
+			glMatrixMode(GL_MODELVIEW);
+			glLoadIdentity();
+			glDisable(GL_DEPTH_TEST);
+			glEnable(GL_TEXTURE_2D);
+			glBegin(GL_QUADS);
+			glTexCoord2f(0, 0); glVertex2f(0, 0);
+			glTexCoord2f(1, 0); glVertex2f(1920, 0);
+			glTexCoord2f(1, 1); glVertex2f(1920, 1080);
+			glTexCoord2f(0, 1); glVertex2f(0, 1080);
+			glEnd();
+			glFinish();
+			if (f % 90 == 5 || f < 4) {
+				unsigned char px[4] = { 0 };
+
+				glReadBuffer(GL_BACK);
+				glReadPixels(960, 540, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+				printf("frame %d: back buffer centre after the draw %d %d %d (drawn: %d x x)\n", f, px[0], px[1], px[2], (f * 3) & 255);
+			}
+			pthread_mutex_lock(&turn_lock);
+			turn = 1;
+			pthread_cond_broadcast(&turn_cond);
+			while (turn != 0)
+				pthread_cond_wait(&turn_cond, &turn_lock);
+			pthread_mutex_unlock(&turn_lock);
+			usleep(5000);
+		}
+		pthread_mutex_lock(&turn_lock);
+		stop = 1;
+		pthread_cond_broadcast(&turn_cond);
+		pthread_mutex_unlock(&turn_lock);
+		pthread_join(t, NULL);
+		CGLSetCurrentContext(NULL);
+		CGLDestroyContext(ctx);
+		CGDisplayRelease(d);
+		return 0;
+	}
 	CGLSetCurrentContext(NULL);
 	pthread_create(&t, NULL, render, NULL);
 	pthread_join(t, NULL);

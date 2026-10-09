@@ -1208,8 +1208,24 @@ void rdn_make_current(void *rend)
 	if (!c->mesa)
 		return;
 	async_data(c->mesa);
+	/*
+	 * Another thread of the program takes the context over while it is
+	 * attached already (Quake 3's render thread; its main thread draws
+	 * the intro): this thread only becomes Mesa's current one.
+	 */
+	if (c->bound && !c->nowhere && c->thread_set && !pthread_equal(c->thread, pthread_self()) &&
+	    !rdn_window_server && !getenv("RDN_GLD_NO_ADOPT")) {
+		if (OSMesaAdoptContext(c->mesa)) {
+			if (rdn_trace)
+				rdn_log("Mesa adopted in this thread for context %p", c->gld_ctx);
+			rdn_current_rend = rend;
+			return;
+		}
+	}
 	c->thread = pthread_self();
 	c->thread_set = 1;
+	if (rdn_trace)
+		rdn_log("Mesa made current in this thread for context %p", c->gld_ctx);
 	if (rdn_trace) {
 		int ok = read_record(c, &d);
 
