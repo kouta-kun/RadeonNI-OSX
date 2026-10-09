@@ -5568,3 +5568,22 @@ Firmware said (the screen shows nothing useful when the card is the problem):
   (so the hang is on the scanout or on the POST). Each is one `boot-command`
   run and about two power cycles.
 - Reminder: after a hang the one-shot line may need two power cycles.
+
+## 2026-10-09: M4, the hand-over works (kext `HandOver` = 1)
+
+Experiment A (`of/` TAIL=1, `rdnt1.elf`): the client POSTs the card, sets
+1920x1080, sets the marker and, as its last act, clears the PCI command
+register's memory-decode and bus-master bits (`cfg_write(0x04, cmd & ~6)`). With
+the telnet console: `load`, `go`, `mac-boot`, no reset. Tiger boots (user: the
+colour bars, a flicker, the bars again, then Tiger). The kext publishes what it
+decided: `ioreg -c RadeonNI -l | grep HandOver` -> `"HandOver" = 1`,
+`"PCICommandAtStart" = 2`. So it saw the marker and the running card, skipped
+its POST and went on; Quartz Extreme in use, 1920x1080 (by readback and the
+user). The full client without this step (decode and bus master left on) hangs
+the boot even with the kext removed, so that is what the kernel (or BootX)
+trips over. Experiments B (scanout off) and C (POST only) were not needed.
+Not yet done: the same from a short one-shot `boot-command` without a console
+(next), a visible boot logo or text from Open Firmware through Tiger's boot
+(needs the display node to survive `mac-boot`, and BootX's use of it),
+automatic at every boot (M5; risk: a hang needs two power cycles, and the
+user's keyboard cannot reset NVRAM).
