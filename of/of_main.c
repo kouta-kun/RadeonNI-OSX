@@ -427,6 +427,16 @@ static void status(const char *tag)
 
 extern char _start[], _stack_top[];
 
+/* The client interface's exit: control goes back to whoever ran `go`. Returning
+ * with blr jumps to address 0 (go sets no LR) and Open Firmware then aborts the
+ * whole command line. */
+void of_exit(void)
+{
+	uint32_t out[1];
+
+	prom("exit", 0, 0, out, out);
+}
+
 /*
  * Give back what Open Firmware claimed for us: the loader claims the image and
  * never releases it, and BootX needs its own ranges for the kernel. How much

@@ -24,6 +24,7 @@ _start:
 2:	lis	%r9,of_entry@ha
 	stw	%r5,of_entry@l(%r9)
 	bl	of_main
+	bl	of_exit
 	lwz	%r0,28(%r1)
 	lwz	%r1,24(%r1)
 	mtlr	%r0
