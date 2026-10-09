@@ -192,8 +192,14 @@ def serve(ip):
     while not os.path.exists(q + "/stop"):
         for f in sorted(glob.glob(q + "/*.cmd")):
             out = ""
+            blind = f.endswith(".blind.cmd")   # console output is elsewhere: do not wait for a prompt
             for line in open(f).read().splitlines():
-                out += ">> %s\n%s\n" % (line, c.run(line, 60))
+                if blind:
+                    c.s.sendall(line.encode() + b"\r")
+                    time.sleep(1.5)
+                    out += ">> %s\n(blind)\n" % line
+                else:
+                    out += ">> %s\n%s\n" % (line, c.run(line, 60))
             open(f[:-4] + ".tmp", "w").write(out)
             os.rename(f[:-4] + ".tmp", f[:-4] + ".out")
             os.remove(f)
@@ -268,11 +274,14 @@ def capture_nvramrc(ip, steps, secs=150):
     return 0
 
 
-def do(text, timeout=300):
+def do(text, timeout=300, blind=False):
+    """blind: send the lines with a short fixed delay each (use after the
+    console output has moved to the display, where no prompt is seen)."""
     q = os.path.join(OUT, "q")
     n = "%d" % int(time.time() * 1000)
+    suffix = ".blind.cmd" if blind else ".cmd"
     open(q + "/" + n + ".tmpc", "w").write(text + "\n")
-    os.rename(q + "/" + n + ".tmpc", q + "/" + n + ".cmd")
+    os.rename(q + "/" + n + ".tmpc", q + "/" + n + suffix)
     t = time.time()
     while time.time() - t < timeout:
         if os.path.exists(q + "/" + n + ".out"):
