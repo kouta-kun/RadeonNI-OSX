@@ -186,3 +186,28 @@ Reading, not copying: Apple/NVIDIA firmware is not ours to reuse.
   `of/display.fs` (ours still lacks the `address`/`width`... properties for
   BootX; not needed for the kernel to boot).
 - Not studied: its boot-time mode set, what it leaves for BootX's boot video.
+
+### Prior art for persistent Open Firmware patches (2026-10-09, web research)
+
+Sources: 68kMLA thread 48601 (page 3, joevt, posts 44 and 54, saved by the user
+as `~/fwpatch3.html`), MacRumors "Booting a GUID disk on PowerPC Macs", the
+NetBSD/macppc System Disk tutorial, Debian `nvsetenv(8)`, a TriLUG post quoting
+Debian's install guide, and Apple's System Disk Utility itself.
+- **Open Firmware patches are persisted in `nvramrc`.** joevt's patch for
+  5.2.7f1 (USB in the boot picker) is live Forth that redirects compiled
+  Apple code with `brpatch`; it is installed from Mac OS X with `sudo nvram
+  nvramrc="$(tr '\n' '\r' << DONE ... DONE)"` plus `use-nvramrc?` true (and
+  `fcode-debug?` true, which he says that patch needs). From the Open Firmware
+  prompt the text is built with `encode-bytes` and `" nvramrc" $setenv`
+  because the line buffer is short. NVRAM is 8 KB in total.
+- Apple did the same for old machines: System Disk 2.3.1 holds the patch as
+  Forth in an `OFpt` resource and "Save" writes the NVRAM; the copy
+  downloaded from download.info.apple.com (`System_Disk_Utility.smi.bin`, 2000,
+  compressed Disk Copy image, kept in `third_party/sysdisk-dl/`, git-ignored)
+  contains the strings `use-nvramrc?`, `nvramrc`, `auto-boot?` and the message
+  "No Open Firmware NVRAM partition found ... Cmd-Option-P-R", i.e. it edits
+  the NVRAM variables. Not unpacked further.
+- Nobody in these sources patches the Mac's flash ROM for this. The `tbxi`
+  boot script (an on-disk file) runs after the boot device is chosen.
+- Consequence: a hook in `nvramrc` is the established way; the NVRAM reset
+  removes it, and a Tiger-side installer re-adds it.
