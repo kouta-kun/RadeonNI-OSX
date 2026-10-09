@@ -211,3 +211,105 @@ Debian's install guide, and Apple's System Disk Utility itself.
   boot script (an on-disk file) runs after the boot device is chosen.
 - Consequence: a hook in `nvramrc` is the established way; the NVRAM reset
   removes it, and a Tiger-side installer re-adds it.
+
+## How the hook works (2026-10-09; what runs when, and why each piece is there)
+
+Everything below was measured on the PowerMac11,2 (Open Firmware 5.2.7f1). The
+code is `scripts/of-hook.py` (the nvramrc text), `of/` (the clients) and
+`hw/rdn_post.c` (`rdn_handover_*`) plus the kext (`HandOver` property).
+
+**Ingredients.** (1) An `nvramrc` script; (2) two files on the boot volume,
+`rdnc.elf` (hand-over client: POST, 1920x1080, marker, decode off, then boots)
+and `rdnk.elf` (console client: 8 bpp mode, display node, output and input);
+(3) the kext, which looks for the marker.
+
+**Power-on, step by step**
+1. Open Firmware starts, probes the devices (`probe-all`: the PCI bus, the SATA
+   controller, USB, Ethernet; the USB keyboard is enumerated here, so it must be
+   plugged in *before* power-on) and then evaluates `nvramrc` if `use-nvramrc?`
+   is true. At this moment the disk **cannot be opened yet** (measured: even the
+   whole disk fails; waiting does not help because Open Firmware is single
+   threaded), nor can the Ethernet console. So `nvramrc` can only change things
+   in memory.
+2. Our `nvramrc` does exactly that. It defines a few Forth words and then runs
+   `rdn-patch`, which first checks that two cells in Open Firmware's own
+   dictionary hold the values they have in 5.2.7f1 and only then overwrites them:
+   - the body cell of **`mac-boot`** (at 0xFF852D00, normally 0xFF975D80, the real
+     implementation) -> our word `rdn-b`;
+   - the body cell of **`quit`** (at 0xFF852960, normally 0xFF86F0A0) -> our word
+     `rdn-q`.
+   The dictionary is writable RAM (joevt's `brpatch` patches do the same). Nothing is
+   written to flash; a power cycle or NVRAM loss removes the hook completely.
+3. Open Firmware then continues its normal start-up. Two paths diverge:
+   - **Normal boot** (`auto-boot?` true, no key): `boot-command` is `mac-boot`, so
+     our `rdn-b` runs. By now the disks are ready. It marks itself as having run
+     (once per boot), polls the keyboard device for about 1.2 s
+     (`" keyboard" open-dev`, `read`; an ordinary `key?` is not used because the
+     input device is not yet the keyboard), and with no key loads
+     `hd:,\...\rdnc.elf` (`hd:,` has no partition number, so a disk or partition
+     change does not matter) and runs it with `go`. The client sets up the card
+     (cold POST through the AtomBIOS interpreter, EDID, 1920x1080), draws the
+     pattern, sets the marker (SCRATCH_REG7 = "OFRN"), gives back the memory it
+     claimed, clears the PCI memory-decode and bus-master bits, and as its last
+     act asks Open Firmware to run `mac-boot` (`interpret`). That reaches `rdn-b`
+     a second time, which now runs the original `mac-boot` (BootX, the kernel).
+     The kext finds the marker and a running card (`HandOver` = 1), skips its
+     POST and takes over.
+   - **A key held at boot** (Space) makes `rdn-b` run `rdnk.elf` instead: the
+     client sets the 8 bpp mode, creates the display node `/rdn-display` through
+     the `interpret` service (Forth text inside the client), makes it Open
+     Firmware's output (`output`) and its input the USB keyboard (`input`), and
+     calls the client `exit` service. `exit` ends the current command line and
+     Open Firmware restarts its entry routine: banner, then `quit`, which is
+     where the next case starts.
+   - **Cmd-Opt-O-F**: Open Firmware does not autoboot (so `mac-boot` is not
+     called); it prints its banner and enters its interpreter loop, `quit`. Our
+     `rdn-q` replaces it: once per boot it runs `rdnk.elf` (as above), then
+     continues to the original `quit` (0xFF86F0A0), so the prompt appears on the
+     7570's monitor with the keyboard working.
+4. Guards: `rdn-q?` and `rdn-b?` make each hook act once per boot (`quit` is
+   re-entered after every error and after the client's `exit`; `mac-boot` is
+   re-entered by the client's own chain).
+
+**Why it is built like this**
+- Hooking `nvramrc` directly is too early (no disk); `quit` and `mac-boot` run
+  after the devices are ready. This was measured with self-clearing test lines
+  that left breadcrumbs in an unused variable (`oem-banner`).
+- A client may not simply return: under `go` there is no return address and
+  Open Firmware aborts the command line, so the client ends with `exit` (console
+  case) or with `interpret` of `mac-boot` (hand-over case).
+- `load` reads the *whole rest of its line* as arguments, so it is wrapped in
+  `evaluate`.
+- The client must not release its own image (the memory is unmapped under it)
+  but releases its heap and the loader's file buffer, otherwise BootX cannot
+  claim what it needs.
+- Tiger's boot hangs if the card is left decoding PCI memory (and bus
+  mastering): this is why the hand-over client clears both bits at the end.
+  The console mode keeps them on (needed to draw), so **booting from the
+  console prompt is not safe yet** (see the next section).
+
+## Why NVIDIA's FCode boots and ours (so far) does not (2026-10-09, FCode of a 6600 LE)
+
+Read-only study of `~/nv_oem_6600le_2149_pcie_full.rom` (detokenized, 26,394
+lines, 777 colon definitions, 216 `of` branches in 30 `case` blocks: it carries
+its own script interpreter and the card's init data, much as our client carries
+the AtomBIOS interpreter and the VBIOS):
+- Its code is run **by Open Firmware itself at probe time**, because it lives in
+  the card's ROM as an Open Firmware image. We have no such image (nothing is
+  flashed), which is why we need the hook to run anything.
+- Its display node implements Open Firmware's lifecycle: `open` and `close`
+  with a use count, and `is-install` / `is-remove`. The *remove* routine is
+  empty. The **`close` of the last instance clears the framebuffer and calls the
+  routine that clears the PCI memory-decode bit and restores the card's BAR
+  registers** (the same helper it uses around its BAR sizing). It never sets the
+  bus-master bit in the helpers I found.
+- Our hand-written node has an empty `close` and our client enables decode *and*
+  bus master (command 6), so when Open Firmware tears the console down before
+  starting Tiger, nothing turns the card's decode off, and Tiger's PCI setup then
+  hangs. What worked for us (client clears bits 1 and 2 at the end) does by
+  hand what NVIDIA's `close` does as part of the node.
+- So the right fix is not a special `rdn-boot` word but a proper `close` method
+  on our node (clear the screen, clear decode, keep bus master off, set the
+  marker), plus enabling only the memory bit in the client. Whether Open
+  Firmware really calls `close` on the console before `mac-boot` hands over is
+  the one thing to verify (a breadcrumb written from `close`).
