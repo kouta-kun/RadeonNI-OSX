@@ -5675,3 +5675,34 @@ possible with these means. What stays: the host-driven console (works), the
 one-shot hand-over line (works), and optionally an nvramrc word typed blind at
 the prompt (not built). Cleanup done: nvramrc empty, use-nvramrc? false,
 oem-banner empty.
+
+## 2026-10-09: Open Firmware can be patched at runtime from nvramrc, and at the
+## prompt entry the disk IS ready (the experiment that changes the plan)
+
+Dumped the G5's Open Firmware from its own memory over the console (1.7 MB,
+`0xFF810000-0xFF8E0000` and `0xFF930000-0xFFA10000`, 16 KB chunks through a
+`dl2` Forth word; kept in `build/of-run/dump/`, not committed). Its words are
+either token lists or native PowerPC code; a name table and a decompiler are in
+`build/of-run/ofdec.py` (4517 named words recovered). Facts used:
+`mac-boot` xt 0xFF852CF8 (body cell at 0xFF852D00 = 0xFF975D80, the real
+implementation), `quit` xt 0xFF852958 (body cell at 0xFF852960 = 0xFF86F0A0),
+`probe-all` 0xFF8886D0, `install-console` 0xFF852AE8. The dictionary is writable
+(a same-value store to a body cell worked; joevt's `brpatch` posts agree).
+Experiment (all in RAM; the only persistent change a self-clearing nvramrc,
+a clean power cycle always gives a normal boot): nvramrc replaced the `mac-boot`
+cell with an empty word `nb` (so autoboot "falls through": banner, prompt) and
+the `quit` cell with `myq`, which once tests what opens and then runs the
+original `mac-boot`. Result: `oem-banner` = 0x1f, i.e. **at the first `quit`
+the disk (`<path>:3`), `hd:3`, `hd:,`, the SATA controller and the Ethernet
+node all open**, and Tiger booted from the original `mac-boot` call.
+So a hook on `quit` runs after the devices are ready; at nvramrc time they are
+not. Open: whether the Cmd-Opt-O-F path reaches the same `quit` (needs a
+person at the G5 with a keyboard Open Firmware sees); `hd:,` opens, so a path
+without a partition number is possible; `exit`/chaining behaviour of a client
+started from inside `myq` is not yet tried.
+Plan this enables: nvramrc (appended to whatever the user has, idempotent, with
+markers) patches (a) `quit` to start the console client (8 bpp, display node,
+`output`) once per boot, and (b) `mac-boot` to start the hand-over client first;
+files on the boot volume found with `hd:,`. A key held while the client starts
+could choose between them (user's request). Cleanup: oem-banner empty,
+nvramrc empty.
