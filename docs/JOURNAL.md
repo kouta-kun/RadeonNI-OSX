@@ -5759,3 +5759,28 @@ appended with markers, original saved, `use-nvramrc?` true); (3) the kext checks
 `/options` nvramrc for the block and asks the user (KUNC alert) when it is
 missing; (4) a safe way to boot from the console prompt (`mac-boot` there hangs);
 (5) boot-time cost of the key poll (about 1.2 s) and the key choice.
+
+## 2026-10-09: Open Firmware calls the console node's close; NVIDIA's open/close pair
+
+Test of the hypothesis (NVIDIA's FCode `close` clears memory decode): the console
+node got a real `close` (use count; last close: marker, white band, decode
+off) and `devalias screen /rdn-display`. Observed with the user at the keyboard:
+- first run (breadcrumb only, no devalias): typed `mac-boot` at the console:
+  the screen flickered, "the rainbow" (probably the kext's pattern), then Tiger
+  did not answer; `HandOver` = 0 and `PCICommandAtStart` = 6 in the next boot,
+  `oem-banner` empty (so `close` did not run, or not before the freeze).
+- with `devalias screen /rdn-display` the screen was initialised but no prompt
+  appeared and blind typing did nothing. Reading: after the client's `exit`
+  Open Firmware restarts its entry routine, `install-console` opens `screen`
+  (now our node) and closes the previous console instance, which ran our `close`
+  and cleared PCI memory decode, so nothing could be drawn. That is the proof that
+  **Open Firmware does call `close` on a console instance when it replaces it**,
+  and it explains the other half of NVIDIA's pair: its install routine and
+  `open` re-establish the card, while its last `close` disables decode.
+Fix applied (not yet run): `open` sets the memory-decode bit (read-modify-write
+of the command register), the last `close` clears it (after setting the marker
+and a 3 s white band as a visible sign). `mac-boot` typed at the console is
+expected to work if Open Firmware also closes the console before BootX; to be
+tested with the user.
+Practical rule from this: never close the console node while it is in use
+without re-opening it (decode would be off).
