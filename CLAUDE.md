@@ -408,6 +408,7 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
 - `docs/POWER-MANAGEMENT.md`: why Apple menu > Sleep hung the G5 (the kext never
   registers its framebuffer's power states) and the plan; read it before
   touching sleep or display power.
+- `docs/OPEN-FIRMWARE-PLAN.md`: the outline for the first sessions of that work.
 - `docs/OPEN-FIRMWARE.md`: evaluation of display output from Open Firmware
   (the card has no FCode): routes, milestones, risks; nothing built.
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.

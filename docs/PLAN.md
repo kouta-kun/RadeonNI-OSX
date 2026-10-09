@@ -204,6 +204,11 @@ on the Power Mac G5.
   whose firmware assigns no address (the code falls back to the file for
   both; neither has happened).
 
+- **Open Firmware output (evaluated 2026-10-08, nothing built).** The card has
+  no FCode, so Open Firmware shows nothing on it and there is no boot logo. The
+  route and milestones M0 to M5 are in `docs/OPEN-FIRMWARE.md`; the order of work
+  for the next session with the G5 is `docs/OPEN-FIRMWARE-PLAN.md`.
+
 # Phase 2 — hardware acceleration
 
 Planned with the user on 2026-10-04. Goal: Quartz Extreme, Core Image and

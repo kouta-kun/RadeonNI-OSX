@@ -5299,3 +5299,8 @@ creates the display node with `interpret`; FCode by hand or flashing are out.
 Development loop: Open Firmware over telnet (`/packages/telnet`) or the 6600 LE
 as the screen; milestones M0 to M5 in the document; several sessions; not
 needed for phase 1 or 2, useful for boot logo, `-v`, and kernel panic text.
+
+Outline for the next sessions written: `docs/OPEN-FIRMWARE-PLAN.md` (questions for
+the user, step 0 in Tiger with `ioreg -p IODeviceTree`, Open Firmware over
+telnet, M0/M1 register reads, then the client program, the display node, the
+hand-over, the rules).
