@@ -460,7 +460,7 @@ static const char console_fs[] =
 	"draw-character column# 1+ dup #columns >= if drop rnl else to column# then ; "
 	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
 	"finish-device device-end "
-	"devalias screen /rdn-display "
+	"\" devalias screen /rdn-display\" evaluate "
 	"\" /rdn-display\" output \" keyboard\" input "
 	"\" Open Firmware console on the Radeon HD 7570. \" type cr ";
 
