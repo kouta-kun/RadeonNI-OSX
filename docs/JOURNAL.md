@@ -5279,3 +5279,13 @@ what the kernel thread waits for (the framebuffer gate, a call into our kext,
 or the doze's leftover state). The way out was a restart of the Mac.
 **Do not use Apple menu > Sleep on the G5 with this kext until the sleep
 path is understood.**
+
+## 2026-10-08: why sleep hangs (research; `docs/POWER-MANAGEMENT.md`)
+
+Read Apple's IOGraphics (tag 179) and disassembled Tiger's IOFramebuffer. Cause:
+our `IOFramebuffer` subclass never calls `registerPowerDriver`, so the power
+manager never calls `setPowerState` on it; system sleep clears `pagingState`
+and nothing sets it again; `extEntry`, the first step of every user-space call
+into the framebuffer, sleeps uninterruptibly while it is clear. That is the
+frozen display, the window server hung in `IOFBRebuild`, the unkillable
+process and the half shutdown. Fix plan and test order in the document.

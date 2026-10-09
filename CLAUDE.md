@@ -405,6 +405,9 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
   yet run on the G5.
 - `docs/MEMORY-EVICTION.md`: video memory, the GART and why we have no eviction
   (how other systems page, what `large-tex` showed, what to check first).
+- `docs/POWER-MANAGEMENT.md`: why Apple menu > Sleep hung the G5 (the kext never
+  registers its framebuffer's power states) and the plan; read it before
+  touching sleep or display power.
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
   Treat `[I]` as a hypothesis; fix the document when reality differs.
 
