@@ -168,3 +168,21 @@ Scrolling, cursor, the terminal emulator, a persistent node (re-created from the
 console each time), M4 (kext skips POST when the client left the card running),
 M5 (`boot-command`/`nvramrc`: a hang there would hang every boot until NVRAM is
 reset). Open Firmware's `screen` alias and `output-device` were never changed.
+
+### What an Apple-compatible card's FCode does (2026-10-09, read-only study)
+
+`~/nv_oem_6600le_2149_pcie_full.rom` (user's file, a GeForce 6600 LE, 10de:0142,
+one image of code type 1 = Open Firmware, FCode 67159 bytes) detokenized with
+OpenBIOS `fcode-utils` built from source in `third_party/fcode-utils-src`
+(GPL; used as a tool only, nothing copied; output in `private/rom-study/`).
+Reading, not copying: Apple/NVIDIA firmware is not ours to reuse.
+- It defines two helpers that set and clear bit 1 (memory decode) of the PCI
+  command register (`my-space 4 + config-l@ 2 or / 2 invert and config-l!`) and
+  uses the clearing one around its BAR sizing; i.e. the driver controls
+  decode, which is what the hand-over needed (we clear decode and bus master
+  at exit; Tiger's kernel enables what it needs again, `PCICommandAtStart` = 2).
+- It creates a `display` node with `width`, `height`, `depth`, `linebytes`
+  and `address` properties and the `fb8` family of text methods, like our
+  `of/display.fs` (ours still lacks the `address`/`width`... properties for
+  BootX; not needed for the kernel to boot).
+- Not studied: its boot-time mode set, what it leaves for BootX's boot video.
