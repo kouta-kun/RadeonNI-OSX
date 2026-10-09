@@ -5741,3 +5741,21 @@ then a permanent install with markers and a kext check.
   keyboard then worked there; `reset-all` returns to Tiger.
 The first B attempt was missed by the user (not watching), the machine simply
 booted Tiger. Next: C, Cmd-Opt-O-F.
+
+## 2026-10-09: test C, Cmd-Opt-O-F gives the console on the 7570 (user: "It worked!!!!!!")
+
+One-shot hook applied, restart with Win+Alt+O+F held on a wired USB keyboard
+(connected before boot): Open Firmware's banner and `ok` prompt on the 7570's
+monitor from the `quit` hook (the hand-over `mac-boot` hook is not reached on that
+path), keyboard working, `reset-all` back to Tiger (nvramrc cleared by the
+one-shot, `boot-command` `mac-boot`). So all three paths work with the files in
+`/Users/tiger/of/`: no key -> hand-over -> Tiger; Space held at boot -> console;
+Cmd-Opt-O-F -> console. State on the G5: nothing permanent (nvramrc empty,
+`use-nvramrc?` false); the clients carry the VBIOS (git-ignored build only).
+What is left before this can be a normal feature: (1) clients read the VBIOS
+from the card's ROM at run time (worked in stage 0) so the images can be shipped;
+(2) permanent installer/uninstaller (files on the boot volume, nvramrc block
+appended with markers, original saved, `use-nvramrc?` true); (3) the kext checks
+`/options` nvramrc for the block and asks the user (KUNC alert) when it is
+missing; (4) a safe way to boot from the console prompt (`mac-boot` there hangs);
+(5) boot-time cost of the key poll (about 1.2 s) and the key choice.
