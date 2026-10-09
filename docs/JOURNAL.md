@@ -5163,3 +5163,15 @@ Tag `quake3-menu-reached` is the state with the menu.
 Left on the G5: `~/RadeonNIGLDriver.before-smp` (the bundle before this work
 today), `.smp1` to `.smp5`, `.perthread`; `~/glthread.keep` is the glthread
 file as it was (restored). No debug files in `/tmp`.
+
+### Later the same evening: modes kext back, Quake 3 from scratch works, intro too
+
+The G5 still had the old 3-mode kext from the debugging (`cgmode list`: only
+1920x1080), so Quake 3 from scratch (default `r_mode 3`, 640x480) found no
+mode. `~/install-modes2-kext.sh` (kext md5 44642c2c, built after `5f3a8af`;
+the old one is `~/RadeonNI.kext.before-modes2`) and a restart (the user's yes)
+gave 54 modes. With the config moved aside (`Quake3.rsmp1`) the user's first
+start worked: 640x480 full screen, `r_smp 1`, and the intro video shows. The
+black intro of the earlier runs was with `r_mode -1`, 1920x1080 custom
+(and the old 3-mode kext). Why the video was black there is not known; whether
+it comes back at 1920x1080 with the full kext is untested.
