@@ -588,6 +588,9 @@ int of_main(void)
 	status("after post");
 	if (r || STAGE < 3)
 		goto out;
+#if defined(TAIL) && TAIL == 3
+	goto out;		/* experiment C: POST only, no mode set */
+#endif
 
 	len = rdn_output_detect(&card, edid);
 	if (len < 0 || !rdn_edid_preferred_mode(edid, &mode)) {
@@ -634,6 +637,14 @@ int of_main(void)
 		rdn_handover_mark(&card);
 		puts_crlf("rdn: hand-over marker set");
 	}
+#endif
+#if defined(TAIL) && TAIL == 1
+	/* experiment A: leave the mode running but decode and bus master off */
+	cfg_write(CARD_BUS_ADDR | 0x04, cfg_read(CARD_BUS_ADDR | 0x04) & ~6u);
+#elif defined(TAIL) && TAIL == 2
+	/* experiment B: stop the scanout (power the output down), POST stays */
+	rdn_output_disable(&card, &mode, hdmi);
+	status("scanout off");
 #endif
 out:
 	give_back();
