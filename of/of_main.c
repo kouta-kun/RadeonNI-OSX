@@ -438,11 +438,17 @@ static const char console_fs[] =
 	"0 to background-color true ; "
 	": close ( -- ) ; "
 	": rnl ( -- ) 0 to column# line# 1+ dup #lines >= if drop 0 to line# else to line# then ; "
-	": put1 ( c -- ) dup 0d = if drop 0 to column# else dup 0a = if drop rnl else "
-	"draw-character column# 1+ dup #columns >= if drop rnl else to column# then then then ; "
+	"0 value esc "
+	": put1 ( c -- ) esc 1 = if 5b = if 2 to esc else 0 to esc then exit then "
+	"esc 2 = if 40 >= if 0 to esc then exit then "
+	"dup 1b = if drop 1 to esc exit then "
+	"dup 0d = if drop 0 to column# exit then "
+	"dup 0a = if drop rnl exit then "
+	"dup 20 < if drop exit then "
+	"draw-character column# 1+ dup #columns >= if drop rnl else to column# then ; "
 	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
 	"finish-device device-end "
-	"\" /rdn-display\" output "
+	"\" /rdn-display\" output \" keyboard\" input "
 	"\" Open Firmware console on the Radeon HD 7570\" type cr ";
 
 static void make_console(void)
