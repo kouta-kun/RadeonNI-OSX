@@ -5312,3 +5312,64 @@ over telnet driven from the host, a one-shot `boot-command` that restores
 itself first, timeouts everywhere, the card reset before Tiger boots, a gated
 hand-over, a parked final state. Limits stated in it: the monitor can only be
 seen by the user (readback until then), and a hard hang needs a power cycle.
+
+## 2026-10-09: Open Firmware console and registers (M0, M1; by readback)
+
+First run of `docs/OPEN-FIRMWARE-PLAN.md` (`scripts/of-run.py`). Negative first:
+- Two failed attempts. (1) `enet:telnet,IP` uses the G5's first Ethernet port;
+  the cable is on the second (`en1` = `/ht@0,f2000000/pci@2/bcom5714@4,1`, MAC
+  ...c8), so nothing answered (the user spotted it). Use the full device path.
+  (2) `setenv boot-command mac-boot dev ...` is wrong: Forth's `setenv` takes the
+  rest of the line as the value, so the one-shot never restored itself and the
+  G5 sat at `ok`. Use `" mac-boot" " boot-command" $setenv`.
+- The telnet console is dropped when the connection closes, so a session must
+  stay connected (`of-run.py serve`, commands through `build/of-run/q/`), and
+  stopping it must send `mac-boot` first. A stranded G5 needs a power cycle
+  (happened three times tonight).
+- Open Firmware 5.2.7f1 (PowerMac11,2 BootROM 09/30/05); `/packages/telnet`
+  exists. The card is `/ht@0,f2000000/pci@5/pci1028,2b20@0` (Dell OEM subsystem
+  name), bridge `pci@5` on bus 8. assigned-addresses equal Tiger's: BAR0
+  0x90000000 (256 MB), registers 0x80140000 (128 KB), ROM 0x80120000.
+- Open the bridge as an instance and call its methods: `" /ht@0,f2000000/pci@5"
+  open-dev to bus`, `80140000 0 83080018 20000 " map-in" bus $call-method`
+  (returns 0x80140000: identity), `080004 " config-w@" bus $call-method`.
+- At that point the command register is 0x0004: **memory decode is off**, every
+  register reads ffffffff until `6 080004 " config-w!" bus $call-method`.
+  Then (byte-swapped with `lbflip`): 0x8010 = 0x3828 as in Tiger; 0x0 and 0x5428
+  read 0 (card not POSTed, Tiger reads them after the kext's POST); a write to
+  0x8500 (scratch) of 0x12345678 reads back, then 0 restored.
+
+## 2026-10-09 (night): the Open Firmware client, first runs (`of/`, by console transcript)
+
+Built `of/` (PowerPC ELF32, Linux PPC cross compiler, freestanding: `start.S`,
+`link.ld`, `libc.c`, `of_main.c` = client interface + `rdn_os` + front end that
+follows `rdn_tool`'s sequence; STAGE 0/1/99 images `rdn0/rdn1/rdn.elf`). Tested
+on the host in two ways under `qemu-ppc` with a mock Open Firmware and a dumb
+card (`of/mock_main.c`, `of/mockf.c`): both reach `ATOM BIOS: TURKS` and the POST
+attempt; the VBIOS checksum equals `private/vbios.rom`'s (0x51e700).
+- `load hd:3,\Users\tiger\of\rdn1.elf` + `go` works from the console ("Loading
+  ELF"; the boot volume is `hd:3`). `go` leaves r5 = client interface
+  (ff846d78 here); my first image cleared `.bss` after saving r5 into it and
+  jumped to 0 ("Invalid memory access", SRR0 0): fixed.
+- On the G5 the client gets as far as: client interface, `open` of the bridge,
+  config reads (id 675d1002), `map-in` of registers (0x80140000) and aperture
+  (0x90000000), and reads the 64 KB VBIOS from the ROM BAR (also with word
+  reads). **Then the console goes silent and nothing answers**, in all of
+  rdn.elf/rdn0/rdn1 (stage 0 stops right after the read, before any `hw/`
+  code): the next statements are a checksum loop over RAM and one long
+  `say()`. Not reproduced on the host. No FP instruction in the image (the
+  client runs with MSR FP clear). Ruled out so far: FP use, the `.bss`/r5 bug,
+  byte vs word ROM reads (stage 0 hung after the change as well).
+- Guesses for the cause, untested: a long single write to the telnet console
+  (the hung line was 70 characters, earlier ones under 45; lines are now
+  split at 60), or something about the memory above the image. Next build
+  leaves breadcrumbs in NVRAM variable `rdn-step` (via `interpret`
+  `$setenv`) so a hang can be located from Tiger afterwards (the variable name
+  is untested with Apple's `nvram`).
+- Each hang needs a power cycle. After a hang `boot-command` still holds the
+  telnet line, so the next power-on comes up in an Open Firmware telnet console
+  on 192.168.1.140 (`OF_ATTACH=1 of-run.py serve` attaches); `reset-all` there
+  boots Tiger normally (`boot-command` back to `mac-boot` first).
+- The G5 was left hung in the client at about 21:50 local (stage 0). Nothing was
+  flashed, no card state was changed beyond memory decode and the ROM BAR
+  enable (restored).

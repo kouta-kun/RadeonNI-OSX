@@ -115,3 +115,15 @@ M4 one to two. Several sessions in all.
 - MacRumors, [Just how open is Apple's Open Firmware (particularly on the G5)](https://forums.macrumors.com/threads/just-how-open-is-apples-open-firmware-particularly-on-the-g5.2455988/)
 - `docs/RESEARCH.md` section 4 (no FCode, assigned-addresses, ROM at
   0x80120000), `docs/HARDWARE.md` (the ROM image).
+
+## Findings (2026-10-09, first night of `docs/OPEN-FIRMWARE-PLAN.md`; by console transcript)
+
+- Open Firmware 5.2.7f1 on the G5; telnet console works on the **second**
+  Ethernet port when named by its full path (`/ht@0,f2000000/pci@2/bcom5714@4,1`),
+  not through `enet`; the console exists only while one connection stays open.
+- The card is `/ht@0,f2000000/pci@5/pci1028,2b20@0`; open the bridge
+  (`open-dev`) and call `map-in`, `config-l@`, `config-l!` on it. Memory decode
+  is **off** at the prompt (command 0x0004); with 0x0006 registers read as in
+  Tiger (0x8010 = 0x3828) and scratch writes read back (M1, by readback).
+- `load hd:3,\path` loads an ELF client; `go` passes the client interface in r5.
+- M2 is not reached: the client hangs after reading the VBIOS (journal).
