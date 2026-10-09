@@ -28,9 +28,12 @@ END = '\\ RadeonNI-OF end'
 
 
 def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
-    key = ": rdn-key? ( -- flag ) true ; " if force_console else \
-          ": rdn-key? ( -- flag ) " keyboard" open-dev dup 0= if drop false exit then >r false c 0 do '
-          'pad 1 " read" r@ $call-method 1 = if drop true leave then 64 ms loop r> close-dev ; "
+    if force_console:
+        key = ": rdn-key? ( -- flag ) true ; "
+    else:
+        key = (': rdn-key? ( -- flag ) " keyboard" open-dev dup 0= if drop false exit then >r false '
+               'c 0 do pad 1 " read" r@ $call-method 1 = if drop true leave then 64 ms loop '
+               'r> close-dev ; ')
     parts = []
     if oneshot:
         parts.append('" false" " use-nvramrc?" $setenv " " " nvramrc" $setenv ')
