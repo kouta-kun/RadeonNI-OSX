@@ -5454,3 +5454,29 @@ there, mostly negative:
 Not done: scrolling, a cursor, colours beyond white on black, making the node
 persistent across Open Firmware's own restart, `boot-command` with the client,
 hand-over to Tiger (M4), and the second node setting `screen` / `output-device`.
+
+## 2026-10-09: hand-over (M4), two attempts, both stuck (by the user's eyes)
+
+Built: `rdn_handover_mark()` (client, last act: SCRATCH_REG7 = "OFRN") and
+`rdn_handover_take()` (kext, before `rdn_card_post`; clears the marker; 1 if the
+card is running, -1 if marked but not), `tests/handover.c` (x86 and ppc pass),
+kext built in the guest with Apple gcc, only its binary installed on the G5
+(`/Users/tiger/RadeonNI.kext.before-posted` is the previous bundle; mkext
+removed). A plain reboot with the new kext, no marker: Tiger up, kext loaded,
+Quartz Extreme in use (so the kext change itself is harmless).
+- Attempt 1: telnet console, `rdn.elf` (colour bars seen, marker set), then
+  `mac-boot` typed through the console without any reset. The monitor stayed on
+  the colour bars; Tiger never came up, nothing reached `system.log`. Suspect:
+  booting with Open Firmware's stdout still the telnet NIC instance, or the
+  state of the NIC/bus after the client, not the hand-over.
+- Attempt 2: no console. One-shot `boot-command` = restore itself, `dev /
+  load hd:3,\Users\tiger\of\rdn.elf go mac-boot`. The monitor stayed dark (no
+  colour bars even) and Tiger never came up; the restore did run, so one power
+  cycle recovered. Suspect: at autoboot time `write` to stdout (no screen device
+  is set) or the `hd:3` path misbehaves; the client prints first.
+- Not known whether the kext's marker logic would work: Tiger never started.
+- Next, with a person watching: make the client silent when stdout is not
+  usable (and write a breadcrumb into the card's scratch registers instead, to
+  be read from Tiger after a power cycle: the card is cold after one, so use
+  `nvram`), then retry attempt 2; compare with a control that runs the client
+  from a telnet console and ends with `reset-all` (known good) vs `mac-boot`.
