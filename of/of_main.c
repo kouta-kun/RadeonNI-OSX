@@ -225,7 +225,8 @@ static void cfg_write32(void *c, uint32_t off, uint32_t v)
 }
 
 /* 2 MB of heap for the library; nothing is ever freed. */
-static uint8_t heap[2u << 20] __attribute__((aligned(16)));
+static uint8_t *heap;
+#define HEAP_BYTES (2u << 20)
 static size_t heap_used;
 
 static void *os_alloc(void *c, size_t n)
@@ -233,7 +234,7 @@ static void *os_alloc(void *c, size_t n)
 	void *p;
 
 	n = (n + 15) & ~(size_t)15;
-	if (heap_used + n > sizeof(heap))
+	if (!heap || heap_used + n > HEAP_BYTES)
 		return NULL;
 	p = heap + heap_used;
 	heap_used += n;
@@ -343,7 +344,7 @@ static void crumb(const char *what)
 }
 
 /* The VBIOS: enable the ROM BAR, read it through its mapping, disable it. */
-static uint8_t bios_copy[ROM_SIZE];
+static uint8_t bios_copy[ROM_SIZE];	/* in the image, like all statics */
 
 #ifdef EMBED_VBIOS
 /* The VBIOS image comes with the (git-ignored) build, not from the ROM BAR:
@@ -429,6 +430,15 @@ int of_main(void)
 	bool hdmi;
 	uint32_t in[1], out[1];
 
+	{	/* the heap: claimed from Open Firmware, zeroed */
+		uint32_t ci[3] = { 0, HEAP_BYTES, 0x1000 }, co[1] = { 0 };
+
+		ci[0] = 0;
+		if (!prom("claim", 3, 1, ci, co) && co[0] != (uint32_t)-1)
+			heap = (uint8_t *)co[0];
+		if (heap)
+			memset(heap, 0, HEAP_BYTES);
+	}
 	chosen = of_finddevice("/chosen");
 	crumb("start");
 	of_getprop(chosen, "stdout", &stdout_ih, 4);

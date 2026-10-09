@@ -5,9 +5,12 @@ SECTIONS
 	. = 0x01000000;
 	.text : { *(.text.start) *(.text .text.*) }
 	.rodata : { *(.rodata .rodata.* .sdata2 .sbss2) }
-	.data : { *(.data .data.* .sdata .got2 .got) }
-	. = ALIGN(16);
-	__bss_start = .;
-	.bss : { *(.sbss) *(.bss .bss.* COMMON) . = ALIGN(16); . += 0x20000; _stack_top = .; }
-	__bss_end = .;
+	/* .bss is part of the file image: only memory Open Firmware loaded */
+	.data : { *(.data .data.* .sdata .got2 .got)
+		. = ALIGN(16);
+		__bss_start = .;
+		*(.sbss) *(.bss .bss.* COMMON)
+		. = ALIGN(16);
+		__bss_end = .;
+		. += 0x10000; _stack_top = .; }
 }

@@ -5386,3 +5386,14 @@ console). Next build: `.bss` and stack inside the file image, heap from
 `claim`. NVRAM breadcrumb `rdn-step` was never found in Tiger (`nvram` error -1:
 unset, or `interpret` of `$setenv` did not store). The client files are not in
 git under `of/build/` (they hold the VBIOS); history was redone once for that.
+
+**Cause of the "dead G5" found (same morning):** not the ROM read, the memory
+layout or the NIC. `start.S` called `of_main` with `bl`, which overwrote LR, and
+then ended with `blr`: it returned into its own `li r3,0; blr`, an endless loop
+with Open Firmware never regaining control (so no network polling: console and
+ping silent, telnet output never flushed, which is why the last lines of every
+run looked like a hang at different places). Fix: `start.S` saves LR and SP and
+restores them. All earlier "hang" observations (stage 0 and 1 after the VBIOS
+read) are the end of a client that had in fact finished. The `.bss`/stack in
+the image and the claimed heap stay (harmless, safer). Untested on the G5 at
+the time of writing.
