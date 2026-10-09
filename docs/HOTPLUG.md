@@ -91,7 +91,7 @@ sleep.
 minute (`pmset displaysleepnow` does not exist on Tiger): the monitor must go to standby,
 and wake on a key or the mouse with the same picture; `dmesg | grep RadeonNI`
 shows "output off: 0" and "output back on: 0". Also: a system sleep and wake
-(`pmset sleepnow`) with the monitor attached.
+(Apple menu > Sleep; Tiger's `pmset` has no `sleepnow`; `osascript -e 'tell application "System Events" to sleep'` is the same from ssh) with the monitor attached.
 
 ## 3. Hot-plug (`RadeonNI::pollHotplug`, `monitorReturned`)
 
