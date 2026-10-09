@@ -67,6 +67,9 @@ static uint32_t stdout_ih;
 
 static void con_write(const char *s, int n)
 {
+#ifdef SILENT
+	return;
+#endif
 	uint32_t in[3] = { stdout_ih, (uint32_t)s, (uint32_t)n }, out[1];
 
 	prom("write", 3, 1, in, out);
@@ -328,6 +331,9 @@ static void say(const char *fmt, ...)
 /* Breadcrumb in NVRAM (variable rdn-step): survives a hang, read from Tiger. */
 static void crumb(const char *what)
 {
+#ifdef SILENT
+	return;
+#endif
 	static char b[96];
 	uint32_t in[1], out[2];
 	size_t n = 0, i;
