@@ -491,13 +491,33 @@ static void cmark(unsigned x, unsigned y)
 
 static void make_console(void)
 {
-	uint32_t in[1] = { (uint32_t)console_fs }, out[2];
+	static char chunk[1200];
+	const char *p = console_fs;
+	uint32_t in[1], out[2];
 
-	cmark(40, 350);			/* reached the interpret call */
-	prom("interpret", 1, 2, in, out);
-	cmark(80, 350);			/* the call returned */
+	cmark(40, 350);			/* reached the interpret calls */
+	while (*p) {
+		size_t n = 0, last = 0;
+
+		/* a chunk ends after a definition ("; "), about 900 characters at most */
+		while (p[n] && n < sizeof(chunk) - 2) {
+			if (n >= 2 && p[n - 1] == ' ' && p[n - 2] == ';')
+				last = n;
+			if (n > 900 && last)
+				break;
+			n++;
+		}
+		if (p[n] && last)
+			n = last;
+		memcpy(chunk, p, n);
+		chunk[n] = 0;
+		p += n;
+		in[0] = (uint32_t)chunk;
+		prom("interpret", 1, 2, in, out);
+	}
+	cmark(80, 350);			/* all calls returned */
 	if (out[0] == 0)
-		cmark(120, 350);	/* ... and reported no error */
+		cmark(120, 350);	/* ... and the last reported no error */
 }
 #endif
 
