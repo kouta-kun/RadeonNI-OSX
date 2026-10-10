@@ -10,6 +10,7 @@
 #include <libkern/libkern.h>
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
+#include <IOKit/IOPlatformExpert.h>
 
 #include "RadeonNI.h"
 #include "RadeonNIAccel.h"
@@ -434,7 +435,31 @@ bool RadeonNI::bringUp()
 		IOLog("RadeonNI: display init failed (%d)\n", r);
 		return false;
 	}
-	return programMode(fPreferred, kDepth32) == kIOReturnSuccess;
+	if (programMode(fPreferred, kDepth32) != kIOReturnSuccess)
+		return false;
+
+	/*
+	 * When firmware left a console (its boot video), the kernel keeps drawing its
+	 * progress spinner for that layout until IOFramebuffer sets up our framebuffer
+	 * a little later: tell it the new layout now, as IOFramebuffer::doSetup() will.
+	 */
+	if (warm) {
+		PE_Video v;
+
+		bzero(&v, sizeof(v));
+		if (getPlatform()->getConsoleInfo(&v) == kIOReturnSuccess && v.v_baseAddr) {
+			v.v_rowBytes = fFb.pitch_pixels * 4;
+			v.v_width = fFb.width;
+			v.v_height = fFb.height;
+			v.v_depth = 32;
+			getPlatform()->setConsoleInfo(&v, kPEReleaseScreen);
+			getPlatform()->setConsoleInfo(&v, kPEEnableScreen);
+			IOLog("RadeonNI: the kernel console now %lux%lu, %lu bytes a row, 32 bpp\n",
+			      (unsigned long)v.v_width, (unsigned long)v.v_height,
+			      (unsigned long)v.v_rowBytes);
+		}
+	}
+	return true;
 }
 
 bool RadeonNI::useHDMI()
