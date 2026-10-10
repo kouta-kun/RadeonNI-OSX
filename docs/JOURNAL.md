@@ -5919,3 +5919,25 @@ now on the card; make the clients read the VBIOS from the ROM; the installer, th
 uninstaller and the kext check; the 8 bpp -> 32 bpp early spinner/text overlap
 (cosmetic); `close` is not called by `mac-boot` so the marker is not set on this
 path (harmless).
+
+## 2026-10-09: all three paths verified with the node on the card and the black hand-off (by the user)
+
+- No key: the hook runs `rdnkc.elf` (console client that chains `mac-boot`): the
+  Apple logo and the spinner appear during boot (first time on this card), a
+  brief moment where the kernel's spinner is drawn 4 times small (the kext has
+  switched the card to 32 bpp, the kernel still draws for 8 bpp), then the desktop.
+  The kext no longer draws its colour bars when the card is already running
+  (it clears the surface to black instead): `bringUp()` `warm` flag.
+- Space held at the restart, and Cmd-Opt-O-F (Win+Alt+O+F): Open Firmware banner
+  and `ok` prompt on the 7570, keyboard working, and `mac-boot` typed there boots
+  to the desktop with the same logo and spinner.
+- `rdnc.elf` (the old hand-over client with the pattern) is no longer used by the
+  hook; `rdnk.elf` (stay at the prompt) and `rdnkc.elf` (chain `mac-boot`) are.
+G5 state afterwards: nvramrc empty, `use-nvramrc?` false, `boot-command`
+mac-boot, `boot-args` empty, the kext in /System/Library/Extensions is the "warm"
+build (previous bundle kept in ~/RadeonNI.kext.installed and ~/RadeonNI.kext.aside,
+the one before the hand-over work in ~/RadeonNI.kext.before-posted).
+Left: the 8 bpp / 32 bpp overlap of the kernel's spinner (cosmetic), the
+clients reading the VBIOS from the ROM (the images embed it now), the permanent
+installer, the kext check, a sane way to pick the key, documentation in the
+README/PLAN.
