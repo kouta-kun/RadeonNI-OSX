@@ -1,0 +1,7 @@
+# The installation is complete
+Restart the Mac to start using the driver.
+After the restart you can check what it did in Terminal:
+grep RadeonNI /var/log/system.log
+A good start shows the VBIOS read from the card's ROM, a mode line for your monitor, "framebuffer started" and "3D engine up".
+The installer's own output is in /var/log/RadeonNI-install.log.
+If you chose Open Firmware support, the Apple logo appears on the Radeon's monitor at the next start-up.

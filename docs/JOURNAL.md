@@ -5998,3 +5998,25 @@ remote tests.
   timer it did (user: "it works"). Uninstalled and reinstalled the hook in the process; the G5 is
   back to the permanent state. Old kext: ~/RadeonNI.kext.before-ofcheck.
 - Left: the early spinner flashes a second on white at the start (cosmetic, user's call).
+
+## 2026-10-09 (night): graphical installer (RadeonNI.mpkg), OF files in the zip
+
+- `make-dist.sh` already copied `rdnk.elf`, `of-block.txt`, `of-install.sh`, `of-uninstall.sh`
+  into the zip (via `make-g5-package.sh`); now its file check requires them and `INSTALL.txt`
+  and `README.md` describe the optional OF step.
+- `scripts/make-mpkg.sh` (called by `make-dist.sh`, `--no-mpkg` skips): `RadeonNI.mpkg` for
+  Installer.app, text and scripts in `g5/installer/`. Two packages: `RadeonNI.pkg` (required;
+  payload in `/Library/RadeonNI/Setup`, postflight runs `install.sh --accel --hwcursor`, keeps the
+  two uninstallers in `/Library/RadeonNI/`) and `OpenFirmware.pkg` (`IFPkgFlagPackageSelection`
+  `unselected`; postflight runs `of-install.sh --yes`, so ticking it in Customize is the consent
+  to the NVRAM write). Panes: Welcome, Read Me (explains the OF patch), License, destination,
+  Customize, Install, Summary. `InstallationCheck` (exit 112) refuses non-10.4 or non-PowerPC.
+  Output goes to `/var/log/RadeonNI-install.log`.
+- The host has no mkbom/pax: the guest's own make `Archive.bom` and `Archive.pax.gz` (as root
+  through sudo, over `scripts/tiger.sh ssh`); the rest (plists, RTF by `g5/installer/mkrtf.py`)
+  is assembled on the host.
+- Checked: archives list right with bsdtar, plists load, and the guest's Installer.app opens the
+  mpkg and shows the Welcome pane. NOT run: the other panes (the QMP clicks did not reach the
+  guest this time), Customize, and any install. Nothing was installed in the guest or the G5.
+  Open: whether Customize shows OF unticked, the postflights, the "required" selection key and
+  the 112 message are unverified on Tiger. Next: the user opens it on the G5.

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Runs as root after rdnk.elf, of-block.txt and the scripts are in
+# /Library/RadeonNI/Setup-OF. Choosing the item in Customize is the user's
+# consent to the NVRAM write, so the script is told not to ask.
+log=/var/log/RadeonNI-install.log
+setup="$2/Library/RadeonNI/Setup-OF"
+{
+    echo "=== RadeonNI Open Firmware $(date)"
+    cd "$setup" || exit 1
+    sh ./of-install.sh --yes
+} >> "$log" 2>&1
+status=$?
+cd /
+if [ "$status" = 0 ]; then rm -rf "$setup"; else echo "of-install.sh failed ($status); kept $setup" >> "$log"; fi
+exit $status

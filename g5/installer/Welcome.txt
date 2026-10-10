@@ -1,0 +1,11 @@
+# Welcome to the RadeonNI installer
+This installs the RadeonNI driver for the AMD Radeon HD 7570 (PCI ID 1002:675d) on Mac OS X 10.4 Tiger for PowerPC.
+It puts a framebuffer driver, an OpenGL driver (Mesa's r600 behind Apple's driver interface) and a 2D plug-in for Quartz Extreme into /System/Library/Extensions, together with the card's microcode.
+## Experimental software
+It has run on one machine: a Power Mac G5 Late 2005 (PowerMac11,2) with a single Radeon HD 7570 and one monitor at 1920x1080. Any other Mac, card or monitor is untested.
+Until you know it works on your Mac, turn on Remote Login (System Preferences, Sharing) so that you can reach it over ssh if the screen stays dark.
+## What the next steps do
+- Read Me: what is installed and how to undo it
+- License
+- Customize: the Open Firmware support is optional and is not selected by default
+- Install, then restart

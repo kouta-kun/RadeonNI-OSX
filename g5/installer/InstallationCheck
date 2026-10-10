@@ -1,0 +1,10 @@
+#!/bin/sh
+# Installer runs this before it offers the install: Mac OS X 10.4 on a
+# PowerPC Mac only. Exit 112 shows the text for key "112" in
+# InstallationCheck.strings.
+case "$(sw_vers -productVersion 2>/dev/null)" in
+10.4*) ;;
+*) exit 112 ;;
+esac
+[ "$(uname -p)" = powerpc ] || exit 112
+exit 0

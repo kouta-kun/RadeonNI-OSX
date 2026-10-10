@@ -21,9 +21,11 @@ This project is vibecoded, meatproxied and any other AI slur you can think of. I
    ```
    It should say `Found the Radeon HD 7570 (1002:675d); its ROM has an address.` If it instead refuses because Open Firmware gave the ROM no address, you need a VBIOS image of your own card: `sudo sh ./install.sh --accel --hwcursor /path/to/vbios.rom`. (TBA: how to extract)
 
-3. Restart the Mac.
+3. Optional, Power Mac G5 PowerMac11,2 only: `sudo sh ./of-install.sh` puts the card on Open Firmware's console and shows Apple's boot logo on the Radeon. It adds a block to the `nvramrc` NVRAM variable (the old text is saved; `sudo sh ./of-uninstall.sh` takes it out) and does nothing on other Boot ROMs. `INSTALL.txt` has the details.
 
-4. Check what the driver did:
+4. Restart the Mac.
+
+5. Check what the driver did:
    ```
    grep RadeonNI /var/log/system.log
    ```

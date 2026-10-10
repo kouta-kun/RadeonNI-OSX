@@ -1,0 +1,1 @@
+Optional, Power Mac G5 only (Open Firmware 5.2.7f1). Adds a block to Open Firmware's nvramrc variable so that the card is set up before Mac OS X starts: the Apple logo shows on the Radeon's monitor, and Command-Option-O-F gives the Open Firmware console there. Writes to NVRAM; the old nvramrc is saved; harmless on other versions. Undo with of-uninstall.sh.

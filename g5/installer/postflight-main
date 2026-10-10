@@ -1,0 +1,18 @@
+#!/bin/sh
+# Runs as root after the payload is on disk in /Library/RadeonNI/Setup.
+log=/var/log/RadeonNI-install.log
+setup="$2/Library/RadeonNI/Setup"
+{
+    echo "=== RadeonNI install $(date)"
+    cd "$setup" || exit 1
+    sh ./install.sh --accel --hwcursor
+} >> "$log" 2>&1
+status=$?
+cd /
+if [ "$status" = 0 ]; then
+    # Keep the uninstallers where the ReadMe says.
+    cp "$setup/uninstall.sh" "$setup/of-uninstall.sh" "$2/Library/RadeonNI/"
+    chown root:wheel "$2/Library/RadeonNI/uninstall.sh" "$2/Library/RadeonNI/of-uninstall.sh"
+fi
+if [ "$status" = 0 ]; then rm -rf "$setup"; else echo "install.sh failed ($status); kept $setup" >> "$log"; fi
+exit $status

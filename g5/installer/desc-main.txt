@@ -1,0 +1,1 @@
+The driver for the Radeon HD 7570: framebuffer, OpenGL, Quartz Extreme, the 2D plug-in and the card's microcode, installed in /System/Library/Extensions.

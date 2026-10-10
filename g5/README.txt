@@ -13,6 +13,8 @@ Contents
   RadeonNIGA.plugin         the 2D plug-in the window server asks for
   install.sh      installs them into /System/Library/Extensions
   uninstall.sh    removes them
+  of-install.sh   optional: Open Firmware support (see below); with
+  of-uninstall.sh rdnk.elf and of-block.txt, which it needs next to it
   vbios.rom       the card's VBIOS image, if the package was built with it
                   (a fallback only, see below)
   TURKS_*.bin     the card's microcode, (C) Advanced Micro Devices, Inc.,

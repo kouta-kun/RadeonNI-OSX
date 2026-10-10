@@ -572,6 +572,11 @@ Keep these current as part of the work, and commit small and often.
   summary) and `docs/PIGLIT.md`: piglit's GL 2.1 tests built for Tiger and
   run on the G5 (2026-10-08). `run.py start` must stay in the foreground of
   its ssh session (run it as a background job), else the tests abort.
+- `scripts/make-mpkg.sh [stage [out]]` (2026-10-09; `make-dist.sh` runs it, `--no-mpkg`
+  skips): `RadeonNI.mpkg` for Installer.app, sources in `g5/installer/`: required
+  RadeonNI package, optional unselected Open Firmware package (its postflight runs
+  `of-install.sh --yes`). Archives made by the guest's `mkbom`/`pax`. Opened in the guest's
+  Installer (Welcome pane only); never run to the end anywhere (journal).
 - `scripts/make-dist.sh [--keep-gl]`: the archive for other people,
   `build/RadeonNI-<date>-<commit>.zip`: what `make-g5-package.sh` builds
   plus `README.md`, `INSTALL.txt` (`g5/README.txt`) and the licences

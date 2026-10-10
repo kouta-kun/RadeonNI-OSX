@@ -3,15 +3,19 @@
 # one folder to unpack on a Mac with a plain Mac OS X 10.4.11 and install
 # from, with nothing else needed there.
 #
-#   scripts/make-dist.sh [--keep-gl]
+#   scripts/make-dist.sh [--keep-gl] [--no-mpkg]
 #
 # It builds everything first (scripts/make-g5-package.sh): the kext and the
 # 2D plug-in in the running Tiger guest, the OpenGL bundle with Mesa inside
 # on the host with the cross toolchain (Mesa cannot be built with Tiger's
-# own compiler). --keep-gl takes the OpenGL bundle as last built.
+# own compiler). --keep-gl takes the OpenGL bundle as last built. It then
+# makes RadeonNI.mpkg (scripts/make-mpkg.sh), the graphical installer for
+# Installer.app, with the Open Firmware support as an optional item;
+# --no-mpkg leaves it out.
 #
 # In the folder: the three bundles, the microcode, install.sh and
-# uninstall.sh, INSTALL.txt (g5/README.txt), the project's README.md, and
+# uninstall.sh, the optional Open Firmware files (of-install.sh,
+# of-uninstall.sh, rdnk.elf, of-block.txt), INSTALL.txt (g5/README.txt), the project's README.md, and
 # the licences: LICENSE (this project), LICENSE.radeon (the microcode) and
 # LICENSE.mesa with licenses.mesa/ (Mesa, which is inside the OpenGL
 # bundle).
@@ -24,14 +28,17 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 stage=$root/build/RadeonNI-g5
 
+mpkg=1
+pkgargs=()
 for arg in "$@"; do
     case "$arg" in
-    --keep-gl) ;;
+    --keep-gl) pkgargs+=("$arg") ;;
+    --no-mpkg) mpkg=0 ;;
     *) echo "unknown option $arg" >&2; exit 1 ;;
     esac
 done
 
-"$root/scripts/make-g5-package.sh" "$@" > /dev/null
+"$root/scripts/make-g5-package.sh" ${pkgargs[@]+"${pkgargs[@]}"} > /dev/null
 
 name=RadeonNI-$(git -C "$root" log -1 --format=%cd-%h --date=format:%Y%m%d)
 [ -z "$(git -C "$root" status --porcelain --untracked-files=no)" ] || name=$name-dirty
@@ -54,11 +61,18 @@ if find "$dist" -name '*.rom' | grep -q . ||
     echo "a VBIOS image is in $dist; not making an archive of that" >&2
     exit 1
 fi
+if [ "$mpkg" = 1 ]; then
+    "$root/scripts/make-mpkg.sh" "$dist" "$dist" > /dev/null
+fi
 for f in RadeonNI.kext/Contents/MacOS/RadeonNI \
     RadeonNIGA.plugin/Contents/MacOS/RadeonNIGA \
     RadeonNIGLDriver.bundle/Contents/MacOS/RadeonNIGLDriver \
     TURKS_pfp.bin TURKS_me.bin TURKS_mc.bin LICENSE.radeon LICENSE \
-    install.sh uninstall.sh INSTALL.txt README.md VERSION; do
+    install.sh uninstall.sh of-install.sh of-uninstall.sh rdnk.elf of-block.txt \
+    INSTALL.txt README.md VERSION \
+    $([ "$mpkg" = 1 ] && echo RadeonNI.mpkg/Contents/Info.plist \
+    RadeonNI.mpkg/Contents/Packages/RadeonNI.pkg/Contents/Archive.pax.gz \
+    RadeonNI.mpkg/Contents/Packages/OpenFirmware.pkg/Contents/Archive.bom); do
     [ -s "$dist/$f" ] || { echo "missing from the archive: $f" >&2; exit 1; }
 done
 
