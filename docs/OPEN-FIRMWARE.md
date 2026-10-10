@@ -327,3 +327,22 @@ driver that calls the standard display methods (`fill-rectangle`,
 did not. The node now has them (software palette; rectangles in Forth). Whether
 this is the whole story is open until it is tried from the console (type
 `mac-boot` after Space or Cmd-Opt-O-F). `reset-all` is the safe way out meanwhile.
+
+## Installing from Linux (2026-10-10)
+
+For Linux distributions on the G5 (ArchPOWER and others), separate from the Mac OS X
+package: `g5/linux/` (`install.sh`, `uninstall.sh`, `nvram-lib.sh`, `README.txt`), built into
+`build/radeonni-of-linux-<date>-<commit>.tar.gz` by `scripts/make-linux-package.sh`. Same
+client (`rdnk.elf`) and same block; what differs:
+- Open Firmware reads only HFS/HFS+, so the client goes to `RadeonNI/` on the Apple_Bootstrap
+  partition of yaboot/GRUB (a journaled HFS+ volume mounts read-only on Linux: refused). The
+  block names it with the partition number from the Apple partition map, `hd:N,\RadeonNI\...`
+  (`of-hook.py block --dev`; the package ships a template with `@OFDEV@`, the installer fills
+  it in). `--of-device` overrides; `--print-only` prints the nvramrc text for pasting at the
+  prompt.
+- NVRAM is written with powerpc-utils' `nvram --update-config` (or `nvsetenv`), read back and
+  compared; the old nvramrc and `use-nvramrc?` are saved in `/var/lib/radeonni-of`.
+- Tested: `tests/linux_install.sh` (fake `nvram`, plain directory). **Not run on a real G5
+  under Linux**; open questions: whether powerpc-utils' `nvram` reads and writes the
+  PowerMac11,2's `nvramrc` correctly, and whether `hd:` is the disk the boot partition is on.
+- After the hand-over there is no `display` node, so `offb` has nothing until `radeon` loads.

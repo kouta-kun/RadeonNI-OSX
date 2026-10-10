@@ -77,6 +77,10 @@ System Preferences and a software cursor.
   (console session over telnet), host mock `make -C of build/mockf`. The
   G5's wired keyboard must be plugged in before power-up. After a hang expect
   two power cycles. Never store long lines in `boot-command`.
+- Linux install of the Open Firmware support (2026-10-10, `docs/OPEN-FIRMWARE.md`, "Installing
+  from Linux"): `g5/linux/` and `scripts/make-linux-package.sh`, for ArchPOWER and the like;
+  client on the HFS boot partition, block written with powerpc-utils' `nvram`. Tested only
+  with a fake `nvram` (`tests/linux_install.sh`); never run on a G5 under Linux.
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including

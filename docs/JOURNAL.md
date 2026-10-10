@@ -6025,3 +6025,11 @@ remote tests.
   were ticked was not said).
 - The user ticked the Open Firmware item in Customize and says that worked too (seen by the
   user), so the optional package, its postflight and the NVRAM write are confirmed on the G5.
+
+## 2026-10-10: Open Firmware support installable from Linux
+
+Asked by the user for friends running ArchPOWER on G5s. Built `g5/linux/` (install.sh,
+uninstall.sh, nvram-lib.sh, README.txt), `scripts/make-linux-package.sh`, `tests/linux_install.sh`,
+and a `--dev` option in `scripts/of-hook.py` (default output unchanged: the Tiger block's md5
+is the same as before). The test passes against a fake `nvram`; the package builds. Not run on
+a G5 under Linux. See `docs/OPEN-FIRMWARE.md`, "Installing from Linux".

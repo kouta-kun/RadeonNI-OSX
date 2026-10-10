@@ -27,7 +27,7 @@ BEGIN = '( RadeonNI-OF begin )'   # a Forth comment that ends at its parenthesis
 END = '( RadeonNI-OF end )'
 
 
-def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
+def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of", dev="hd:,"):
     # --force-console is for remote tests only: it makes the boot path behave as
     # if a key was held.  Without it the mac-boot hook always boots (with the logo).
     key = ": rdn-key? ( -- flag ) %s ; " % ("true" if force_console else "false")
@@ -36,9 +36,9 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
         parts.append('" false" " use-nvramrc?" $setenv " " " nvramrc" $setenv ')
     parts += [
         '0 value rdn-q? 0 value rdn-b? ',
-        ': rdn-con ( -- ) " dev / load hd:,%s\\rdnk.elf" evaluate go ; ' % dir,
+        ': rdn-con ( -- ) " dev / load %s%s\\rdnk.elf" evaluate go ; ' % (dev, dir),
         ': rdn-ho ( -- ) " dev /chosen" evaluate 0 0 " rdn-chain" property '
-        '" dev / load hd:,%s\\rdnk.elf" evaluate go ; ' % dir,
+        '" dev / load %s%s\\rdnk.elf" evaluate go ; ' % (dev, dir),
         key,
         ': rdn-q ( -- ) rdn-q? 0= if true to rdn-q? " rdn-con" $find drop catch drop then ff86f0a0 execute ; ',
         ': rdn-b ( -- ) rdn-b? 0= if true to rdn-b? rdn-key? if true to rdn-q? " rdn-con" $find drop catch drop '
@@ -52,11 +52,11 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
     return t
 
 
-def block(dir=r"\Users\tiger\of"):
+def block(dir=r"\Users\tiger\of", dev="hd:,"):
     """The permanent text: marker comments (parenthesis comments, which do not depend
     on how Open Firmware splits lines; a backslash comment swallowed the whole
     nvramrc on the G5) around the hook."""
-    return "%s %s %s" % (BEGIN, text(dir=dir), END)
+    return "%s %s %s" % (BEGIN, text(dir=dir, dev=dev), END)
 
 
 def sh(*a):
@@ -71,8 +71,10 @@ if __name__ == "__main__":
     opts = dict(oneshot="--oneshot" in a, force_console="--force-console" in a)
     if "--dir" in a:
         opts["dir"] = a[a.index("--dir") + 1]
+    if "--dev" in a:   # Open Firmware device of the volume, e.g. hd:3, (default hd:,)
+        opts["dev"] = a[a.index("--dev") + 1]
     if a[0] == "block":
-        print(block(**{k: v for k, v in opts.items() if k == "dir"}))
+        print(block(**{k: v for k, v in opts.items() if k in ("dir", "dev")}))
     elif a[0] == "text":
         print(text(**opts))
     elif a[0] == "apply":
