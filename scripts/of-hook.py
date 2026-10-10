@@ -23,8 +23,8 @@ import os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAC = os.path.join(ROOT, "scripts", "mac.sh")
-BEGIN = '\\ RadeonNI-OF begin'   # a Forth comment: ends at the end of the line
-END = '\\ RadeonNI-OF end'
+BEGIN = '( RadeonNI-OF begin )'   # a Forth comment that ends at its parenthesis
+END = '( RadeonNI-OF end )'
 
 
 def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
@@ -53,9 +53,10 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
 
 
 def block(dir=r"\Users\tiger\of"):
-    """The permanent text: marker comment lines (a Forth comment ends at the line
-    end, so the lines are separated by CR) around the hook, as nvram(8) writes it."""
-    return "%s%%0d%s%%0d%s%%0d" % (BEGIN, text(dir=dir), END)
+    """The permanent text: marker comments (parenthesis comments, which do not depend
+    on how Open Firmware splits lines; a backslash comment swallowed the whole
+    nvramrc on the G5) around the hook."""
+    return "%s %s %s" % (BEGIN, text(dir=dir), END)
 
 
 def sh(*a):

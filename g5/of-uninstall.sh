@@ -14,7 +14,7 @@ DEST=/Library/RadeonNI/OpenFirmware
 [ "$(id -u)" = 0 ] || { echo "of-uninstall.sh: run as root" >&2; exit 1; }
 
 current=$(nvram nvramrc 2>/dev/null | sed -n 's/^nvramrc[[:space:]]//p')
-stripped=$(printf '%s' "$current" | perl -0pe 's/\\ RadeonNI-OF begin%0d.*?\\ RadeonNI-OF end%0d//s')
+stripped=$(printf '%s' "$current" | perl -0pe 's/ ?\( RadeonNI-OF begin \).*?\( RadeonNI-OF end \)//s')
 nvram "nvramrc=$stripped"
 if [ -n "$stripped" ]; then
     echo "nvramrc keeps its other content; use-nvramrc? stays as it is."

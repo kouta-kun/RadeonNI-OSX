@@ -8,8 +8,8 @@
 # What it does:
 #   1. copies rdnk.elf (the Open Firmware client) to
 #      /Library/RadeonNI/OpenFirmware on the boot volume;
-#   2. appends a block, between the comment lines "\ RadeonNI-OF begin" and
-#      "\ RadeonNI-OF end", to the nvramrc variable, and sets use-nvramrc?
+#   2. appends a block, between the comments "( RadeonNI-OF begin )" and
+#      "( RadeonNI-OF end )", to the nvramrc variable, and sets use-nvramrc?
 #      to true. What nvramrc held before is kept, and the old text and the old
 #      value of use-nvramrc? are saved in /Library/RadeonNI/OpenFirmware.
 #
@@ -35,7 +35,6 @@ set -e
 
 DEST=/Library/RadeonNI/OpenFirmware
 here=$(cd "$(dirname "$0")" && pwd)
-BEGIN='\ RadeonNI-OF begin'
 
 fail() { echo "of-install.sh: $*" >&2; exit 1; }
 
@@ -69,12 +68,9 @@ current=$(nvram nvramrc 2>/dev/null | sed -n 's/^nvramrc[[:space:]]//p')
 use=$(nvram 'use-nvramrc?' 2>/dev/null | sed -n 's/^use-nvramrc?[[:space:]]//p')
 
 # the old block (an earlier install) comes out; everything else stays
-stripped=$(printf '%s' "$current" | perl -0pe 's/\\ RadeonNI-OF begin%0d.*?\\ RadeonNI-OF end%0d//s')
-case "$stripped" in
-""|*%0d) ;;
-*) stripped="$stripped%0d" ;;
-esac
-new="$stripped$block"
+stripped=$(printf '%s' "$current" | perl -0pe 's/ ?\( RadeonNI-OF begin \).*?\( RadeonNI-OF end \)//s')
+new="$stripped $block"
+[ -n "$stripped" ] || new="$block"
 [ ${#new} -lt 4000 ] || fail "nvramrc would be ${#new} characters; too long to be safe"
 
 echo "nvramrc now:        ${current:-(empty)}"
