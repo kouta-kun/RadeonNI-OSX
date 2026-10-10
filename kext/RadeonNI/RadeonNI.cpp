@@ -446,8 +446,14 @@ bool RadeonNI::bringUp()
 	if (warm) {
 		PE_Video v;
 
+		IOReturn cr;
+
 		bzero(&v, sizeof(v));
-		if (getPlatform()->getConsoleInfo(&v) == kIOReturnSuccess && v.v_baseAddr) {
+		cr = getPlatform()->getConsoleInfo(&v);
+		IOLog("RadeonNI: kernel console before: rc %d base 0x%lx rowbytes %lu %lux%lu depth %lu\n",
+		      (int)cr, (unsigned long)v.v_baseAddr, (unsigned long)v.v_rowBytes,
+		      (unsigned long)v.v_width, (unsigned long)v.v_height, (unsigned long)v.v_depth);
+		if (cr == kIOReturnSuccess && v.v_baseAddr) {
 			v.v_rowBytes = fFb.pitch_pixels * 4;
 			v.v_width = fFb.width;
 			v.v_height = fFb.height;
