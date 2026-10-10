@@ -40,7 +40,7 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
     parts += [
         '0 value rdn-q? 0 value rdn-b? ',
         ': rdn-con ( -- ) " dev / load hd:,%s\\rdnk.elf" evaluate go ; ' % dir,
-        ': rdn-ho ( -- ) " dev / load hd:,%s\\rdnc.elf" evaluate go ; ' % dir,
+        ': rdn-ho ( -- ) " dev / load hd:,%s\\rdnkc.elf" evaluate go ; ' % dir,
         key,
         ': rdn-q ( -- ) rdn-q? 0= if true to rdn-q? rdn-con then ff86f0a0 execute ; ',
         ': rdn-b ( -- ) rdn-b? 0= if true to rdn-b? rdn-key? if true to rdn-q? rdn-con '
