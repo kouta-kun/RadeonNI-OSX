@@ -11,6 +11,8 @@
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
 #include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IODeviceTreeSupport.h>
+#include <UserNotification/KUNCUserNotifications.h>
 
 #include "RadeonNI.h"
 #include "RadeonNIAccel.h"
@@ -615,7 +617,81 @@ bool RadeonNI::start(IOService *provider)
 	 */
 	if (getProperty("Accelerator") == kOSBooleanTrue)
 		fAccel = RadeonNIAccel::withFramebuffer(this, provider);
+	checkFirmwareHook();
 	return true;
+}
+
+#define NOTICE_DELAY_MS 60000
+
+void RadeonNI::noticeTimerFired(OSObject *owner, IOTimerEventSource *sender)
+{
+	KUNCUserNotificationDisplayNotice(0, 0, NULL, NULL, NULL,
+		"Radeon HD 7570: Open Firmware hook not installed",
+		"The driver works, but Open Firmware does not set up the card yet: no console "
+		"on the Radeon at Cmd-Opt-O-F and no Apple logo while starting. To install it, "
+		"open Terminal in the RadeonNI package folder and run:\n\n"
+		"sudo ./of-install.sh\n\n"
+		"(Other nvramrc content stays.) To stop this notice, add rdn_ofhook=0 to the "
+		"boot-args.",
+		"OK");
+	IOLog("RadeonNI: Open Firmware hook notice shown\n");
+}
+
+/*
+ * Is the Open Firmware hook (g5/of-install.sh) in nvramrc? Publishes OFHook (1 yes,
+ * 0 no) and, on the Power Mac G5 it was written for, tells the user once per boot
+ * how to install it when it is missing. The card works without it (this driver
+ * POSTs it itself); the hook gives the Open Firmware console on the card and the
+ * Apple logo. Never writes the NVRAM. rdn_ofhook=0 as a boot argument silences it.
+ */
+void RadeonNI::checkFirmwareHook()
+{
+	static const char marker[] = "RadeonNI-OF begin";
+	const int mlen = sizeof(marker) - 1;
+	IORegistryEntry *options, *root;
+	OSData *model;
+	bool found = false, g5 = false;
+	int ask = 1;
+
+	options = IORegistryEntry::fromPath("/options", gIODTPlane);
+	if (options) {
+		/* IODTNVRAM shows nvramrc as a string; accept data too */
+		OSObject *v = options->getProperty("nvramrc");
+		const char *d = 0;
+		unsigned n = 0;
+
+		if (OSString *str = OSDynamicCast(OSString, v)) {
+			d = str->getCStringNoCopy();
+			n = str->getLength();
+		} else if (OSData *dat = OSDynamicCast(OSData, v)) {
+			d = (const char *)dat->getBytesNoCopy();
+			n = dat->getLength();
+		}
+		for (unsigned i = 0; d && i + mlen <= n && !found; i++)
+			found = memcmp(d + i, marker, mlen) == 0;
+		options->release();
+	}
+	setProperty("OFHook", (UInt64)(found ? 1 : 0), 32);
+
+	root = IORegistryEntry::fromPath("/", gIODTPlane);
+	if (root) {
+		model = OSDynamicCast(OSData, root->getProperty("model"));
+		g5 = model && model->getLength() >= 11 &&
+		     memcmp(model->getBytesNoCopy(), "PowerMac11,", 11) == 0;
+		root->release();
+	}
+	IOLog("RadeonNI: Open Firmware hook %s in nvramrc%s\n", found ? "is" : "is not",
+	      g5 ? "" : " (not a PowerMac11,x: no notice)");
+	if (found || !g5 || (PE_parse_boot_arg("rdn_ofhook", &ask) && !ask))
+		return;
+	/* the notice server is not there while the driver starts: wait until the session is up */
+	fNoticeLoop = IOWorkLoop::workLoop();
+	if (!fNoticeLoop)
+		return;
+	fNoticeTimer = IOTimerEventSource::timerEventSource(this, noticeTimerFired);
+	if (!fNoticeTimer || fNoticeLoop->addEventSource(fNoticeTimer) != kIOReturnSuccess)
+		return;
+	fNoticeTimer->setTimeoutMS(NOTICE_DELAY_MS);
 }
 
 void RadeonNI::cleanUp()

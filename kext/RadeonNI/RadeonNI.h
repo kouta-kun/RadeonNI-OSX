@@ -162,6 +162,8 @@ private:
 	int fSenseLast, fSenseSteady;
 	IOWorkLoop *fPollLoop;
 	IOTimerEventSource *fPollTimer;
+	IOWorkLoop *fNoticeLoop;
+	IOTimerEventSource *fNoticeTimer;
 	IOFBInterruptProc fConnectProc;
 	OSObject *fConnectTarget;
 	void *fConnectRef;
@@ -174,12 +176,14 @@ private:
 	void pollHotplug();
 	void monitorReturned();
 	static void pollTimerFired(OSObject *owner, IOTimerEventSource *sender);
+	static void noticeTimerFired(OSObject *owner, IOTimerEventSource *sender);
 
 	bool loadBios();
 	bool biosFromRom();
 	bool biosFromPersonality();
 	void compareWithPersonality();
 	bool bringUp();
+	void checkFirmwareHook();
 	const struct rdn_mode *modeForID(IODisplayModeID id);
 	void describeFb(const struct rdn_mode *mode, IOIndex depth,
 			struct rdn_fb *fb);
