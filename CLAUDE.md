@@ -53,22 +53,30 @@ System Preferences and a software cursor.
   trained only at a mode set), 2.7 Gbit/s on a real sink, passive
   adapters. The kext before it on the G5 is `~/RadeonNI.kext.before-dp`
   (journal 2026-10-07; `docs/HARDWARE.md`, "DisplayPort connector").
-- Open Firmware (2026-10-09, `docs/OPEN-FIRMWARE.md`, journal): a client in
-  `of/` (built from `hw/`, VBIOS embedded at build time, never committed) POSTs
-  the card from Open Firmware and sets 1920x1080 (the user saw the colour bars);
-  with `of/display.fs` Open Firmware's console text and `ok` prompt show on
-  the 7570's monitor (seen by the user); and a hand-over works: the client
-  sets a marker and clears PCI decode and bus master as its last act, the
-  kext (`rdn_handover_take`, ioreg property `HandOver` = 1) skips its POST and
-  Tiger comes up (readback and the user). It also works as a short one-shot
-  `boot-command` with no console: `" <orig>" " boot-command" $setenv " dev /
-  load hd:3,\Users\tiger\of\rdnc.elf" evaluate go` (`load` eats the rest of
-  its line, so wrap it in `evaluate`; a client that returns or exits ends the
-  whole line, so `rdnc.elf` chains `mac-boot` itself). `scripts/of-run.py`:
-  `serve`/`do` (console session), `capture` (console inside the line, host
-  listens). Not permanent (M5 not done). After a hang expect two power cycles;
-  the user's wireless keyboard cannot reset NVRAM. Never store long lines in
-  `boot-command`.
+- Open Firmware (2026-10-09, `docs/OPEN-FIRMWARE.md`, journal; **done and
+  permanent on the G5**, seen by the user): one client, `of/` -> `rdnk.elf`
+  (built from `hw/`, no VBIOS inside: it finds the card in the device tree
+  and reads the ROM at run time; a ROM it cannot use leaves the Mac booting
+  as without it). `g5/of-install.sh` (in the package, with `rdnk.elf` and
+  `of-block.txt` from `scripts/of-hook.py block`) appends a block to
+  `nvramrc`, marked `( RadeonNI-OF begin )` ... `( RadeonNI-OF end )`
+  (never `\` comments: Open Firmware reads nvramrc as one line), saves the
+  old text and `use-nvramrc?` in `/Library/RadeonNI/OpenFirmware`, sets
+  `use-nvramrc?` true; `of-uninstall.sh` takes only the block out. The
+  block patches `quit` and `mac-boot` in RAM (cells checked first): Cmd-Opt-O-F
+  (Win+Alt+O+F on the wired PC keyboard, held from power-on) gives the
+  console and `ok` prompt on the 7570's monitor; a normal boot runs the client,
+  which POSTs the card, sets 1920x1080, marks `/chosen` `rdn-chain`
+  and chains `mac-boot`, so Apple's logo shows and the kext (`ConsoleWarm`,
+  no rainbow) takes over. A missing file or a failing client falls back to the
+  plain boot (`catch`). The kext checks nvramrc (property `OFHook`) and, on a
+  PowerMac11,x without the block, shows a notice a minute after start
+  (`rdn_ofhook=0` silences); it never writes NVRAM. NVRAM loss removes the
+  block: run the installer again. Developing: `python3 -I scripts/of-hook.py
+  apply --oneshot` (one boot, then clears itself), `scripts/of-run.py`
+  (console session over telnet), host mock `make -C of build/mockf`. The
+  G5's wired keyboard must be plugged in before power-up. After a hang expect
+  two power cycles. Never store long lines in `boot-command`.
 - The host's sshd accepts Tiger's old ssh algorithms
   (`/etc/ssh/sshd_config.d/10-tiger.conf`, user's request).
 - The tag `working-framebuffer` marks the confirmed phase 1 state including
@@ -425,8 +433,8 @@ Read `docs/PLAN.md` and the tail of `docs/JOURNAL.md` before doing anything.
   registers its framebuffer's power states) and the plan; read it before
   touching sleep or display power.
 - `docs/OPEN-FIRMWARE-PLAN.md`: the outline for the first sessions of that work.
-- `docs/OPEN-FIRMWARE.md`: evaluation of display output from Open Firmware
-  (the card has no FCode): routes, milestones, risks; nothing built.
+- `docs/OPEN-FIRMWARE.md`: display output from Open Firmware (the card has
+  no FCode): findings, how the hook works, the permanent install (done).
 - `docs/RESEARCH.md`: prior research. `[V]` is verified, `[I]` is inference.
   Treat `[I]` as a hypothesis; fix the document when reality differs.
 

@@ -120,7 +120,10 @@ M4 one to two. Several sessions in all.
 
 Status: **M0 to M3 done and seen by the user** (M2: eight colour bars from the
 client; M3: Open Firmware's console text and `ok` prompt on the 7570's monitor).
-M4 (hand-over to Tiger) and M5 (automatic) not done. The journal entries of
+**Update, end of 2026-10-09: M4 and M5 are done and permanent** (one client
+reading the VBIOS from the ROM; `g5/of-install.sh` writes a marked nvramrc block;
+the kext checks for it; see CLAUDE.md and the journal). The text below is the
+history. The journal entries of
 2026-10-09 have the story; this is what is worth knowing.
 
 ### Facts about the G5's Open Firmware (5.2.7f1, PowerMac11,2)

@@ -30,6 +30,19 @@ Install
      OpenGL, Quartz Extreme or the hardware cursor)
   4. Restart.
 
+Open Firmware (optional, Power Mac G5 PowerMac11,2 with Open Firmware 5.2.7f1)
+  sudo sh ./of-install.sh
+  Adds a block to the nvramrc variable so that Open Firmware sets the card up
+  before Mac OS X starts: the Apple logo shows on the Radeon, and Cmd-Opt-O-F
+  (held from power-on, on a wired keyboard plugged in beforehand) gives the
+  Open Firmware console on the Radeon. Other nvramrc text is kept; the old
+  text is saved in /Library/RadeonNI/OpenFirmware. If the file cannot be
+  loaded the Mac boots as before. sudo sh ./of-uninstall.sh removes it. A
+  reset of the NVRAM removes the block; run the installer again. Without it
+  the driver still works (it sets the card up itself, after a test pattern),
+  and says so once, a minute after start-up; rdn_ofhook=0 in boot-args
+  silences that.
+
 The driver takes the VBIOS from the card's own ROM; no file is needed. A
 VBIOS image file is a fallback: given to install.sh, or present in this
 folder as vbios.rom, it is kept inside the driver and used only if the ROM

@@ -5978,3 +5978,23 @@ remote tests.
   run; call it as `python3 -I scripts/of-hook.py`. A failed apply followed by a reboot
   looks like a client failure (the kext then draws its cold-start rainbow).
 - Next: one client instead of rdnk/rdnkc, then the permanent installer (item 3).
+
+## 2026-10-09 (night): the Open Firmware hook is permanent (items 2 to 4 done, by the user)
+
+- One client (`rdnk.elf`): the mac-boot hook sets a property `rdn-chain` on `/chosen`,
+  the client chains `mac-boot` at exit only when it is there; `rdnkc` is gone. The hook
+  wraps the client in `catch`: a missing file (tested with a wrong directory) falls
+  through to the plain boot (rainbow from the kext, desktop).
+- `g5/of-install.sh` / `of-uninstall.sh`. First try failed: the markers were `\` comments
+  and the permanent nvramrc did nothing (rainbow). Open Firmware reads the stored text as
+  one line, so a `\` comment swallowed all of it; `( ... )` markers work. Installed on the
+  G5 (nvramrc 754 chars, use-nvramrc? true, originals in /Library/RadeonNI/OpenFirmware):
+  no key -> logo, black, desktop, no rainbow; Win+Alt+O+F -> console, `mac-boot` -> desktop.
+  (The first Win+Alt+O+F misses were the wrong keys.) The auto-mode safety check refused the
+  first permanent NVRAM write until the user allowed it.
+- Kext (`checkFirmwareHook`): Tiger's `/options` shows `nvramrc` as an OSString, not OSData;
+  property `OFHook` = 1 with the block, 0 without. Without it on a PowerMac11,x the kext shows a
+  KUNC notice; shown at start it never appeared (no notice server yet), shown 60 s later by a
+  timer it did (user: "it works"). Uninstalled and reinstalled the hook in the process; the G5 is
+  back to the permanent state. Old kext: ~/RadeonNI.kext.before-ofcheck.
+- Left: the early spinner flashes a second on white at the start (cosmetic, user's call).
