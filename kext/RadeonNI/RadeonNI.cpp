@@ -462,7 +462,9 @@ bool RadeonNI::bringUp()
 			setProperty("ConsoleBefore", buf);
 		}
 		setProperty("ConsoleWarm", (UInt64)1, 32);
-		if (cr == kIOReturnSuccess && v.v_baseAddr) {
+		if (cr == kIOReturnSuccess && fFbMap) {
+			/* the record is parked with base 0 while the console changes hands */
+			v.v_baseAddr = fFbMap->getVirtualAddress();
 			v.v_rowBytes = fFb.pitch_pixels * 4;
 			v.v_width = fFb.width;
 			v.v_height = fFb.height;
