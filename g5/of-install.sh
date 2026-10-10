@@ -79,6 +79,10 @@ new="$stripped$block"
 
 echo "nvramrc now:        ${current:-(empty)}"
 echo "use-nvramrc? now:   ${use:-unknown}"
+if [ -n "$stripped" ] && [ "$use" != true ]; then
+    echo "WARNING: nvramrc has text of its own and use-nvramrc? is off, so that text is not"
+    echo "running today. Turning use-nvramrc? on makes it run at every boot."
+fi
 echo "This will write nvramrc (${#new} characters) and set use-nvramrc? to true in the"
 echo "Mac's NVRAM, and copy rdnk.elf to $DEST."
 if [ "$yes" = 0 ]; then
