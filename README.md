@@ -70,13 +70,13 @@ Once display output was working, the next step was to ask Claude to port Mesa ov
 
 Claude took the r600 driver from Mesa, patched it for Tiger compatibility, and developed two ends to this integration, a hardware interface that allows r600 to communicate with the GPU through PCIe (for command submission, etc) and a (currently in development) IOAccelerator implementation that passes through every OpenGL to Mesa. This worked, but did not support Quartz Extreme and essentially functioned by using OSMesa to render and then asking the CPU to copy over to the framebuffer. After some development Quartz Extreme seems to work correctly (no trails, OpenGL windowed and fullscreen works). A couple of games have been tested:
 
-|   Game      |  State  |
-| ----------- | ------- |
-| Quake 3     | Working in full screen, non-responsive input in windowed mode |
-| Sauerbraten | Working in full screen, glitchy lower half in windowed mode |
-| Tux Racer   | Broken (window only updates when moved, has no full-screen mode) |
-| Doom 3      | Working in full screen, performance about 2x 6600LE |
-| World of Warcraft | Working, required custom extension implementation for high speed |
+|   Game      |  State  | Known Issues |
+| ----------- | ------- | ------------ |
+| Quake 3     | Working | Sometimes the intro video doesn't work |
+| Sauerbraten | Working | |
+| Tux Racer   | Working | |
+| Doom 3      | Working, performance about 2x 6600LE | |
+| World of Warcraft | Working, required custom extension implementation for high speed | |
 
 It is also now being tested on the G5 with no major issues. A test on a new monitor showed that the HDMI infoframes were not 100% accurate (which the other monitor was way more tolerant of). It should now work with most 1080p HDMI or DVI-D monitors. The output topology is hardcoded, so it's likely to only work on the DVI-I output of specificially the HD 7570.
 
@@ -91,6 +91,14 @@ After some investigation, it turned out the issue (specifically in Doom 3) was t
 World of Warcraft is a special case, in that the original OpenGL renderer used fixed-pipeline extensions that were never or barely adopted outside the Apple ecosystem (ARB_vertex_blend), so an implementation was cobbled together. Additionally it reuses parts of buffers multiple times, which Apple had a propietary extension for (GL_APPLE_flush_buffer_range), also now implemented and gets the framerate from ~33 to ~110.
 
 Call of Duty 2 also depended on a couple of Apple-specific extensions, with that + optimizations it runs at about 40 to 70FPS on the demo mission.
+
+## Stage 3 (OpenFirmware integration)
+
+Something we expected might be impossible is the integration of the GPU drivers into OpenFirmware, the PowerMac equivalent of UEFI/BIOS. The way that GPU initialization (normally) works is that the card has a ROM containing code to be executed by the computer's bootloader in order to initialize the display before the drivers come into play (i.e. for displaying at boot time and in case the driver is not available in the system). As you might know or expect, this code is bootloader specific. UEFI-compatible cards have a .efi executable, BIOS-compatible cards have a raw block of x86 instructionsm while OpenFirmware-compatible cards (as used in new-world Macs) store FCode, a byte-compiled expression of a Forth program that is technically architecture-independent but usually still very specific to the environment.
+
+Cards of the era only came with either BIOS-compatible code or FCode, which meant that there were PC-compatible cards and Mac-compatible cards. Most cards could be flashed from one to the other, sometimes due to ROM chip sizes Mac-specific ROM would have to be modified to fit in PC cards. Flashing this card was out of the question: first, there was no Mac rom for this card ever due to being released, and even if Claude could generate FCode for this card I don't have a programmer to re-flash it if something went wrong.
+
+I would've thought this was the end of it, but OpenFirmware contains a variable called `nvramrc`, which allows the user to define a string of Forth commands to be executed at boot time, before `boot-command` or Cmd+Opt+O+F are evaluated. `nvramrc` only stores about 8000 characters, which is not nearly enough for even a barebones driver. Claude was able to generate a PowerPC32 client program in C that initializes the card, declares it in the device tree and returns control to OpenFirmware, however `nvramrc` also runs so early in the boot process that the disk drives are not yet initialized, so there was nowhere to read this program from. The solution was to use `nvramrc` to modify the Forth words that normal boot and Cmd+Opt+O+F execute (`mac-boot` and `quit` respectively) so that they first execute the client and then their original code. The new installer now asks if you want to enable it, since messing with OpenFirmware *could* be dangerous (nothing that would survive a PRAM zap though). With this, we have access to the OpenFirmware console, and the hand-over to the OS X kext works without an issue.
 
 ## Future steps
 
