@@ -5941,3 +5941,22 @@ Left: the 8 bpp / 32 bpp overlap of the kernel's spinner (cosmetic), the
 clients reading the VBIOS from the ROM (the images embed it now), the permanent
 installer, the kext check, a sane way to pick the key, documentation in the
 README/PLAN.
+
+## 2026-10-09: the hand-off from Open Firmware to the kext is clean (item 1 done, by the user)
+
+Normal boot (no key): Apple logo and spinner (BootX through the console node), then
+black, then the desktop. Fixed in `kext/RadeonNI`:
+- a card already running when the kext starts (`warm`: `rdn_card_posted`) is not
+  given the test pattern; its surface is cleared to black instead;
+- right after the kext's own mode set it tells the kernel the new console layout
+  (`getConsoleInfo`/`setConsoleInfo` with `kPEReleaseScreen`, `kPEEnableScreen`,
+  32 bpp, our aperture mapping as base: the kernel's record is *parked with base 0*
+  at that moment, so the base must be supplied; `ConsoleBefore`, `ConsoleWarm`,
+  `ConsoleSet` are published as registry properties for ioreg: the system log loses
+  the kext's early lines on some boots);
+- the kernel's last spinner frame was drawn for the old 8 bpp layout and stayed as 4
+  small copies on the new 32 bpp scan-out: the surface is wiped once more after the
+  console update.
+Space-held path removed from normal boots (the poll cost ~1.2 s per boot):
+Cmd-Opt-O-F is the way to the console; `of-hook.py --force-console` remains for
+remote tests.
