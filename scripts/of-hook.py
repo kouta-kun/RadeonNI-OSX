@@ -40,9 +40,9 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
         ': rdn-ho ( -- ) " dev /chosen" evaluate 0 0 " rdn-chain" property '
         '" dev / load hd:,%s\\rdnk.elf" evaluate go ; ' % dir,
         key,
-        ': rdn-q ( -- ) rdn-q? 0= if true to rdn-q? rdn-con then ff86f0a0 execute ; ',
-        ': rdn-b ( -- ) rdn-b? 0= if true to rdn-b? rdn-key? if true to rdn-q? rdn-con '
-        'else rdn-ho then then ff975d80 execute ; ',
+        ': rdn-q ( -- ) rdn-q? 0= if true to rdn-q? " rdn-con" $find drop catch drop then ff86f0a0 execute ; ',
+        ': rdn-b ( -- ) rdn-b? 0= if true to rdn-b? rdn-key? if true to rdn-q? " rdn-con" $find drop catch drop '
+        'else " rdn-ho" $find drop catch drop then then ff975d80 execute ; ',
         ': rdn-patch ( -- ) ff852d00 l@ ff975d80 = ff852960 l@ ff86f0a0 = and if '
         '" rdn-q" $find drop ff852960 l! " rdn-b" $find drop ff852d00 l! then ; ',
         'rdn-patch',
@@ -50,6 +50,12 @@ def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
     t = "".join(parts)
     assert "'" not in t
     return t
+
+
+def block(dir=r"\Users\tiger\of"):
+    """The permanent text: marker comment lines (a Forth comment ends at the line
+    end, so the lines are separated by CR) around the hook, as nvram(8) writes it."""
+    return "%s%%0d%s%%0d%s%%0d" % (BEGIN, text(dir=dir), END)
 
 
 def sh(*a):
@@ -64,7 +70,9 @@ if __name__ == "__main__":
     opts = dict(oneshot="--oneshot" in a, force_console="--force-console" in a)
     if "--dir" in a:
         opts["dir"] = a[a.index("--dir") + 1]
-    if a[0] == "text":
+    if a[0] == "block":
+        print(block(**{k: v for k, v in opts.items() if k == "dir"}))
+    elif a[0] == "text":
         print(text(**opts))
     elif a[0] == "apply":
         t = text(**opts)

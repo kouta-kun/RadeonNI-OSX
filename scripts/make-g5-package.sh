@@ -54,6 +54,12 @@ chmod 755 "$stage/RadeonNIGLDriver.bundle/Contents/MacOS/RadeonNIGLDriver"
 
 cp "$root/g5/install.sh" "$root/g5/uninstall.sh" "$root/g5/README.txt" "$root/LICENSE" "$stage/"
 chmod +x "$stage/install.sh" "$stage/uninstall.sh"
+# Open Firmware side (of-install.sh): the client, stripped, and the nvramrc block.
+make -C "$root/of" build/rdnk.elf > /dev/null
+"$root/third_party/ppc-toolchain/bin/powerpc-linux-strip" -o "$stage/rdnk.elf" "$root/of/build/rdnk.elf"
+python3 -I "$root/scripts/of-hook.py" block --dir '\Library\RadeonNI\OpenFirmware' > "$stage/of-block.txt"
+cp "$root/g5/of-install.sh" "$root/g5/of-uninstall.sh" "$stage/"
+chmod +x "$stage/of-install.sh" "$stage/of-uninstall.sh"
 git -C "$root" describe --tags --always --dirty > "$stage/VERSION"
 
 "$root/scripts/fetch-firmware.sh"
