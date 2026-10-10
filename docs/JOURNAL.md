@@ -6020,3 +6020,6 @@ remote tests.
   guest this time), Customize, and any install. Nothing was installed in the guest or the G5.
   Open: whether Customize shows OF unticked, the postflights, the "required" selection key and
   the 112 message are unverified on Tiger. Next: the user opens it on the G5.
+- Later the same night: full `make-dist.sh` build (a6349b3), `RadeonNI.mpkg` copied to the G5's
+  home and run by the user from Installer.app: "it worked great" (seen by the user; which items
+  were ticked was not said).

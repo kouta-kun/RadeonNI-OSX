@@ -576,7 +576,7 @@ Keep these current as part of the work, and commit small and often.
   skips): `RadeonNI.mpkg` for Installer.app, sources in `g5/installer/`: required
   RadeonNI package, optional unselected Open Firmware package (its postflight runs
   `of-install.sh --yes`). Archives made by the guest's `mkbom`/`pax`. Opened in the guest's
-  Installer (Welcome pane only); never run to the end anywhere (journal).
+  Installer, and run on the G5 by the user (2026-10-09, "worked great"; journal).
 - `scripts/make-dist.sh [--keep-gl]`: the archive for other people,
   `build/RadeonNI-<date>-<commit>.zip`: what `make-g5-package.sh` builds
   plus `README.md`, `INSTALL.txt` (`g5/README.txt`) and the licences
