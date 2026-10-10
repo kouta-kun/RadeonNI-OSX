@@ -2,7 +2,7 @@ all: build/rdnkc.elf build/rdnk.elf build/rdnc.elf build/rdnt1.elf build/rdnt2.e
 # Open Firmware client (PowerPC ELF32); see docs/OPEN-FIRMWARE-PLAN.md.
 PPC_CC ?= ../third_party/ppc-toolchain/bin/powerpc-linux-gcc
 HW = rdn_gart rdn_mc rdn_watermark rdn_pm rdn_cursor rdn_mem rdn_gpu rdn_cp rdn_blit rdn_selftest rdn_pattern rdn_modeset rdn_dp rdn_mode rdn_dmt rdn_i2c rdn_post rdn_atom
-CF = -DEMBED_VBIOS=\"$(abspath ../private/vbios.rom)\" -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter -ffreestanding -fno-builtin -fno-pic -msoft-float -mno-altivec -mcpu=powerpc -m32 -fno-stack-protector
+CF = -std=gnu99 -O2 -g -Wall -Wextra -Wno-unused-parameter -ffreestanding -fno-builtin -fno-pic -msoft-float -mno-altivec -mcpu=powerpc -m32 -fno-stack-protector
 build/rdn1.elf: build/link-1.ld build/link-2.ld build/link-3.ld start.S of_main.c libc.c $(addprefix ../hw/,$(addsuffix .c,$(HW))) ../hw/atom/atom.c link.ld
 	mkdir -p build
 	$(PPC_CC) $(CF) -DSTAGE=1 -nostdlib -static -Wl,-T,build/link-2.ld -Wl,--no-warn-rwx-segments -o $@ start.S of_main.c libc.c $(addprefix ../hw/,$(addsuffix .c,$(HW))) ../hw/atom/atom.c $$($(PPC_CC) -m32 -print-libgcc-file-name) 2>&1

@@ -23,15 +23,16 @@
 #ifndef STAGE
 #define STAGE 99
 #endif
-#define CARD_PARENT	"/ht@0,f2000000/pci@5"
-#define CARD_BUS_ADDR	0x080000u	/* bus 8, device 0, function 0 */
-#define BRIDGE_ADDR	0x002800u	/* the bridge itself: bus 0, device 5 */
-#define REG_PHYS	0x80140000u
-#define REG_SIZE	0x20000u
-#define ROM_PHYS	0x80120000u
-#define ROM_SIZE	0x20000u
-#define APER_PHYS	0x90000000u
+#define ROM_MAX		0x20000u	/* the largest ROM image copied */
 #define APER_MAP	0x02000000u	/* 32 MB of the aperture */
+
+/* The card, as found in the device tree by find_card() */
+static char card_path[192], parent_path[192];
+static uint32_t card_cfg;		/* config-space address: bus, device, function */
+static uint32_t aper_hi, aper_lo, aper_size;	/* BAR 0 */
+static uint32_t reg_hi, reg_lo, reg_size;	/* BAR 2, registers */
+static uint32_t rom_hi, rom_lo, rom_size;	/* expansion ROM BAR */
+static unsigned fb_w, fb_h, fb_pitch;		/* the mode that was set */
 
 /* ---- client interface ------------------------------------------------ */
 
@@ -140,6 +141,76 @@ static int of_call(const char *method, uint32_t ih, int nin, const uint32_t *arg
 	return (int)out[0];
 }
 
+static uint32_t of_child(uint32_t ph)
+{
+	uint32_t in[1] = { ph }, out[1];
+
+	return prom("child", 1, 1, in, out) ? 0 : out[0];
+}
+
+static uint32_t of_peer(uint32_t ph)
+{
+	uint32_t in[1] = { ph }, out[1];
+
+	return prom("peer", 1, 1, in, out) ? 0 : out[0];
+}
+
+/* The Radeon HD 7570 (1002:675d): the same card the kext matches. */
+static uint32_t find_card_in(uint32_t ph, int depth)
+{
+	uint32_t v, d, n, r;
+
+	for (; ph && ph != (uint32_t)-1; ph = of_peer(ph)) {
+		v = d = 0;
+		if (of_getprop(ph, "vendor-id", &v, 4) == 4 && v == 0x1002 &&
+		    of_getprop(ph, "device-id", &d, 4) == 4 && d == 0x675d)
+			return ph;
+		n = depth < 12 ? of_child(ph) : 0;
+		if (n && (r = find_card_in(n, depth + 1)))
+			return r;
+	}
+	return 0;
+}
+
+/* Fill card_path, parent_path, card_cfg and the BAR addresses. 0 on success. */
+static int find_card(void)
+{
+	uint32_t cells[48], ph, in[3], out[1];
+	int n, i, len;
+
+	ph = find_card_in(of_child(of_finddevice("/")), 0);
+	if (!ph)
+		return -1;
+	in[0] = ph;
+	in[1] = (uint32_t)card_path;
+	in[2] = sizeof(card_path) - 1;
+	if (prom("package-to-path", 3, 1, in, out) || (int)out[0] <= 1)
+		return -2;
+	len = (int)out[0];
+	if (len > (int)sizeof(card_path) - 1)
+		len = sizeof(card_path) - 1;
+	card_path[len] = 0;
+	memcpy(parent_path, card_path, len + 1);
+	for (i = len - 1; i > 0 && parent_path[i] != '/'; i--)
+		;
+	parent_path[i] = 0;		/* the bridge the card sits behind */
+
+	n = of_getprop(ph, "reg", cells, sizeof(cells));
+	if (n < 20)
+		return -3;
+	card_cfg = cells[0] & 0x00ffff00u;
+
+	n = of_getprop(ph, "assigned-addresses", cells, sizeof(cells));
+	for (i = 0; n >= 20 && i + 5 <= n / 4; i += 5) {
+		switch (cells[i] & 0xff) {
+		case 0x10: aper_hi = cells[i]; aper_lo = cells[i + 2]; aper_size = cells[i + 4]; break;
+		case 0x18: reg_hi = cells[i]; reg_lo = cells[i + 2]; reg_size = cells[i + 4]; break;
+		case 0x30: rom_hi = cells[i]; rom_lo = cells[i + 2]; rom_size = cells[i + 4]; break;
+		}
+	}
+	return (aper_lo && reg_lo) ? 0 : -4;
+}
+
 /* ---- the PCI bus and the card --------------------------------------- */
 
 static uint32_t bus_ih;
@@ -219,12 +290,12 @@ static void mmio_write32(void *c, uint32_t off, uint32_t v)
 
 static uint32_t cfg_read32(void *c, uint32_t off)
 {
-	return cfg_read(CARD_BUS_ADDR | off);
+	return cfg_read(card_cfg | off);
 }
 
 static void cfg_write32(void *c, uint32_t off, uint32_t v)
 {
-	cfg_write(CARD_BUS_ADDR | off, v);
+	cfg_write(card_cfg | off, v);
 }
 
 /* 2 MB of heap for the library; nothing is ever freed. */
@@ -349,38 +420,32 @@ static void crumb(const char *what)
 	prom("interpret", 1, 2, in, out);
 }
 
-/* The VBIOS: enable the ROM BAR, read it through its mapping, disable it. */
-static uint8_t bios_copy[ROM_SIZE];	/* in the image, like all statics */
+/* The VBIOS: enable the ROM BAR, copy the image through its mapping, disable it. */
+static uint8_t bios_copy[ROM_MAX];	/* in the image, like all statics */
 
-#ifdef EMBED_VBIOS
-/* The VBIOS image comes with the (git-ignored) build, not from the ROM BAR:
- * reading that BAR from Open Firmware took the whole machine down. */
-__asm__(".section .rodata\n.balign 4\nembedded_vbios:\n.incbin \"" EMBED_VBIOS "\"\n.text\n");
-extern const uint8_t embedded_vbios[];
-
-static int read_rom(void)
-{
-	memcpy(bios_copy, embedded_vbios, 65536);
-	return 65536;
-}
-#else
 static int read_rom(void)
 {
 	volatile uint8_t *rom;
-	uint32_t bar = cfg_read(CARD_BUS_ADDR | 0x30);
-	size_t i, len;
+	uint32_t bar = cfg_read(card_cfg | 0x30);
+	uint32_t i, len, sum;
 
-	rom = map_in(0x82080030, ROM_PHYS, ROM_SIZE);
+	if (!rom_lo || !rom_size)
+		return -1;
+	if (rom_size > ROM_MAX)
+		rom_size = ROM_MAX;
+	rom = map_in(rom_hi, rom_lo, rom_size);
 	if (!rom)
 		return -1;
-	cfg_write(CARD_BUS_ADDR | 0x30, ROM_PHYS | 1);
+	cfg_write(card_cfg | 0x30, rom_lo | 1);
 	if (rom[0] != 0x55 || rom[1] != 0xaa) {
-		cfg_write(CARD_BUS_ADDR | 0x30, bar & ~1u);
+		cfg_write(card_cfg | 0x30, bar & ~1u);
 		return -2;
 	}
-	len = (size_t)rom[2] * 512;
-	if (len > ROM_SIZE || len < 0x1000)
-		len = ROM_SIZE;
+	len = (uint32_t)rom[2] * 512;
+	if (len < 0x1000 || len > rom_size) {
+		cfg_write(card_cfg | 0x30, bar & ~1u);
+		return -3;
+	}
 	/* whole words: some ROM BARs misbehave for byte reads */
 	for (i = 0; i < len; i += 4) {
 		uint32_t w = *(volatile uint32_t *)(rom + i);
@@ -390,31 +455,13 @@ static int read_rom(void)
 		bios_copy[i + 2] = w >> 8;
 		bios_copy[i + 3] = w;
 	}
-	cfg_write(CARD_BUS_ADDR | 0x30, bar & ~1u);
-	return (int)len;
+	cfg_write(card_cfg | 0x30, bar & ~1u);
+	for (sum = 0, i = 0; i < len; i++)
+		sum += bios_copy[i];
+	return (sum & 0xff) ? -4 : (int)len;	/* option ROM images sum to 0 */
 }
-#endif
 
 static struct rdn_card card;
-
-/* Secondary bus reset of the bridge, with the card's BARs put back. */
-__attribute__((unused)) static void bus_reset(void)
-{
-	uint32_t save[16], i, t;
-
-	for (i = 1; i < 16; i++)
-		save[i] = cfg_read(CARD_BUS_ADDR | (i * 4));
-	t = cfg_read(BRIDGE_ADDR | 0x3c);	/* bridge control in the high half */
-	cfg_write(BRIDGE_ADDR | 0x3c, t | (1u << 22));
-	delay_us(0, 2000);
-	cfg_write(BRIDGE_ADDR | 0x3c, t & ~(1u << 22));
-	delay_us(0, 500000);
-	for (i = 0; i < 40 && (cfg_read(CARD_BUS_ADDR) & 0xffff) != 0x1002; i++)
-		delay_us(0, 100000);
-	for (i = 4; i < 16; i++)
-		cfg_write(CARD_BUS_ADDR | (i * 4), save[i]);
-	cfg_write(CARD_BUS_ADDR | 0x04, save[1] | 6);
-}
 
 static void status(const char *tag)
 {
@@ -436,17 +483,17 @@ static void status(const char *tag)
  */
 static const char *const console_chunks[] = {
 	/* 0: the node, its properties and data */
-	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 \" display\" device-type "
+	"dev {{P}} \" display\" device-type "
 	"0 value line-bytes 0 value width 0 value height 0 value rdn-uses 0 value rdn-bus "
 	"0 value rdn-no 0 value rdn-nc 0 value rdn-nl "
-	"780 encode-int \" width\" property 438 encode-int \" height\" property "
-	"8 encode-int \" depth\" property 780 encode-int \" linebytes\" property "
-	"90000000 encode-int \" address\" property "
+	"{{W}} encode-int \" width\" property {{H}} encode-int \" height\" property "
+	"8 encode-int \" depth\" property {{LB}} encode-int \" linebytes\" property "
+	"{{AP}} encode-int \" address\" property "
 	"0 value rdn-ra 0 value rdn-rx 0 value rdn-ry 0 value rdn-rw 0 value rdn-rh "
 	"create rdn-pal 300 allot "
 	"dev / ",
 	/* 1: geometry and rectangles */
-	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
+	"dev {{P}} "
 	": dimensions ( -- w h ) width height ; "
 	": fill-rectangle ( idx x y w h -- ) to rdn-rh to rdn-rw to rdn-ry to rdn-rx to rdn-ra "
 	"rdn-rh 0 ?do frame-buffer-adr rdn-ry i + line-bytes * + rdn-rx + rdn-rw rdn-ra fill loop ; "
@@ -456,10 +503,10 @@ static const char *const console_chunks[] = {
 	"rdn-rh 0 ?do frame-buffer-adr rdn-ry i + line-bytes * + rdn-rx + rdn-ra i rdn-rw * + rdn-rw move loop ; "
 	"dev / ",
 	/* 2: colours: a software copy and the card's colour table (Apple's boot code loads its palette here) */
-	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
+	"dev {{P}} "
 	": rdn-w ( val reg base -- ) + swap lbflip swap l! ; "
-	": rdn-lut ( adr start cnt -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
-	"80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method >r "
+	": rdn-lut ( adr start cnt -- ) \" {{PP}}\" open-dev to rdn-bus "
+	"{{RP}} 0 {{RH}} {{RS}} \" map-in\" rdn-bus $call-method >r "
 	"0 69e0 r@ rdn-w 7 69f8 r@ rdn-w over 69e4 r@ rdn-w nip "
 	"0 ?do dup i 3 * + dup c@ 16 lshift over 1+ c@ c lshift or swap 2+ c@ 2 lshift or "
 	"69f0 r@ rdn-w loop drop r> drop rdn-bus close-dev ; "
@@ -471,25 +518,25 @@ static const char *const console_chunks[] = {
 	": get-colors ( adr n cnt -- ) 3 * >r 3 * rdn-pal + swap r> move ; "
 	"dev / ",
 	/* 3: event markers, memory decode, open */
-	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
-	": rdn-mark ( x y -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
-	"90000000 0 c3080010 200000 \" map-in\" rdn-bus $call-method "
-	"swap 780 * + + 14 0 do 1e 0 do ff over j 780 * + i + c! loop loop drop "
+	"dev {{P}} "
+	": rdn-mark ( x y -- ) \" {{PP}}\" open-dev to rdn-bus "
+	"{{AP}} 0 {{AH}} 200000 \" map-in\" rdn-bus $call-method "
+	"swap {{LB}} * + + 14 0 do 1e 0 do ff over j {{LB}} * + i + c! loop loop drop "
 	"rdn-bus close-dev ; "
-	": rdn-mem ( on? -- ) \" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
-	"80004 \" config-w@\" rdn-bus $call-method swap if 2 or else fff9 and then "
-	"80004 \" config-w!\" rdn-bus $call-method rdn-bus close-dev ; "
-	": open ( -- ok? ) true rdn-mem 90000000 to frame-buffer-adr 780 to line-bytes 780 to width "
-	"438 to height default-font set-font width height width char-width / "
+	": rdn-mem ( on? -- ) \" {{PP}}\" open-dev to rdn-bus "
+	"{{C4}} \" config-w@\" rdn-bus $call-method swap if 2 or else fff9 and then "
+	"{{C4}} \" config-w!\" rdn-bus $call-method rdn-bus close-dev ; "
+	": open ( -- ok? ) true rdn-mem {{AP}} to frame-buffer-adr {{LB}} to line-bytes {{W}} to width "
+	"{{H}} to height default-font set-font width height width char-width / "
 	"height char-height / fb8-install 255 to foreground-color "
 	"0 to background-color 100 0 do i i i i rdn-sw! loop rdn-uses 1+ to rdn-uses "
 	"rdn-no 1+ dup to rdn-no 28 * 190 rdn-mark true ; "
 	"dev / ",
 	/* 4: close and the text writer */
-	"dev /ht@0,f2000000/pci@5/pci1028,2b20@0 "
+	"dev {{P}} "
 	": rdn-last ( -- ) rdn-nl 1+ dup to rdn-nl 28 * 1f4 rdn-mark "
-	"\" /ht@0,f2000000/pci@5\" open-dev to rdn-bus "
-	"4f46524e lbflip 80140000 0 83080018 20000 \" map-in\" rdn-bus $call-method 851c + l! "
+	"\" {{PP}}\" open-dev to rdn-bus "
+	"4f46524e lbflip {{RP}} 0 {{RH}} {{RS}} \" map-in\" rdn-bus $call-method 851c + l! "
 	"rdn-bus close-dev false rdn-mem ; "
 	": close ( -- ) rdn-nc 1+ dup to rdn-nc 28 * 1c2 rdn-mark rdn-uses 1- dup to rdn-uses 0= if rdn-last then ; "
 	": rnl ( -- ) 0 to column# line# 1+ dup #lines >= if drop 0 to line# else to line# then ; "
@@ -504,8 +551,8 @@ static const char *const console_chunks[] = {
 	": write ( addr len -- actual ) dup 0 ?do over i + c@ put1 loop nip ; "
 	"dev / ",
 	/* 5: make it the console */
-	"\" devalias screen /ht@0,f2000000/pci@5/pci1028,2b20@0\" evaluate "
-	"\" /ht@0,f2000000/pci@5/pci1028,2b20@0\" output \" keyboard\" input "
+	"\" devalias screen {{P}}\" evaluate "
+	"\" {{P}}\" output \" keyboard\" input "
 	"\" Open Firmware console on the Radeon HD 7570. \" type cr ",
 	0
 };
@@ -516,17 +563,72 @@ static void cmark(unsigned x, unsigned y)
 
 	for (r = 0; r < 20; r++)
 		for (c = 0; c < 30; c++)
-			aper[(y + r) * 1920u + x + c] = 0xff;
+			aper[(y + r) * fb_pitch + x + c] = 0xff;
+}
+
+static void hexs(char *d, uint32_t v)
+{
+	static const char digits[] = "0123456789abcdef";
+	char t[9];
+	int n = 0;
+
+	do {
+		t[n++] = digits[v & 15];
+		v >>= 4;
+	} while (v);
+	while (n)
+		*d++ = t[--n];
+	*d = 0;
+}
+
+/* Copy a chunk, replacing {{NAME}} by the discovered values (hex numbers, paths). */
+static void expand(const char *t, char *out, size_t max)
+{
+	size_t n = 0;
+
+	while (*t && n + 40 < max) {
+		if (t[0] == '{' && t[1] == '{') {
+			char name[6], val[200];
+			const char *e = t + 2;
+			size_t k = 0;
+
+			while (*e && *e != '}' && k < 5)
+				name[k++] = *e++;
+			name[k] = 0;
+			if (e[0] == '}' && e[1] == '}') {
+				if (!strcmp(name, "P")) { strncpy(val, card_path, sizeof(val) - 1); val[sizeof(val) - 1] = 0; }
+				else if (!strcmp(name, "PP")) { strncpy(val, parent_path, sizeof(val) - 1); val[sizeof(val) - 1] = 0; }
+				else if (!strcmp(name, "AP")) hexs(val, aper_lo);
+				else if (!strcmp(name, "AH")) hexs(val, aper_hi);
+				else if (!strcmp(name, "RP")) hexs(val, reg_lo);
+				else if (!strcmp(name, "RH")) hexs(val, reg_hi);
+				else if (!strcmp(name, "RS")) hexs(val, reg_size);
+				else if (!strcmp(name, "C4")) hexs(val, card_cfg | 4);
+				else if (!strcmp(name, "W")) hexs(val, fb_w);
+				else if (!strcmp(name, "H")) hexs(val, fb_h);
+				else if (!strcmp(name, "LB")) hexs(val, fb_pitch);
+				else val[0] = 0;
+				for (k = 0; val[k] && n + 2 < max; k++)
+					out[n++] = val[k];
+				t = e + 2;
+				continue;
+			}
+		}
+		out[n++] = *t++;
+	}
+	out[n] = 0;
 }
 
 static void make_console(void)
 {
+	static char chunk[2400];
 	uint32_t in[1], out[2];
 	int i;
 
 	cmark(40, 350);			/* reached the interpret calls */
 	for (i = 0; console_chunks[i]; i++) {
-		in[0] = (uint32_t)console_chunks[i];
+		expand(console_chunks[i], chunk, sizeof(chunk));
+		in[0] = (uint32_t)chunk;
 		out[0] = (uint32_t)-1;
 		prom("interpret", 1, 2, in, out);
 		if (out[0] != 0)
@@ -607,7 +709,7 @@ static void give_back(void)
 	}
 }
 
-int of_main(void)
+static int rdn_main(void)
 {
 	static struct rdn_os os;
 	static uint8_t edid[RDN_EDID_MAX_SIZE];
@@ -627,10 +729,8 @@ int of_main(void)
 		if (heap)
 			memset(heap, 0, HEAP_BYTES);
 	}
-	if (STAGE < 0) {	/* null client: claims and gives back, touches nothing */
-		give_back();
+	if (STAGE < 0)		/* null client: claims and gives back, touches nothing */
 		return 0;
-	}
 	chosen = of_finddevice("/chosen");
 	crumb("start");
 	of_getprop(chosen, "stdout", &stdout_ih, 4);
@@ -640,23 +740,28 @@ int of_main(void)
 		tb_hz = out[0];
 	(void)in;
 
-	bus_ih = of_open(CARD_PARENT);
+	if (find_card()) {
+		puts_crlf("rdn: no Radeon HD 7570 in the device tree");
+		return 1;
+	}
+	say("rdn: card %s", card_path);
+	bus_ih = of_open(parent_path);
 	if (!bus_ih) {
 		puts_crlf("rdn: cannot open the card's bridge");
 		return 1;
 	}
 	crumb("bridge-open");
-	say("rdn: id %x", (unsigned)cfg_read(CARD_BUS_ADDR));
+	say("rdn: id %x", (unsigned)cfg_read(card_cfg));
 	/* memory decode and bus master on: Open Firmware leaves memory off */
 #ifdef FB8
 	/* the display needs memory decode only (NVIDIA's driver never sets bus master) */
-	cfg_write(CARD_BUS_ADDR | 0x04, (cfg_read(CARD_BUS_ADDR | 0x04) & 0xffffu) | 2);
+	cfg_write(card_cfg | 0x04, (cfg_read(card_cfg | 0x04) & 0xffffu) | 2);
 #else
-	cfg_write(CARD_BUS_ADDR | 0x04, (cfg_read(CARD_BUS_ADDR | 0x04) & 0xffffu) | 6);
+	cfg_write(card_cfg | 0x04, (cfg_read(card_cfg | 0x04) & 0xffffu) | 6);
 #endif
 
-	regs = map_in(0x83080018, REG_PHYS, REG_SIZE);
-	aper = map_in(0xc3080010, APER_PHYS, APER_MAP);
+	regs = map_in(reg_hi, reg_lo, reg_size);
+	aper = map_in(aper_hi, aper_lo, aper_size < APER_MAP ? aper_size : APER_MAP);
 	say("rdn: regs %p aperture %p", (void *)regs, (void *)aper);
 	if (!regs || !aper)
 		return 2;
@@ -730,6 +835,9 @@ int of_main(void)
 	fb.width = mode.hdisplay;
 	fb.height = mode.vdisplay;
 	fb.pitch_pixels = (mode.hdisplay + 63u) & ~63u;
+	fb_w = fb.width;
+	fb_h = fb.height;
+	fb_pitch = fb.pitch_pixels;
 	fb.big_endian_pixels = RDN_BIG_ENDIAN;
 #ifdef FB8
 	fb.bpp = 8;			/* Open Firmware's text words are 8 bit */
@@ -740,7 +848,7 @@ int of_main(void)
 		for (w = 0; w < nw; w++)
 			p[w] = 0;		/* index 0: black in the linear ramp */
 	}
-	say("rdn: fb8 at %x, %u x %u, linebytes %u", APER_PHYS, fb.width, fb.height,
+	say("rdn: fb8 at %x, %u x %u, linebytes %u", (unsigned)aper_lo, fb.width, fb.height,
 	    fb.pitch_pixels);
 #else
 	rdn_pattern_draw((volatile uint32_t *)aper, fb.width, fb.height, fb.pitch_pixels);
@@ -765,7 +873,7 @@ int of_main(void)
 #endif
 #if (!defined(TAIL) && !defined(FB8)) || (defined(TAIL) && TAIL == 1)
 	/* experiment A: leave the mode running but decode and bus master off */
-	cfg_write(CARD_BUS_ADDR | 0x04, cfg_read(CARD_BUS_ADDR | 0x04) & ~6u);
+	cfg_write(card_cfg | 0x04, cfg_read(card_cfg | 0x04) & ~6u);
 #elif defined(TAIL) && TAIL == 2
 	/* experiment B: stop the scanout (power the output down), POST stays */
 	rdn_output_disable(&card, &mode, hdmi);
@@ -776,6 +884,14 @@ out:
 	if (!r)
 		make_console();
 #endif
+	return r;
+}
+
+/* Whatever happens inside, the memory claimed from Open Firmware is given back. */
+int of_main(void)
+{
+	int r = rdn_main();
+
 	give_back();
 	return r;
 }
