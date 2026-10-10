@@ -453,6 +453,15 @@ bool RadeonNI::bringUp()
 		IOLog("RadeonNI: kernel console before: rc %d base 0x%lx rowbytes %lu %lux%lu depth %lu\n",
 		      (int)cr, (unsigned long)v.v_baseAddr, (unsigned long)v.v_rowBytes,
 		      (unsigned long)v.v_width, (unsigned long)v.v_height, (unsigned long)v.v_depth);
+		{
+			char buf[96];
+
+			snprintf(buf, sizeof(buf), "rc %d base 0x%lx rowbytes %lu %lux%lu depth %lu", (int)cr,
+				 (unsigned long)v.v_baseAddr, (unsigned long)v.v_rowBytes,
+				 (unsigned long)v.v_width, (unsigned long)v.v_height, (unsigned long)v.v_depth);
+			setProperty("ConsoleBefore", buf);
+		}
+		setProperty("ConsoleWarm", (UInt64)1, 32);
 		if (cr == kIOReturnSuccess && v.v_baseAddr) {
 			v.v_rowBytes = fFb.pitch_pixels * 4;
 			v.v_width = fFb.width;
@@ -460,6 +469,7 @@ bool RadeonNI::bringUp()
 			v.v_depth = 32;
 			getPlatform()->setConsoleInfo(&v, kPEReleaseScreen);
 			getPlatform()->setConsoleInfo(&v, kPEEnableScreen);
+			setProperty("ConsoleSet", (UInt64)1, 32);
 			IOLog("RadeonNI: the kernel console now %lux%lu, %lu bytes a row, 32 bpp\n",
 			      (unsigned long)v.v_width, (unsigned long)v.v_height,
 			      (unsigned long)v.v_rowBytes);
