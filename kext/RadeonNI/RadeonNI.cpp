@@ -472,6 +472,14 @@ bool RadeonNI::bringUp()
 			getPlatform()->setConsoleInfo(&v, kPEReleaseScreen);
 			getPlatform()->setConsoleInfo(&v, kPEEnableScreen);
 			setProperty("ConsoleSet", (UInt64)1, 32);
+			/* the kernel's last spinner frame was drawn for 8 bpp: wipe what is left of it */
+			{
+				volatile uint32_t *px = (volatile uint32_t *)fFbMap->getVirtualAddress();
+				UInt32 n = fFb.pitch_pixels * fFb.height, k;
+
+				for (k = 0; k < n; k++)
+					px[k] = 0;
+			}
 			IOLog("RadeonNI: the kernel console now %lux%lu, %lu bytes a row, 32 bpp\n",
 			      (unsigned long)v.v_width, (unsigned long)v.v_height,
 			      (unsigned long)v.v_rowBytes);
