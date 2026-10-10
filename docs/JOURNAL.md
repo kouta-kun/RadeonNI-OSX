@@ -6023,3 +6023,5 @@ remote tests.
 - Later the same night: full `make-dist.sh` build (a6349b3), `RadeonNI.mpkg` copied to the G5's
   home and run by the user from Installer.app: "it worked great" (seen by the user; which items
   were ticked was not said).
+- The user ticked the Open Firmware item in Customize and says that worked too (seen by the
+  user), so the optional package, its postflight and the NVRAM write are confirmed on the G5.
