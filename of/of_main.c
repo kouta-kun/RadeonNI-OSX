@@ -519,10 +519,6 @@ static const char *const console_chunks[] = {
 	"dev / ",
 	/* 3: event markers, memory decode, open */
 	"dev {{P}} "
-	": rdn-mark ( x y -- ) \" {{PP}}\" open-dev to rdn-bus "
-	"{{AP}} 0 {{AH}} 200000 \" map-in\" rdn-bus $call-method "
-	"swap {{LB}} * + + 14 0 do 1e 0 do ff over j {{LB}} * + i + c! loop loop drop "
-	"rdn-bus close-dev ; "
 	": rdn-mem ( on? -- ) \" {{PP}}\" open-dev to rdn-bus "
 	"{{C4}} \" config-w@\" rdn-bus $call-method swap if 2 or else fff9 and then "
 	"{{C4}} \" config-w!\" rdn-bus $call-method rdn-bus close-dev ; "
@@ -530,15 +526,15 @@ static const char *const console_chunks[] = {
 	"{{H}} to height default-font set-font width height width char-width / "
 	"height char-height / fb8-install 255 to foreground-color "
 	"0 to background-color 100 0 do i i i i rdn-sw! loop rdn-uses 1+ to rdn-uses "
-	"rdn-no 1+ dup to rdn-no 28 * 190 rdn-mark true ; "
+	"true ; "
 	"dev / ",
 	/* 4: close and the text writer */
 	"dev {{P}} "
-	": rdn-last ( -- ) rdn-nl 1+ dup to rdn-nl 28 * 1f4 rdn-mark "
+	": rdn-last ( -- ) "
 	"\" {{PP}}\" open-dev to rdn-bus "
 	"4f46524e lbflip {{RP}} 0 {{RH}} {{RS}} \" map-in\" rdn-bus $call-method 851c + l! "
 	"rdn-bus close-dev false rdn-mem ; "
-	": close ( -- ) rdn-nc 1+ dup to rdn-nc 28 * 1c2 rdn-mark rdn-uses 1- dup to rdn-uses 0= if rdn-last then ; "
+	": close ( -- ) rdn-uses 1- dup to rdn-uses 0= if rdn-last then ; "
 	": rnl ( -- ) 0 to column# line# 1+ dup #lines >= if drop 0 to line# else to line# then ; "
 	"0 value esc "
 	": put1 ( c -- ) esc 1 = if 5b = if 2 to esc else 0 to esc then exit then "
@@ -556,15 +552,6 @@ static const char *const console_chunks[] = {
 	"\" Open Firmware console on the Radeon HD 7570. \" type cr ",
 	0
 };
-
-static void cmark(unsigned x, unsigned y)
-{
-	unsigned r, c;
-
-	for (r = 0; r < 20; r++)
-		for (c = 0; c < 30; c++)
-			aper[(y + r) * fb_pitch + x + c] = 0xff;
-}
 
 static void hexs(char *d, uint32_t v)
 {
@@ -625,7 +612,6 @@ static void make_console(void)
 	uint32_t in[1], out[2];
 	int i;
 
-	cmark(40, 350);			/* reached the interpret calls */
 	for (i = 0; console_chunks[i]; i++) {
 		expand(console_chunks[i], chunk, sizeof(chunk));
 		in[0] = (uint32_t)chunk;
@@ -633,7 +619,6 @@ static void make_console(void)
 		prom("interpret", 1, 2, in, out);
 		if (out[0] != 0)
 			break;			/* a chunk failed: stop here */
-		cmark(80 + 40 * i, 350);	/* chunk i went through */
 	}
 }
 #endif
