@@ -45,8 +45,8 @@ This project is vibecoded, meatproxied and any other AI slur you can think of. I
 
 RadeonNI-OSX is a project that is composed of a couple of things:
 
-1. A hardware interface for the Radeon HD 7570 (could be compatible with other Turks and TeraScale 2 cards after a bit of fiddling) that implements card initialization, power management, command processing, video memory handling, and output framebuffer + a .kext that consumes it and provides an IOFramebuffer and an IOAccelerator. Ported from Linux's radeon driver.
-2. Patches for Mesa, a winsys that replaces Linux DRM and shims for Tiger compatibility that allow the r600 driver to run under OS X and communicate with the GPU using the aforementioned hardware interface.
+1. A hardware interface for the Radeon HD 7570 (could be compatible with other Turks and TeraScale 2 cards after a bit of fiddling) that implements card initialization, power management, command processing, video memory handling, and output framebuffer + a .kext that consumes it and provides an IOFramebuffer and an IOAccelerator. Ported from Linux's radeon driver [1].
+2. Patches for Mesa, a winsys that replaces Linux DRM and shims for Tiger compatibility that allow the r600 driver [2] to run under OS X and communicate with the GPU using the aforementioned hardware interface.
 3. An OpenGL Driver bundle that dispatches every OpenGL call to Mesa.
 4. A 2D accelerator plugin that enables Quartz Extreme. Currently a CPU-only stub.
 
@@ -56,17 +56,17 @@ The project has been developed in a staged manner:
 
 ## Stage 1 (Research and display bringup)
 
-Using an HD 7570 bridged through VFIO into a QEMU virtual machine, Claude Opus 5.5 traced a barebones initialization of this card from the Linux kernel and reproduced it to where it could perform basic tasks:
+Using an HD 7570 bridged through VFIO into a QEMU virtual machine [4][5][6][7], Claude Opus 5.5 traced a barebones initialization of this card from the Linux kernel [1] and reproduced it to where it could perform basic tasks:
 
 * Initialize/POST the card using AtomBIOS (currently VBIOS is provided through a file, reading VBIOS from the ROM is a future step)
 * Retrieve the EDID of the connected display
 * Initialize the card's display engine and draw a test image (rainbow color bars).
 
-After this was possible from within emulated OS X, the next step was to develop a barebones IOFramebuffer that allowed for unaccelerated display output, and that worked perfectly.
+After this was possible from within emulated OS X, the next step was to develop a barebones IOFramebuffer [3] that allowed for unaccelerated display output, and that worked perfectly.
 
 ## Stage 2 (Mesa port and acceleration)
 
-Once display output was working, the next step was to ask Claude to port Mesa over to it. Why Mesa? It's MIT, uses well-isolated modules, and most importantly has the r600 driver with proven support for this card, which I'd already used under ArchPOWER on a big endian system.
+Once display output was working, the next step was to ask Claude to port Mesa over to it. Why Mesa? It's MIT, uses well-isolated modules, and most importantly has the r600 driver [2] with proven support for this card, which I'd already used under ArchPOWER on a big endian system.
 
 Claude took the r600 driver from Mesa, patched it for Tiger compatibility, and developed two ends to this integration, a hardware interface that allows r600 to communicate with the GPU through PCIe (for command submission, etc) and a (currently in development) IOAccelerator implementation that passes through every OpenGL to Mesa. This worked, but did not support Quartz Extreme and essentially functioned by using OSMesa to render and then asking the CPU to copy over to the framebuffer. After some development Quartz Extreme seems to work correctly (no trails, OpenGL windowed and fullscreen works). A couple of games have been tested:
 
@@ -94,7 +94,7 @@ Call of Duty 2 also depended on a couple of Apple-specific extensions, with that
 
 ## Stage 3 (OpenFirmware integration)
 
-Something we expected might be impossible is the integration of the GPU drivers into OpenFirmware, the PowerMac equivalent of UEFI/BIOS. The way that GPU initialization (normally) works is that the card has a ROM containing code to be executed by the computer's bootloader in order to initialize the display before the drivers come into play (i.e. for displaying at boot time and in case the driver is not available in the system). As you might know or expect, this code is bootloader specific. UEFI-compatible cards have a .efi executable, BIOS-compatible cards have a raw block of x86 instructions while OpenFirmware-compatible cards (as used in new-world Macs) store FCode, a byte-compiled expression of a Forth program that is architecture-independent for higher compatibility.
+Something we expected might be impossible is the integration of the GPU drivers into OpenFirmware, the PowerMac equivalent of UEFI/BIOS. The way that GPU initialization (normally) works is that the card has a ROM containing code to be executed by the computer's bootloader in order to initialize the display before the drivers come into play (i.e. for displaying at boot time and in case the driver is not available in the system). As you might know or expect, this code is bootloader specific. UEFI-compatible cards have a .efi executable, BIOS-compatible cards have a raw block of x86 instructions while OpenFirmware-compatible cards (as used in new-world Macs) store FCode [8], a byte-compiled expression of a Forth program that is architecture-independent for higher compatibility.
 
 Cards of the era only came with either BIOS-compatible code or FCode, which meant that there were PC-compatible cards and Mac-compatible cards. Most cards could be flashed from one to the other, sometimes due to ROM chip sizes Mac-specific ROM would have to be modified to fit in PC cards. Flashing this card was out of the question: first, there was no Mac rom for this card ever due to being released, and even if Claude could generate FCode for this card I don't have a programmer to re-flash it if something went wrong.
 
@@ -103,3 +103,14 @@ I would've thought this was the end of it, but OpenFirmware contains a variable 
 ## Future steps
 
 - At some point, I should try with other cards of the same family/model to see if anything works or if this is too HD 7570 specific.
+
+# Sources
+
+[1] Linux `radeon` driver: https://github.com/torvalds/linux/tree/master/drivers/gpu/drm/radeon  
+[2] Mesa `r600` Gallium driver: https://gitlab.freedesktop.org/mesa/mesa/-/tree/main/src/gallium/drivers/r600  
+[3] Apple IOGraphics (`IOFramebuffer`): https://github.com/apple-oss-distributions/IOGraphics  
+[4] QEMU VFIO: https://github.com/qemu/qemu/tree/master/hw/vfio  
+[5] PCI passthrough to `qemu-system-ppc` (MacRumors): https://forums.macrumors.com/threads/qemu-system-ppc-vga-passthrough.2229861/  
+[6] QEMU PowerMac (`mac99`) documentation: https://www.qemu.org/docs/master/system/ppc/powermac.html  
+[7] Mac OS X PPC in QEMU: https://www.emaculation.com/doku.php/ppc-osx-on-qemu-for-osx  
+[8] Testing FCode ROMs before you flash (MacRumors): https://forums.macrumors.com/threads/testing-fcode-roms-before-you-flash.2123070/
