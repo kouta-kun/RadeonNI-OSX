@@ -5960,3 +5960,21 @@ black, then the desktop. Fixed in `kext/RadeonNI`:
 Space-held path removed from normal boots (the poll cost ~1.2 s per boot):
 Cmd-Opt-O-F is the way to the console; `of-hook.py --force-console` remains for
 remote tests.
+
+## 2026-10-09: the clients read the VBIOS from the card's ROM (item 2), white debug blocks gone
+
+- `of/of_main.c` no longer embeds a VBIOS. It walks the device tree for vendor 0x1002 /
+  device 0x675d, takes the path, `reg` and `assigned-addresses` from the node, maps the
+  ROM BAR, checks `55 AA`, the length byte and the checksum, and uses that image. If the
+  ROM is unusable it says "no usable VBIOS" and returns without touching the card (host
+  mock `of/mockf.c`, a fake device tree under qemu-ppc, covers discovery and that path).
+- Images are 377 KB stripped (436 KB before). On the G5, by the user: no key -> Apple
+  logo, (no spinner seen this time, kext state identical to the earlier good boot:
+  ConsoleWarm 1, ConsoleBefore depth 8), black, desktop; Win+Alt+O+F -> console on the
+  7570, `mac-boot` -> desktop. The first Cmd-Opt-O-F failure was the wrong keys.
+- The white squares were progress markers (`cmark` in C, `rdn-mark` in the node's Forth),
+  removed. Confirmed gone by the user on both paths.
+- Mistake worth remembering: `scripts/of-hook.py` has a `python3 -I` shebang that env cannot
+  run; call it as `python3 -I scripts/of-hook.py`. A failed apply followed by a reboot
+  looks like a client failure (the kext then draws its cold-start rainbow).
+- Next: one client instead of rdnk/rdnkc, then the permanent installer (item 3).
