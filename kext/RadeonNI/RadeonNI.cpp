@@ -316,6 +316,8 @@ bool RadeonNI::bringUp()
 	UInt32 i;
 	int r;
 
+	/* a card already running (set up by firmware) keeps its picture until the surface is cleared */
+	bool warm = rdn_card_posted(&fCard);
 	r = rdn_handover_take(&fCard);
 	/* For ioreg: 1 handed over by firmware, 0 no marker, -1 marker but card not running */
 	setProperty("HandOver", (UInt64)(SInt64)r, 32);
@@ -415,8 +417,17 @@ bool RadeonNI::bringUp()
 	}
 
 	describeFb(&fModes[fPreferred - 1], kDepth32, &fFb);
-	rdn_pattern_draw((volatile uint32_t *)fFbMap->getVirtualAddress(),
-			 fFb.width, fFb.height, fFb.pitch_pixels);
+	if (warm) {
+		/* firmware already showed something: go to black, no test pattern */
+		volatile uint32_t *px = (volatile uint32_t *)fFbMap->getVirtualAddress();
+		UInt32 n = fFb.pitch_pixels * fFb.height, k;
+
+		for (k = 0; k < n; k++)
+			px[k] = 0;
+	} else {
+		rdn_pattern_draw((volatile uint32_t *)fFbMap->getVirtualAddress(),
+				 fFb.width, fFb.height, fFb.pitch_pixels);
+	}
 
 	r = rdn_display_init(&fCard);
 	if (r) {
