@@ -28,12 +28,9 @@ END = '\\ RadeonNI-OF end'
 
 
 def text(oneshot=False, force_console=False, dir=r"\Users\tiger\of"):
-    if force_console:
-        key = ": rdn-key? ( -- flag ) true ; "
-    else:
-        key = (': rdn-key? ( -- flag ) " keyboard" open-dev dup 0= if drop false exit then >r false '
-               'c 0 do pad 1 " read" r@ $call-method 1 = if drop true leave then 64 ms loop '
-               'r> close-dev ; ')
+    # --force-console is for remote tests only: it makes the boot path behave as
+    # if a key was held.  Without it the mac-boot hook always boots (with the logo).
+    key = ": rdn-key? ( -- flag ) %s ; " % ("true" if force_console else "false")
     parts = []
     if oneshot:
         parts.append('" false" " use-nvramrc?" $setenv " " " nvramrc" $setenv ')
