@@ -6025,3 +6025,20 @@ remote tests.
   were ticked was not said).
 - The user ticked the Open Firmware item in Customize and says that worked too (seen by the
   user), so the optional package, its postflight and the NVRAM write are confirmed on the G5.
+
+## 2026-10-11: UT2004 crash in `_mesa_glthread_upload` (patch 0009)
+
+- UT2004 3236.1 (OpenGLDrv, AppleVA=1) crashed on the G5 a minute into the first map:
+  EXC_BAD_ACCESS at 0 in `_mesa_glthread_upload + 308` from `glDrawRangeElements`
+  (`~/Library/Logs/CrashReporter/Unreal Tournament 2004.crash.log`). The faulting word is
+  `lwz r2,0(r3)` with r3 = 0: `glthread->upload_buffer->RefCount += default_size`, the shared
+  1 MB upload buffer, after `new_upload_buffer()` returned NULL (r9 = 0x100000). Upstream Mesa
+  never checks it.
+- `mesa/patches/0009`: return with `*out_buffer` NULL (callers already raise GL_OUT_OF_MEMORY
+  and skip the draw); the shared buffer stays NULL so the next upload retries. Built and put on
+  the G5 by hand (old bundle: `~/RadeonNIGLDriver.before-nullcheck`); not yet run with the game.
+- Why the allocation failed is NOT known. Notes: the game had just started, so "the card is
+  full" is not obvious. `new_upload_buffer` needs storage that the CPU can map (video memory
+  inside the 256 MB aperture, or the GART) as well as the mapping itself; a failure of either
+  gives NULL. Nothing in `system.log` near the crash. Next: run the game's first map with
+  `RDN_STATS=1` and `RDN_GLD_LOG` and see which winsys allocation fails, before designing eviction.
