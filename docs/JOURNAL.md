@@ -6128,3 +6128,29 @@ remote tests.
   buffer churn and memory. The user asked whether glthread is worth it here and for a heuristic
   to decide per game; see the answer in the session. Per-program off is a line
   `-Unreal Tournament 2004` in `/Library/Application Support/RadeonNI/glthread` (not written).
+
+## 2026-10-11: glthread on and off in Quake 3, Quake 4 and UT2004 (bundle fab0d4ef)
+
+Bundle fab0d4ef: patches 0009 and 0010, the winsys accounting (`used_*_kb`), no throttle.
+G5, 1920x1080, full screen. The Doom 3 saves `bench` and `bench2` are gone from the G5 (the
+user does not know why), so Quake 4's own network demo stands in for them (same engine family).
+
+| | glthread on | glthread off |
+|---|---|---|
+| Quake 3 `four` (`tools/guest/q3timedemo.sh`) | 145.8, 146.2, 145.6 fps | 116.2, 116.4 fps |
+| Quake 4 `playNetTimeDemo id_demo001` (`tools/guest/q4netdemo.sh`) | 45.64 fps (2,811 frames, 61.6 s) | 26.05 fps (107.9 s) |
+| UT2004 bot match benchmark | 41.5 and 55.7 (different match phases) | 40.4, 40.5 |
+
+glthread is worth +25 % in Quake 3 and +75 % in Quake 4, and nothing measurable in UT2004
+(whose benchmark is random: one run each, the camera path differs). The user's own experience
+of Quake 4 with glthread off: "slow as shit"; the A/B was stopped after one pair at their word.
+
+- UT2004 is off glthread in `/Library/Application Support/RadeonNI/glthread` (line
+  `-Unreal Tournament 2004`; the previous file is `glthread.before-ut2004`). The file works:
+  one fence wait and 15,418 buffers, like `RDN_GLTHREAD=0`.
+- The memory throttle was removed again (`7a21dfb`): no benefit, fence waits 4.9 s -> 18.6 s.
+- Quake 4 notes: `+playNetTimeDemo name` and `+exec file` on the command line do nothing in
+  this build (the game goes to its menu: "idSession: triggering mainmenu watchdog"). The
+  command works from `q4base/autoexec.cfg` after a `wait 300`; the script writes it and removes
+  it at the end. The game prints `N frames in T ms: X fps` and does not quit. Only client
+  demos run (`id_demo001`; `id_server` is refused).
