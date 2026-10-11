@@ -37,6 +37,12 @@ This project is vibecoded, meatproxied and any other AI slur you can think of. I
 - Hold Shift while it starts (Safe Boot does not load third-party drivers), then uninstall.
 - `INSTALL.txt` in the zip lists the boot arguments that switch single features off (`rdn_gart=0`, `rdn_bootclocks=1`, `rdn_rom=0`, ...).
 
+## Configuration
+
+### GLThread
+
+`GLThread` is a Mesa feature that allows OpenGL commands to be queued for execution by a separate background thread instead of forcing the game to wait on the driver, potentially improving framerate on single-threaded engines. In my testing, Quake 3 sees ~25% improvement, while Quake 4 sees up to a 75% improvement. However the way it transfers the commands across the thread boundary can cause issues with certain engines and cause VRAM fragmentation, so there is an engine detection as well as an "allowlist" of sorts. You can add a game's window name at `/Library/Application Support/RadeonNI/glthread` to force enable it, or `-{NAME}` to disable it. If not, the default is to enable it *except* for Unreal Engine 2 games, where the shape of the OpenGL calls and how glthread handles them can cause excessive memory fragmentation and failure to upload textures. If you notice any other games with this issue, please let me know.
+
 ## Building the zip yourself
 
 `scripts/make-dist.sh` builds everything and writes `build/RadeonNI-<date>-<commit>.zip`. It needs this repository's whole setup on a Linux host: a QEMU guest running OS X 10.4.11 with Xcode 2.5 (the kext and the 2D plug-in are built there) and the cross toolchain container (`scripts/darwin.sh image`) for Mesa.
