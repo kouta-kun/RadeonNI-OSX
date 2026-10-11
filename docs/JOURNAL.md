@@ -6200,3 +6200,15 @@ of Quake 4 with glthread off: "slow as shit"; the A/B was stopped after one pair
   146.2 fps. The decision is not printed when the file decides.
 - `tools/guest/q3timedemo.sh` and `q4netdemo.sh` print the `rdn:` decision lines when
   `RDN_STATS=1` is among their arguments.
+
+## 2026-10-11: Call of Duty 2's vertex array range is built in
+
+- `var_on()` (`gld/gen_dispatch.py`, `VAR_HELP`) now turns the
+  `GL_APPLE_vertex_array_range` emulation on for the program name
+  `Call of Duty 2` without the `vertexrange` file. Only that name: other
+  programs are untouched (UT2004, which asks for AppleVA, is perfect without
+  it). `RDN_VAR=0` or a `-Call of Duty 2` line in the file turns it off; `+`
+  and plain lines work as before.
+- Not built or run: the worktree has no `third_party/`. Needs
+  `scripts/build-mesa.sh darwin ...RadeonNIGLDriver.dylib` and an install on
+  the G5, then the demo's first map with the list file moved away.
