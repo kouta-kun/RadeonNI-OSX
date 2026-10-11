@@ -1,0 +1,19 @@
+name = "Quake 4"
+publisher = "id Software / Raven / Aspyr (Mac)"
+year = 2005
+engine = "id Tech 4"
+api = ["OpenGL 1.x", "ARB vertex/fragment programs", "stencil shadows", "GL_EXT_depth_bounds_test (not offered)"]
+
+[[report]]
+date = "2026-10-10"
+tier = "unrated"
+version = "Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name)"
+driver = "G5 bundle of 2026-10-10"
+machine = "Power Mac G5 Late 2005, dual 2.5 GHz (PowerMac11,2), Tiger 10.4.11"
+resolution = "1920x1080"
+mode = "fullscreen"
+fps = 47.3
+settings = "SMP off (r_useSMP / the game's multiprocessor option)"
+repro = "the user's recorded net demo, played with playNetTimeDemo"
+issues = ["Turning SMP on crashes the game; cause not known, crash log not yet read"]
+notes = "Reported by the user. For scale, Barefeats' Quake 4 at 1920x1200 High: Quad G5 2.5 with GeForce 7800 GT 50 fps, Radeon X1900 39, GeForce 6600 14 (barefeats.com/image06/q15-kak.png; a different demo and settings, and the chart does not say whether SMP was on). Tier waits for how it looked and played."
