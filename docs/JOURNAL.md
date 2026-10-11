@@ -6077,3 +6077,16 @@ remote tests.
   `~/RadeonNIGLDriver.before-budget`, the one before patch 0009 `~/RadeonNIGLDriver.before-nullcheck`).
   Not yet run with the game. Effects to check: UT2004's stats (no "out of video memory"), and that
   Quake 3, Doom 3 and the others do not slow down (more flushes if they hold much GTT-domain memory).
+
+## 2026-10-11: UT2004 with the stream accounting: better, not enough (throttle by memory)
+
+- Run 3 (glthread on, bundle 3204a231, accounting in `rdn_cs_add_buffer`): 869 failed allocations
+  (5,402), 12,331 buffers created (913,780), 45,339 command buffers. The peak table still showed
+  218 MB (aperture) + 510 MB (GART) of 1 MB buffers.
+- Reading: r600 now flushes a stream at 0.7 x gart_size_kb (179 MB), but `rdn_throttle` allowed four
+  command buffers in flight, each holding up to that much. 4 x 179 MB is the ~730 MB seen
+  ("at most 425 buffers in one" command buffer agrees).
+- `RDN_MAX_PENDING_GART_KB` (256 MB): `rdn_throttle` also waits while the memory of the GTT domain
+  referenced by the unfinished command buffers plus the one being submitted is over it. Built and
+  installed (md5 ef957f1a...; the one before is `~/RadeonNIGLDriver.before-throttle`). Not yet run
+  with the game.
