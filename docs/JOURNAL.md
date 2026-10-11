@@ -6106,3 +6106,25 @@ remote tests.
   run with the game. The winsys counting (used_*_kb) stays: it is what the Linux winsys does.
   The memory throttle is kept for now; it showed no benefit and costs fence-wait time, so it is
   a candidate to remove if the next run is clean.
+
+## 2026-10-11: UT2004 run 5 with patch 0010: no failures; benchmark glthread on vs off
+
+- Run 5 (bundle 3236f931, glthread on, first map by hand, 3.5 min): 0 failed allocations, clean
+  exit. GART peak 404 MB (was 511), 1,194,740 buffers created (1,074,902 from the cache), fence
+  waits 7.5 s. The pile is bounded by the 256 MB limit of patch 0010.
+- Benchmark (`DM-Antalus?spectatoronly=1?numbots=12?quickstart=1?attractcam=1 -benchmark
+  -seconds=77 -nosound`, `RDN_FPS=1 RDN_STATS=1`, one run each, the camera path is random):
+
+  | | glthread on | glthread off |
+  |---|---|---|
+  | frames a second, 11 samples after loading, mean | 41.5 (26 to 66) | 40.4 (26 to 64) |
+  | failed allocations | 0 | 0 |
+  | buffers created | 170,660 | 15,418 |
+  | GART at peak | 284 MB | 51 MB |
+  | fence waits | 32, 173 ms | 1, 0 ms |
+  | command buffers (KB) | 5,135 (357,513) | 4,640 (360,337) |
+
+  No measurable gain from glthread in this game (3 % is inside the noise of one run); it costs
+  buffer churn and memory. The user asked whether glthread is worth it here and for a heuristic
+  to decide per game; see the answer in the session. Per-program off is a line
+  `-Unreal Tournament 2004` in `/Library/Application Support/RadeonNI/glthread` (not written).
