@@ -6090,3 +6090,19 @@ remote tests.
   referenced by the unfinished command buffers plus the one being submitted is over it. Built and
   installed (md5 ef957f1a...; the one before is `~/RadeonNIGLDriver.before-throttle`). Not yet run
   with the game.
+
+## 2026-10-11: UT2004 run 4: the throttle did nothing; glthread's own queue holds the buffers (patch 0010)
+
+- Run 4 (bundle ef957f1a, throttle by memory): 871 failed allocations (869 before it), the same
+  peak of ~728 buffers of 1 MB, fence waits 4.9 s -> 18.6 s in all. So the pile is not held by
+  command streams or by command buffers in flight.
+- Where it is: glthread's queue. 8 batches of 64 KB (patch 0004), each draw from client arrays
+  has its own 1 MB upload buffer and keeps it until the worker has run it. With `RDN_GLTHREAD=0`
+  Mesa's own uploader suballocates and there is no pile.
+- `mesa/patches/0010`: the live upload memory of the process is counted (the buffers glthread
+  made, decremented in `_mesa_delete_buffer_object`); a new buffer that would take it past
+  256 MB makes the recording thread `_mesa_glthread_finish`, once per overrun. Built and
+  installed (md5 3236f931...; the one before is `~/RadeonNIGLDriver.before-uploadbound`). Not yet
+  run with the game. The winsys counting (used_*_kb) stays: it is what the Linux winsys does.
+  The memory throttle is kept for now; it showed no benefit and costs fence-wait time, so it is
+  a candidate to remove if the next run is clean.
