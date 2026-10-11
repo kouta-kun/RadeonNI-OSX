@@ -6154,3 +6154,6 @@ of Quake 4 with glthread off: "slow as shit"; the A/B was stopped after one pair
   command works from `q4base/autoexec.cfg` after a `wait 300`; the script writes it and removes
   it at the end. The game prints `N frames in T ms: X fps` and does not quit. Only client
   demos run (`id_demo001`; `id_server` is refused).
+
+- Quake 4 again, glthread on, same bundle: 44.10 fps (2,811 frames, 63.7 s), so 45.64 and 44.10
+  against 26.05 with it off.
