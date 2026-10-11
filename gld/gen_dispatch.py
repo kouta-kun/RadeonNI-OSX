@@ -173,8 +173,9 @@ CLIENT_STATE = {
 # The fences only ever said when the GPU had read the program's memory;
 # with copies it always has, so they are always finished.
 #
-# For the programs named in RDN_VAR_LIST, one name a line, or with
-# RDN_VAR=1 in the environment (0: not even if named). A "+" before the
+# For the programs named in RDN_VAR_LIST, one name a line (a "-" before
+# the name: not even if built in), or with RDN_VAR=1 in the environment
+# (0: not even if named). "Call of Duty 2" is built in (2026-10-11). A "+" before the
 # name, or RDN_VAR=2: without the copies where that can be (VAR_USERS). Never asked for by
 # name by Call of Duty 2: it takes the range for granted and looks for
 # GL_APPLE_vertex_array_object, GL_APPLE_fence and GL_APPLE_element_array
@@ -198,15 +199,22 @@ static int var_on(void)
 		return on;
 	if ((env = getenv("RDN_VAR")) != NULL)
 		on = atoi(env) < 0 ? 0 : atoi(env) > 2 ? 2 : atoi(env);
-	else if ((f = fopen(RDN_VAR_LIST, "r")) != NULL) {
-		while (fgets(line, sizeof(line), f)) {
-			line[strcspn(line, "\\r\\n")] = 0;
-			if (!strcmp(line, name))
-				on = 1;
-			else if (line[0] == '+' && !strcmp(line + 1, name))
-				on = 2;
+	else {
+		/* Built in: Call of Duty 2 has no other way of drawing. */
+		if (!strcmp(name, "Call of Duty 2"))
+			on = 1;
+		if ((f = fopen(RDN_VAR_LIST, "r")) != NULL) {
+			while (fgets(line, sizeof(line), f)) {
+				line[strcspn(line, "\\r\\n")] = 0;
+				if (!strcmp(line, name))
+					on = 1;
+				else if (line[0] == '+' && !strcmp(line + 1, name))
+					on = 2;
+				else if (line[0] == '-' && !strcmp(line + 1, name))
+					on = 0;	/* not even the built-in */
+			}
+			fclose(f);
 		}
-		fclose(f);
 	}
 	if (on)
 		rdn_log("GL_APPLE_vertex_array_range and GL_APPLE_fence: ours, for %s%s", name,

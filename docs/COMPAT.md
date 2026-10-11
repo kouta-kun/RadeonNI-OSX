@@ -7,7 +7,7 @@ How to read it and how to report: `data/compat/README.md`.
 
 | Game | Tier | Version | Resolution | fps | Needs | Notes |
 |---|---|---|---|---|---|---|
-| Call of Duty 2 (demo) | Playable | Call of Duty 2 Demo.app | 1920x1080 | 72 | vertexrange list entry, RDN_VAR=1 (same, per run) | Needs the game named in /Library/Application Support/RadeonNI/vertexrange. |
+| Call of Duty 2 (demo) | Playable | Call of Duty 2 Demo.app | 1920x1080 | 72 | RDN_VAR=0 turns it off | Turned on for this game by the bundle itself (built in by name); earlier bundles needed the game named in /Library/Application Support/RadeonNI/vertexrange. |
 | Doom 3 (demo) | Playable | Doom 3 Demo.app | 1920x1080 | 48 (6600 LE 26) |  | 51 fps against 19 on the GeForce 6600 LE. At ultra with 4 samples: 20.9 and 21.7 fps against 5.0 and 3.6. |
 | Quake 4 | Perfect | Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name) | 1920x1080 | 47.3 | glthread on |  |
 | Quake III Arena | Playable | Quake3.app (Mac port, installed on the G5) | 1920x1080 | 149 |  | Intro video sometimes does not play. |
