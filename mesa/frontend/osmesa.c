@@ -91,6 +91,7 @@
 
 #include "frontend/api.h"
 #include "frontend/winsys_handle.h"
+#include "rdn_engine.h"
 
 
 
@@ -1096,6 +1097,11 @@ osmesa_sync_switch(OSMesaContext osmesa)
  * the program's name as the system has it (Quake3, Doom 3 Demo,
  * WindowServer) turns glthread on for it, the name with a minus before it
  * turns it off; "*" and "-*" stand for every program not named.
+ *
+ * Under those, the engine decides when it is known (rdn_engine.c): on for
+ * id Tech 3 and 4 (Quake 3 +25 %, Quake 4 +75 %), off for Unreal Engine 2
+ * (UT2004: no gain, and memory churn; journal 2026-10-11). A program the
+ * engine table does not know runs with it.
  */
 #define RDN_GLTHREAD_LIST "/Library/Application Support/RadeonNI/glthread"
 
@@ -1132,7 +1138,20 @@ osmesa_want_glthread(void)
       return named;
    if (all >= 0)
       return all;
-   return !name || strcmp(name, "WindowServer") != 0;
+   if (!name || strcmp(name, "WindowServer") != 0) {
+      enum rdn_engine engine = rdn_engine_detect_self();
+      int by_engine = rdn_engine_glthread(engine);
+
+      if (by_engine >= 0) {
+         if (getenv("RDN_STATS"))
+            fprintf(stderr, "rdn: %s (%s): glthread %s\n",
+                    name ? name : "?", rdn_engine_name(engine),
+                    by_engine ? "on" : "off");
+         return by_engine;
+      }
+      return true;
+   }
+   return false;
 }
 
 /*

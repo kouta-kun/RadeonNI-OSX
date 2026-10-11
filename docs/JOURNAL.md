@@ -6157,3 +6157,20 @@ of Quake 4 with glthread off: "slow as shit"; the A/B was stopped after one pair
 
 - Quake 4 again, glthread on, same bundle: 44.10 fps (2,811 frames, 63.7 s), so 45.64 and 44.10
   against 26.05 with it off.
+
+## 2026-10-11: glthread chosen by engine (`mesa/frontend/rdn_engine.c`)
+
+- At context creation `osmesa_want_glthread` now asks which engine the program is, from files
+  next to its executable (the directory, the `.app` bundle, and the directory the bundle is
+  in): `System/Engine.u` + `System/XInterface.u` Unreal Engine 2 (glthread off), `baseq3`
+  id Tech 3, `q4base` / `base/pak000.pk4` / `demo/demo00.pk4` id Tech 4 (both on). Unknown:
+  as before (on, except the window server). Order: `RDN_GLTHREAD`, the program's line in
+  `/Library/Application Support/RadeonNI/glthread`, `*` / `-*` there, the engine, the default.
+  `RDN_STATS=1` prints the decision (`rdn: <program> (<engine>): glthread on|off`).
+- `tests/engine_detect.c` (in `make test`; x86 and big-endian under qemu-ppc both pass) with a
+  made-up file system: UT2004, UT99 (Engine.u alone: unknown, not measured), Quake 3, Quake 4,
+  Doom 3 and its demo, a plain executable, the window server.
+- Only Unreal Engine 2 was measured (UT2004: no gain). Unreal Engine 1 (Engine.u without
+  XInterface.u) is left to the default. Built and installed: bundle feae0dec... (the one
+  before: `~/RadeonNIGLDriver.before-engine`). Not yet seen on the G5 itself: the G5's list
+  still names UT2004 explicitly, which wins over the engine.
