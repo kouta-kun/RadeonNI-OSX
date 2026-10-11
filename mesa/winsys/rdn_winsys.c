@@ -920,6 +920,20 @@ static unsigned rdn_cs_add_buffer(struct radeon_cmdbuf *rcs, struct pb_buffer_le
    radeon_bo_reference(&cs->ws->base, (struct pb_buffer_lean **)&cs->buffers[i].bo, buf);
    cs->buffers[i].usage = usage;
    rdn_cs_hash_insert(cs, i);
+   /*
+    * What the radeon DRM winsys does at every first add: r600 asks
+    * radeon_cs_memory_below_limit() how much the command stream already
+    * references and flushes when it is too much. Without it the stream
+    * kept every buffer it had touched until it was full of commands; with
+    * glthread's 1 MB upload buffers that was some 700 MB (UT2004,
+    * 2026-10-10). The screen's surface is not counted: it is not ours.
+    */
+   if (!rdn_bo(buf)->foreign) {
+      if (rdn_bo(buf)->domain & RADEON_DOMAIN_VRAM)
+         rcs->used_vram_kb += buf->size / 1024;
+      else
+         rcs->used_gart_kb += buf->size / 1024;
+   }
    return i;
 }
 
