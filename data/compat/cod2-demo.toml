@@ -12,5 +12,5 @@ resolution = "1920x1080"
 mode = "fullscreen"
 fps = 72
 settings = "first map; 55 to 90 fps"
-notes = "Turned on for this game by the bundle itself (built in by name); earlier bundles needed the game named in /Library/Application Support/RadeonNI/vertexrange."
-switches = ["RDN_VAR=0 turns it off"]
+notes = ""
+switches = []
