@@ -6042,3 +6042,20 @@ remote tests.
   inside the 256 MB aperture, or the GART) as well as the mapping itself; a failure of either
   gives NULL. Nothing in `system.log` near the crash. Next: run the game's first map with
   `RDN_STATS=1` and `RDN_GLD_LOG` and see which winsys allocation fails, before designing eviction.
+
+## 2026-10-11: UT2004 with RDN_STATS=1; a grab of a moving scene is a collage
+
+- Run 1 (glthread on, `RDN_STATS=1`, patch 0009 installed): clean exit, no crash. 5,402
+  "out of video memory (1 MB asked, ~800 MB in use)", all between log lines 7,287 and 205,660, the
+  first while the game was still in its menus. At the first failure: aperture 218 MB in 305
+  buffers (218 of them 1 MB), beyond the aperture 20 MB, GART 507 MB in 520 buffers (506 of them
+  1 MB, the 512 MB `GART_MOST_BYTES` cap). The 1 MB buffers are glthread's shared upload buffer
+  (client-side arrays through `glDrawRangeElements`); 913,780 buffers created in the session.
+  The game's own textures were not what filled memory. Why the upload buffers are retained is
+  not known. Log kept as `~/ut2004-stats-glthread1.log` on the G5.
+- `rdnuc grab` takes 2.37 s at 1920x1080 (reads the scanout surface row by row through the
+  aperture). A grab of a moving 3D scene is a collage of many frames: I read a smeared picture
+  of the map as "visibly broken" and the user, who was looking at the monitor, saw nothing
+  wrong. It was the readback. Judge only static scenes from a grab.
+- Run 2 started with `RDN_GLTHREAD=0` to see whether the 1 MB pile-up goes away
+  (`~/ut2004-stats-glthread0.log`).
