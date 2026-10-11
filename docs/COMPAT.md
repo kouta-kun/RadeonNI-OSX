@@ -13,9 +13,10 @@ How to read it and how to report: `data/compat/README.md`.
 | Quake III Arena | Playable | Quake3.app (Mac port, installed on the G5) | 1920x1080 | 149 |  | Full screen seen by the user. Intro video sometimes does not play. Frame rate was 47.8 before the winsys fixes, 96 after, 149 with glthread. No 6600 LE figure recorded for this demo. |
 | Sauerbraten | Not rated | unknown (runs from a disk image) | 1920x1080 |  |  | Seeded from the README's 'Working'. A level showed at 6 frames a second in the first accelerated build (before the speed work); not measured since. Needs a fresh test and a tier. |
 | Tux Racer | Not rated | 0.61-3 |  |  |  | Seeded from the README's 'Working'. First screen right by readback on 2026-10-07; an earlier build only redrew when the window moved. Needs a fresh test by eye, and a tier. |
+| Unreal Tournament 2004 | Perfect | Unreal Tournament 2004.app, 3236.1 (from the bundle's Info.plist) | 1920x1080 | 40 | glthread off (chosen by the bundle itself for Unreal Engine 2 since 2026-10-11) | Reported by the user: looked correct (first map, a few minutes of play). Character Shadows offers only None and Blob: the game's own menu shows Full only on Direct3D render devices (its script says "No render-to-texture on anything but Direct3D"), so any Mac build of the game is the same. glthread gave no measurable gain in the benchmark (41.5 and 55.7 fps on in two runs with different camera paths, 40.4 and 40.5 off) and made the game's client-array draws pile up about 730 MB of 1 MB upload buffers, which ran the allocator dry (5,402 failed allocations in three minutes, and the earlier crash) until the bundle bounded them; with it off the game uses 51 MB of GART at most. No frame-rate figure from another card. |
 | World of Warcraft | Playable | 1.12 | 1920x1080 | 165 |  | Confirmed by the user in the world ('It all looks good'). Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast: 30 fps without it at the login screen. |
 
-Tiers: Perfect 1, Playable 4, Not rated 2
+Tiers: Perfect 2, Playable 4, Not rated 2
 
 ## Details
 
@@ -78,6 +79,19 @@ API: OpenGL 1.x fixed function
 
 **2026-10-07: Not rated**
 - Mode: windowed
+
+### Unreal Tournament 2004
+Epic Games · 2004 · Unreal Engine 2
+
+API: OpenGL 1.x, client-side vertex arrays, GL_APPLE_vertex_array_range (AppleVA=1)
+
+**2026-10-11: Perfect**
+- Driver: G5 bundle 8bfd6832 (2026-10-11)
+- Machine: Power Mac G5 Late 2005 (PowerMac11,2), Tiger 10.4.11
+- Mode: fullscreen
+- Settings: the game's saved settings: OpenGLDrv, AppleVA=1, UseVBO=False
+- Reproduce: Unreal Tournament 2004 "DM-Antalus?spectatoronly=1?numbots=12?quickstart=1?attractcam=1" -benchmark -seconds=77 -nosound, with RDN_FPS=1 for the rate. A bot match with a random camera path: 11 samples from 26 to 65 fps, mean 40.5 and 41.5 in two runs; only roughly repeatable
+- Issue: docs/JOURNAL.md 2026-10-11: the crash in _mesa_glthread_upload and the out-of-memory failures, both fixed
 
 ### World of Warcraft
 Blizzard · 2006 · own

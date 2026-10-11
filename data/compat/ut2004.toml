@@ -1,0 +1,20 @@
+name = "Unreal Tournament 2004"
+publisher = "Epic Games"
+year = 2004
+engine = "Unreal Engine 2"
+api = ["OpenGL 1.x", "client-side vertex arrays", "GL_APPLE_vertex_array_range (AppleVA=1)"]
+
+[[report]]
+date = "2026-10-11"
+tier = "perfect"
+version = "Unreal Tournament 2004.app, 3236.1 (from the bundle's Info.plist)"
+driver = "G5 bundle 8bfd6832 (2026-10-11)"
+machine = "Power Mac G5 Late 2005 (PowerMac11,2), Tiger 10.4.11"
+resolution = "1920x1080"
+mode = "fullscreen"
+fps = 40
+settings = "the game's saved settings: OpenGLDrv, AppleVA=1, UseVBO=False"
+repro = "Unreal Tournament 2004 \"DM-Antalus?spectatoronly=1?numbots=12?quickstart=1?attractcam=1\" -benchmark -seconds=77 -nosound, with RDN_FPS=1 for the rate. A bot match with a random camera path: 11 samples from 26 to 65 fps, mean 40.5 and 41.5 in two runs; only roughly repeatable"
+switches = ["glthread off (chosen by the bundle itself for Unreal Engine 2 since 2026-10-11)"]
+issues = ["docs/JOURNAL.md 2026-10-11: the crash in _mesa_glthread_upload and the out-of-memory failures, both fixed"]
+notes = "Reported by the user: looked correct (first map, a few minutes of play). Character Shadows offers only None and Blob: the game's own menu shows Full only on Direct3D render devices (its script says \"No render-to-texture on anything but Direct3D\"), so any Mac build of the game is the same. glthread gave no measurable gain in the benchmark (41.5 and 55.7 fps on in two runs with different camera paths, 40.4 and 40.5 off) and made the game's client-array draws pile up about 730 MB of 1 MB upload buffers, which ran the allocator dry (5,402 failed allocations in three minutes, and the earlier crash) until the bundle bounded them; with it off the game uses 51 MB of GART at most. No frame-rate figure from another card."
