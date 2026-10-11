@@ -6059,3 +6059,21 @@ remote tests.
   wrong. It was the readback. Judge only static scenes from a grab.
 - Run 2 started with `RDN_GLTHREAD=0` to see whether the 1 MB pile-up goes away
   (`~/ut2004-stats-glthread0.log`).
+
+## 2026-10-11: UT2004 with glthread off; the winsys never told r600 what a stream references
+
+- Run 2 (`RDN_GLTHREAD=0`, same map, about three minutes): 0 failed allocations. Peak GART use 35 MB
+  (512 MB with glthread), aperture 11 MB (218), 72,893 buffers created (913,780), 26,400 command
+  buffers of 1,143 MB (29,068 of 1,185 MB). 77 refusals "GART chunk over the limit" remain, all at
+  start-up while the level loads (a transient 512 MB of texture staging); the fallback takes them.
+- Cause: `rdn_cs_add_buffer` never added to `rcs->used_vram_kb` / `used_gart_kb`, which the radeon
+  DRM winsys does at every first add of a buffer. r600 decides to flush a stream from
+  `radeon_cs_memory_below_limit()` (0.7 x `gart_size_kb`, 179 MB here); with both counters at zero
+  it never did, and a stream kept every buffer it had touched until it was full of commands
+  (64K dwords). glthread's 1 MB upload buffers therefore piled up to the 512 MB GART cap and the
+  aperture. It is not a leak: they came back when the stream was flushed.
+- Fix: count first adds in `rdn_cs_add_buffer` (not the screen's surface), by the buffer's domain.
+  Built and installed on the G5 (bundle md5 3204a231...; the one before is
+  `~/RadeonNIGLDriver.before-budget`, the one before patch 0009 `~/RadeonNIGLDriver.before-nullcheck`).
+  Not yet run with the game. Effects to check: UT2004's stats (no "out of video memory"), and that
+  Quake 3, Doom 3 and the others do not slow down (more flushes if they hold much GTT-domain memory).
