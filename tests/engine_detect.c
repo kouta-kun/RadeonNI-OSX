@@ -52,6 +52,20 @@ static void check(const char *exe, enum rdn_engine want, int glthread)
 	}
 }
 
+static void check_dir(const char *dir, enum rdn_engine want, int glthread)
+{
+	enum rdn_engine got = rdn_engine_detect_dir(dir, fake_exists, NULL);
+	int gl = rdn_engine_glthread(got);
+
+	if (got != want || gl != glthread) {
+		printf("FAIL cwd %s: %s, glthread %d (wanted %s, %d)\n", dir,
+		       rdn_engine_name(got), gl, rdn_engine_name(want), glthread);
+		failures++;
+	} else {
+		printf("ok   cwd %s: %s, glthread %d\n", dir, rdn_engine_name(got), gl);
+	}
+}
+
 int main(void)
 {
 	check("/Applications/Unreal Tournament 2004.app/Contents/MacOS/Unreal Tournament 2004",
@@ -72,6 +86,14 @@ int main(void)
 	check("/System/Library/CoreServices/WindowServer", RDN_ENGINE_UNKNOWN, -1);
 	check("/Applications/Chess.app/Contents/MacOS/Chess", RDN_ENGINE_UNKNOWN, -1);
 	check("", RDN_ENGINE_UNKNOWN, -1);
+
+	/* The working directory: UT2004 sits in <bundle>/System. */
+	check_dir("/Applications/Unreal Tournament 2004.app/System",
+		  RDN_ENGINE_UNREAL2, 0);
+	check_dir("/Users/tiger/Desktop/Quake 3", RDN_ENGINE_IDTECH3, 1);
+	check_dir("/Users/tiger/Desktop/Quake 3/baseq3/maps", RDN_ENGINE_IDTECH3, 1);
+	check_dir("/Users/tiger", RDN_ENGINE_UNKNOWN, -1);
+	check_dir("/", RDN_ENGINE_UNKNOWN, -1);
 
 	if (failures) {
 		printf("FAIL engine_detect: %d\n", failures);

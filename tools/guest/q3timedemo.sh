@@ -32,5 +32,6 @@ if kill -0 $pid 2> /dev/null; then
     echo "the demo did not finish in 120 s"
     kill $pid
 fi
+grep -a "^rdn: .*glthread" "$out" | sort -u
 grep -a "frames, .* seconds" "$out" | tail -1
 rm -f "$out"

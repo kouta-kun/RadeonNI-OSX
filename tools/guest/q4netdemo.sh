@@ -40,5 +40,6 @@ while [ $i -lt 240 ] && kill -0 $pid 2> /dev/null; do
         break
     fi
 done
+grep -a "^rdn: .*glthread" /tmp/q4netdemo.out | sort -u
 grep -a "frames in [0-9]* ms" "$L" | tail -1
 kill $pid 2> /dev/null

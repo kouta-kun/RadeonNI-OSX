@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -127,21 +128,51 @@ rdn_engine_detect(const char *exe, rdn_engine_exists_fn exists, void *user)
    return engine;
 }
 
+enum rdn_engine
+rdn_engine_detect_dir(const char *dir, rdn_engine_exists_fn exists, void *user)
+{
+   char path[PATH_MAX];
+   enum rdn_engine engine;
+   int level;
+
+   if (!dir || !dir[0] || strlen(dir) >= sizeof(path))
+      return RDN_ENGINE_UNKNOWN;
+   strcpy(path, dir);
+   for (level = 0; level < 3; level++) {
+      engine = detect_in(path, exists, user);
+      if (engine != RDN_ENGINE_UNKNOWN)
+         return engine;
+      if (!strcmp(path, "/"))
+         break;
+      parent_of(path);
+   }
+   return RDN_ENGINE_UNKNOWN;
+}
+
 bool
 rdn_engine_exe_path(char *buf, size_t size)
 {
-#ifdef __APPLE__
-   uint32_t n = (uint32_t)size;
+   char raw[PATH_MAX], full[PATH_MAX];
 
-   return _NSGetExecutablePath(buf, &n) == 0;
+#ifdef __APPLE__
+   uint32_t n = (uint32_t)sizeof(raw);
+
+   /* The path as the program was started with: "./Name" is possible. */
+   if (_NSGetExecutablePath(raw, &n) != 0)
+      return false;
 #else
-   ssize_t n = readlink("/proc/self/exe", buf, size - 1);
+   ssize_t n = readlink("/proc/self/exe", raw, sizeof(raw) - 1);
 
    if (n <= 0)
       return false;
-   buf[n] = 0;
-   return true;
+   raw[n] = 0;
 #endif
+   if (!realpath(raw, full))
+      return false;
+   if (strlen(full) >= size)
+      return false;
+   strcpy(buf, full);
+   return true;
 }
 
 static bool
@@ -154,9 +185,14 @@ file_exists(const char *path, void *user)
 enum rdn_engine
 rdn_engine_detect_self(void)
 {
-   char exe[PATH_MAX];
+   char path[PATH_MAX];
+   enum rdn_engine engine = RDN_ENGINE_UNKNOWN;
 
-   if (!rdn_engine_exe_path(exe, sizeof(exe)))
-      return RDN_ENGINE_UNKNOWN;
-   return rdn_engine_detect(exe, file_exists, NULL);
+   if (rdn_engine_exe_path(path, sizeof(path)))
+      engine = rdn_engine_detect(path, file_exists, NULL);
+   /* A program started by a relative path that then changed its directory
+    * (UT2004 does) has no executable path to be found. */
+   if (engine == RDN_ENGINE_UNKNOWN && getcwd(path, sizeof(path)))
+      engine = rdn_engine_detect_dir(path, file_exists, NULL);
+   return engine;
 }

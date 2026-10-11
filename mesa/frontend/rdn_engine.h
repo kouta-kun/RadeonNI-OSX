@@ -42,6 +42,13 @@ int rdn_engine_glthread(enum rdn_engine engine);
 enum rdn_engine rdn_engine_detect(const char *exe,
                                   rdn_engine_exists_fn exists, void *user);
 
+/*
+ * The engine from a directory the program works in: the directory itself and
+ * the two above it (UT2004 changes into <bundle>/System before it draws).
+ */
+enum rdn_engine rdn_engine_detect_dir(const char *dir,
+                                      rdn_engine_exists_fn exists, void *user);
+
 /* The running program's executable, or false. */
 bool rdn_engine_exe_path(char *buf, size_t size);
 

@@ -6174,3 +6174,21 @@ of Quake 4 with glthread off: "slow as shit"; the A/B was stopped after one pair
   XInterface.u) is left to the default. Built and installed: bundle feae0dec... (the one
   before: `~/RadeonNIGLDriver.before-engine`). Not yet seen on the G5 itself: the G5's list
   still names UT2004 explicitly, which wins over the engine.
+
+### Verified on the G5 (same day, bundle 8bfd6832)
+
+- First try (feae0dec): no decision line and 180,193 buffers: glthread was on. Two causes found
+  one after the other: `_NSGetExecutablePath` returns the path as the program was started
+  (`./Unreal Tournament 2004` from the shell), made absolute with `realpath`; and UT2004 changes
+  into `<bundle>/System` before it makes its context, so the relative path no longer resolves.
+  `rdn_engine_detect_dir` (the working directory and two levels up) is the fallback, in the test.
+- UT2004 with its line gone from the list (`-Unreal Tournament 2004` is not in
+  `/Library/Application Support/RadeonNI/glthread` any more; the file is as before this
+  session; the version with it is `glthread.with-ut2004`): `rdn: Unreal Tournament 2004 (Unreal
+  Engine 2): glthread off`, 15,418 buffers created, 1 fence wait, benchmark 12 samples 25.7 to
+  64.9 fps, as with `RDN_GLTHREAD=0`.
+- Quake 4 (not in the list): `rdn: Quake 4 (id Tech 4): glthread on`, 46.15 fps.
+- Quake 3 and Doom 3 Demo are named in that file (on), which wins over the engine; Quake 3
+  146.2 fps. The decision is not printed when the file decides.
+- `tools/guest/q3timedemo.sh` and `q4netdemo.sh` print the `rdn:` decision lines when
+  `RDN_STATS=1` is among their arguments.

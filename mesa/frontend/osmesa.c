@@ -1149,6 +1149,9 @@ osmesa_want_glthread(void)
                     by_engine ? "on" : "off");
          return by_engine;
       }
+      if (getenv("RDN_STATS"))
+         fprintf(stderr, "rdn: %s: engine not known, glthread on\n",
+                 name ? name : "?");
       return true;
    }
    return false;
