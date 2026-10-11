@@ -122,6 +122,8 @@ struct rdn_pending_ib {
    struct list_head list;
    uint64_t offset, size;
    struct rdn_busy busy;
+   /* The memory of the GTT domain (uploads, staging) it references, in KB. */
+   uint64_t gart_kb;
 };
 
 static inline struct radeon_drm_winsys *rdn_winsys(struct radeon_winsys *rws)
@@ -1004,18 +1006,30 @@ static void rdn_reap_ibs(struct radeon_drm_winsys *ws, bool wait)
  */
 #define RDN_MAX_PENDING_IBS 4
 
-static void rdn_throttle(struct radeon_drm_winsys *ws)
+/*
+ * Nor may the command buffers the GPU has not finished, and the one being
+ * submitted, reference more than this much upload and staging memory
+ * between them: it is all CPU-writable memory (the aperture and the 512 MB
+ * of GART), which a program needs for its next uploads. r600 bounds one
+ * command stream by 0.7 of gart_size_kb; four such streams in flight held
+ * ~730 MB of glthread's 1 MB upload buffers (UT2004, 2026-10-10).
+ */
+#define RDN_MAX_PENDING_GART_KB (256 * 1024)
+
+static void rdn_throttle(struct radeon_drm_winsys *ws, uint64_t current_kb)
 {
    for (;;) {
       struct rdn_pending_ib *oldest = NULL;
       unsigned pending = 0;
+      uint64_t kb = current_kb;
 
       list_for_each_entry(struct rdn_pending_ib, ib, &ws->pending_ibs, list) {
          if (!oldest)
             oldest = ib;
          pending++;
+         kb += ib->gart_kb;
       }
-      if (pending < RDN_MAX_PENDING_IBS)
+      if (pending < RDN_MAX_PENDING_IBS && (!pending || kb <= RDN_MAX_PENDING_GART_KB))
          return;
       /* A wait that timed out must not keep us here. */
       if (!rdn_busy_wait(ws, &oldest->busy, OS_TIMEOUT_INFINITE))
@@ -1061,7 +1075,7 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
    simple_mtx_lock(&ws->lock);
    rdn_reap_ibs(ws, false);
    rdn_cache_trim(ws, false);
-   rdn_throttle(ws);
+   rdn_throttle(ws, rcs->used_gart_kb);
    r = rdn_cache_get(ws, ib_size, 4096, RDN_VISIBLE, &offset) ? 0 :
        ws->dev->alloc(ws->dev, ib_size, 4096, &offset);
    if (r) {
@@ -1096,6 +1110,7 @@ static int rdn_cs_flush(struct radeon_cmdbuf *rcs, unsigned flags,
       ib->offset = offset;
       ib->size = ib_size;
       ib->busy = busy;
+      ib->gart_kb = rcs->used_gart_kb;
       list_addtail(&ib->list, &ws->pending_ibs);
       ws->num_flushes++;
       rdn_cs_stats.flushes++;
