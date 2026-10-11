@@ -12,5 +12,5 @@ resolution = "1920x1080"
 mode = "fullscreen"
 fps = 72
 settings = "first map; 55 to 90 fps"
-notes = "Played by the user through the first map; last flicker gone. Needs the game named in /Library/Application Support/RadeonNI/vertexrange (done on the G5): the game draws from its own memory. The 24-bit depth mode and an aux depth/stencil flag were also needed to reach the menu."
+notes = "Needs the game named in /Library/Application Support/RadeonNI/vertexrange."
 switches = ["vertexrange list entry", "RDN_VAR=1 (same, per run)"]

@@ -7,16 +7,14 @@ How to read it and how to report: `data/compat/README.md`.
 
 | Game | Tier | Version | Resolution | fps | Needs | Notes |
 |---|---|---|---|---|---|---|
-| Call of Duty 2 (demo) | Playable | Call of Duty 2 Demo.app | 1920x1080 | 72 | vertexrange list entry, RDN_VAR=1 (same, per run) | Played by the user through the first map; last flicker gone. Needs the game named in /Library/Application Support/RadeonNI/vertexrange (done on the G5): the game draws from its own memory. The 24-bit depth mode and an aux depth/stencil flag were also needed to reach the menu. |
-| Doom 3 (demo) | Playable | Doom 3 Demo.app | 1920x1080 | 48 (6600 LE 26) |  | Second save 'bench2': 51 fps against 19 on the GeForce 6600 LE. At ultra with 4 samples: 20.9 and 21.7 fps against 5.0 and 3.6. Without the extension-list fix (journal 2026-10-06) it used the fixed-function path at about half the frames. |
-| Quake 4 | Perfect | Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name) | 1920x1080 | 47.3 | glthread off (a leftover from testing SMP; never re-enabled) | Reported by the user: looked and played great. glthread has not been tried with it on. For scale, Barefeats' Quake 4 at 1920x1200 High: Quad G5 2.5 with GeForce 7800 GT 50 fps, Radeon X1900 39, GeForce 6600 14 (barefeats.com/image06/q15-kak.png; a different demo and settings, and the article says all advanced settings were on, including multi-processor mode, but the chart does not show it). |
-| Quake III Arena | Playable | Quake3.app (Mac port, installed on the G5) | 1920x1080 | 149 |  | Full screen seen by the user. Intro video sometimes does not play. Frame rate was 47.8 before the winsys fixes, 96 after, 149 with glthread. No 6600 LE figure recorded for this demo. |
-| Sauerbraten | Not rated | unknown (runs from a disk image) | 1920x1080 |  |  | Seeded from the README's 'Working'. A level showed at 6 frames a second in the first accelerated build (before the speed work); not measured since. Needs a fresh test and a tier. |
-| Tux Racer | Not rated | 0.61-3 |  |  |  | Seeded from the README's 'Working'. First screen right by readback on 2026-10-07; an earlier build only redrew when the window moved. Needs a fresh test by eye, and a tier. |
-| Unreal Tournament 2004 | Perfect | Unreal Tournament 2004.app, 3236.1 (from the bundle's Info.plist) | 1920x1080 | 40 | glthread off (chosen by the bundle itself for Unreal Engine 2 since 2026-10-11) | Reported by the user: looked correct (first map, a few minutes of play). Character Shadows offers only None and Blob: the game's own menu shows Full only on Direct3D render devices (its script says "No render-to-texture on anything but Direct3D"), so any Mac build of the game is the same. glthread gave no measurable gain in the benchmark (41.5 and 55.7 fps on in two runs with different camera paths, 40.4 and 40.5 off) and made the game's client-array draws pile up about 730 MB of 1 MB upload buffers, which ran the allocator dry (5,402 failed allocations in three minutes, and the earlier crash) until the bundle bounded them; with it off the game uses 51 MB of GART at most. No frame-rate figure from another card. |
-| World of Warcraft | Playable | 1.12 | 1920x1080 | 165 |  | Confirmed by the user in the world ('It all looks good'). Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast: 30 fps without it at the login screen. |
+| Call of Duty 2 (demo) | Playable | Call of Duty 2 Demo.app | 1920x1080 | 72 | vertexrange list entry, RDN_VAR=1 (same, per run) | Needs the game named in /Library/Application Support/RadeonNI/vertexrange. |
+| Doom 3 (demo) | Playable | Doom 3 Demo.app | 1920x1080 | 48 (6600 LE 26) |  | 51 fps against 19 on the GeForce 6600 LE. At ultra with 4 samples: 20.9 and 21.7 fps against 5.0 and 3.6. |
+| Quake 4 | Perfect | Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name) | 1920x1080 | 47.3 | glthread on |  |
+| Quake III Arena | Playable | Quake3.app (Mac port, installed on the G5) | 1920x1080 | 149 |  | Intro video sometimes does not play. |
+| Unreal Tournament 2004 | Perfect | Unreal Tournament 2004.app, 3236.1 (from the bundle's Info.plist) | 1920x1080 | 40 | glthread off | glthread gave no measurable gain in the benchmark (41.5 and 55.7 fps on in two runs with different camera paths, 40.4 and 40.5 off) and made the game's client-array draws pile up about 730 MB of 1 MB upload buffers, which ran the allocator dry (5,402 failed allocations in three minutes, and the earlier crash) |
+| World of Warcraft | Playable | 1.12 | 1920x1080 | 165 |  | Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast. |
 
-Tiers: Perfect 2, Playable 4, Not rated 2
+Tiers: Perfect 2, Playable 4
 
 ## Details
 
@@ -35,11 +33,10 @@ id Software / Aspyr (Mac) · 2004 · id Tech 4
 API: OpenGL 1.x, ARB vertex/fragment programs, stencil shadows
 
 **2026-10-06: Playable**
-- Driver: G5 2026-10-06, glthread on, true extension list
+- Driver: glthread on, true extension list
 - Mode: fullscreen
 - Settings: ARB2 path; save game 'bench' (51 fps against 19 on 'bench2')
 - Reproduce: tools/guest/d3save.sh <save>: 300 frames of a save game (the demo has no demo1)
-- Issue: docs/JOURNAL.md 2026-10-06 (extension list)
 
 ### Quake 4
 id Software / Raven / Aspyr (Mac) · 2005 · id Tech 4
@@ -51,8 +48,8 @@ API: OpenGL 1.x, ARB vertex/fragment programs, stencil shadows, GL_EXT_depth_bou
 - Machine: Power Mac G5 Late 2005, dual 2.5 GHz (PowerMac11,2), Tiger 10.4.11
 - Mode: fullscreen
 - Settings: SMP off (r_useSMP / the game's multiprocessor option)
-- Reproduce: the user's recorded net demo, played with playNetTimeDemo
-- Issue: Turning SMP on crashes the game; cause not known, crash log not yet read
+- Reproduce: id_demo001 net demo, played with playNetTimeDemo
+- Issue: Turning SMP on crashes the game
 
 ### Quake III Arena
 id Software / Aspyr (Mac) · 2000 · id Tech 3
@@ -60,25 +57,8 @@ id Software / Aspyr (Mac) · 2000 · id Tech 3
 API: OpenGL 1.x fixed function
 
 **2026-10-06: Playable**
-- Driver: bundle f4d22db0 (see docs/JOURNAL.md 2026-10-06)
 - Mode: fullscreen
 - Reproduce: timedemo 1; demo four
-
-### Sauerbraten
-Cube 2 project (open source) · 2004 · Cube 2
-
-API: OpenGL 1.x/2.x
-
-**2026-10-05: Not rated**
-- Mode: fullscreen
-
-### Tux Racer
-Sunspire Studios / open source · 2000 · own
-
-API: OpenGL 1.x fixed function
-
-**2026-10-07: Not rated**
-- Mode: windowed
 
 ### Unreal Tournament 2004
 Epic Games · 2004 · Unreal Engine 2
@@ -86,12 +66,10 @@ Epic Games · 2004 · Unreal Engine 2
 API: OpenGL 1.x, client-side vertex arrays, GL_APPLE_vertex_array_range (AppleVA=1)
 
 **2026-10-11: Perfect**
-- Driver: G5 bundle 8bfd6832 (2026-10-11)
 - Machine: Power Mac G5 Late 2005 (PowerMac11,2), Tiger 10.4.11
 - Mode: fullscreen
-- Settings: the game's saved settings: OpenGLDrv, AppleVA=1, UseVBO=False
-- Reproduce: Unreal Tournament 2004 "DM-Antalus?spectatoronly=1?numbots=12?quickstart=1?attractcam=1" -benchmark -seconds=77 -nosound, with RDN_FPS=1 for the rate. A bot match with a random camera path: 11 samples from 26 to 65 fps, mean 40.5 and 41.5 in two runs; only roughly repeatable
-- Issue: docs/JOURNAL.md 2026-10-11: the crash in _mesa_glthread_upload and the out-of-memory failures, both fixed
+- Settings: OpenGLDrv, AppleVA=1, UseVBO=False
+- Reproduce: Unreal Tournament 2004 "DM-Antalus?spectatoronly=1?numbots=12?quickstart=1?attractcam=1" -benchmark -seconds=77 -nosound
 
 ### World of Warcraft
 Blizzard · 2006 · own

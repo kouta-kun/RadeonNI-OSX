@@ -13,4 +13,4 @@ mode = "fullscreen"
 fps = 165
 settings = "login screen"
 repro = "fixed spot, RDN_FPS=1"
-notes = "Confirmed by the user in the world ('It all looks good'). Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast: 30 fps without it at the login screen."
+notes = "Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast."
