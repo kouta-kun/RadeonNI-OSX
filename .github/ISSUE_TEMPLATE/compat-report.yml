@@ -1,0 +1,69 @@
+name: Compatibility report
+description: Tell us how a game or application runs on the Radeon HD 7570 under Tiger
+title: "[compat] <game name, version>"
+labels: ["compat"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only report what you watched on the monitor. A frame counter or a
+        screenshot is good evidence; the rating is how it looked and played.
+        See [the list](https://github.com/kouta-kun/RadeonNI-OSX/blob/main/docs/COMPAT.md) for what is known.
+  - type: input
+    id: game
+    attributes:
+      label: Game or application
+      placeholder: "Unreal Tournament 2004"
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes:
+      label: Version and patch level
+      description: The game's own version, and whether it is the demo.
+      placeholder: "3369 (Mac, Universal Binary)"
+    validations: {required: true}
+  - type: dropdown
+    id: tier
+    attributes:
+      label: How did it run?
+      options:
+        - Perfect - looks and plays right, no known problem
+        - Playable - plays start to finish, minor glitch or a needed setting
+        - Glitches - runs, but wrong pictures or crashes get in the way
+        - Menu only - reaches the menu or first screen, not the game
+        - Does not run - does not start, or draws nothing
+    validations: {required: true}
+  - type: input
+    id: machine
+    attributes:
+      label: Machine and OS
+      placeholder: "Power Mac G5 Late 2005 (PowerMac11,2), Tiger 10.4.11"
+    validations: {required: true}
+  - type: input
+    id: driver
+    attributes:
+      label: RadeonNI version
+      description: The release zip or installer name, or the commit.
+      placeholder: "RadeonNI-20261009-ab12cd3.zip"
+    validations: {required: true}
+  - type: input
+    id: mode
+    attributes:
+      label: Resolution and window mode
+      placeholder: "1920x1080, full screen"
+  - type: input
+    id: fps
+    attributes:
+      label: Frame rate and how you measured it
+      description: A timedemo, a save game or a fixed spot, so someone else can repeat it. The same test on another card is very useful.
+      placeholder: "48 fps, save 'bench'; GeForce 6600 LE 26 fps"
+  - type: textarea
+    id: problems
+    attributes:
+      label: What looked wrong, and when
+      description: Missing textures, flicker, crashes, black screens, sound, input. Say where in the game.
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings and switches
+      description: Graphics options, boot arguments, files in /Library/Application Support/RadeonNI, environment variables.

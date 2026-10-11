@@ -1,0 +1,16 @@
+name = "Call of Duty 2 (demo)"
+publisher = "Activision / Aspyr (Mac)"
+year = 2005
+engine = "IW 2.0"
+api = ["OpenGL 1.x", "GL_APPLE_vertex_array_range", "GL_APPLE_fence"]
+
+[[report]]
+date = "2026-10-07"
+tier = "playable"
+version = "Call of Duty 2 Demo.app"
+resolution = "1920x1080"
+mode = "fullscreen"
+fps = 72
+settings = "first map; 55 to 90 fps"
+notes = "Played by the user through the first map; last flicker gone. Needs the game named in /Library/Application Support/RadeonNI/vertexrange (done on the G5): the game draws from its own memory. The 24-bit depth mode and an aux depth/stencil flag were also needed to reach the menu."
+switches = ["vertexrange list entry", "RDN_VAR=1 (same, per run)"]

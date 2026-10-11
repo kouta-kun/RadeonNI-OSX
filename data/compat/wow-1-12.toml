@@ -1,0 +1,16 @@
+name = "World of Warcraft"
+publisher = "Blizzard"
+year = 2006
+engine = "own"
+api = ["OpenGL 1.x", "ARB programs", "GL_ARB_vertex_blend (mapped by the bundle)", "GL_APPLE_flush_buffer_range"]
+
+[[report]]
+date = "2026-10-07"
+tier = "playable"
+version = "1.12"
+resolution = "1920x1080"
+mode = "fullscreen"
+fps = 165
+settings = "login screen"
+repro = "fixed spot, RDN_FPS=1"
+notes = "Confirmed by the user in the world ('It all looks good'). Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast: 30 fps without it at the login screen."

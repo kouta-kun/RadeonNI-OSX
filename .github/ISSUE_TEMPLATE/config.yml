@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Compatibility list
+    url: https://github.com/kouta-kun/RadeonNI-OSX/blob/main/docs/COMPAT.md
+    about: See what has been tested before reporting a game.

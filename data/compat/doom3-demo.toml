@@ -1,0 +1,19 @@
+name = "Doom 3 (demo)"
+publisher = "id Software / Aspyr (Mac)"
+year = 2004
+engine = "id Tech 4"
+api = ["OpenGL 1.x", "ARB vertex/fragment programs", "stencil shadows"]
+
+[[report]]
+date = "2026-10-06"
+tier = "playable"
+version = "Doom 3 Demo.app"
+driver = "G5 2026-10-06, glthread on, true extension list"
+resolution = "1920x1080"
+mode = "fullscreen"
+fps = 48
+baseline_fps = 26
+settings = "ARB2 path; save game 'bench' (51 fps against 19 on 'bench2')"
+repro = "tools/guest/d3save.sh <save>: 300 frames of a save game (the demo has no demo1)"
+notes = "Second save 'bench2': 51 fps against 19 on the GeForce 6600 LE. At ultra with 4 samples: 20.9 and 21.7 fps against 5.0 and 3.6. Without the extension-list fix (journal 2026-10-06) it used the fixed-function path at about half the frames."
+issues = ["docs/JOURNAL.md 2026-10-06 (extension list)"]

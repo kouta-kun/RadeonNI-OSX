@@ -1,0 +1,16 @@
+name = "Quake III Arena"
+publisher = "id Software / Aspyr (Mac)"
+year = 2000
+engine = "id Tech 3"
+api = ["OpenGL 1.x fixed function"]
+
+[[report]]
+date = "2026-10-06"
+tier = "playable"
+version = "Quake3.app (Mac port, installed on the G5)"
+driver = "bundle f4d22db0 (see docs/JOURNAL.md 2026-10-06)"
+resolution = "1920x1080"
+mode = "fullscreen"
+fps = 149
+repro = "timedemo 1; demo four"
+notes = "Full screen seen by the user. Intro video sometimes does not play. Frame rate was 47.8 before the winsys fixes, 96 after, 149 with glthread. No 6600 LE figure recorded for this demo."

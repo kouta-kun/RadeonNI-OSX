@@ -1,0 +1,13 @@
+name = "Sauerbraten"
+publisher = "Cube 2 project (open source)"
+year = 2004
+engine = "Cube 2"
+api = ["OpenGL 1.x/2.x"]
+
+[[report]]
+date = "2026-10-05"
+tier = "unrated"
+version = "unknown (runs from a disk image)"
+resolution = "1920x1080"
+mode = "fullscreen"
+notes = "Seeded from the README's 'Working'. A level showed at 6 frames a second in the first accelerated build (before the speed work); not measured since. Needs a fresh test and a tier."
