@@ -9,13 +9,13 @@ How to read it and how to report: `data/compat/README.md`.
 |---|---|---|---|---|---|---|
 | Call of Duty 2 (demo) | Playable | Call of Duty 2 Demo.app | 1920x1080 | 72 | vertexrange list entry, RDN_VAR=1 (same, per run) | Played by the user through the first map; last flicker gone. Needs the game named in /Library/Application Support/RadeonNI/vertexrange (done on the G5): the game draws from its own memory. The 24-bit depth mode and an aux depth/stencil flag were also needed to reach the menu. |
 | Doom 3 (demo) | Playable | Doom 3 Demo.app | 1920x1080 | 48 (6600 LE 26) |  | Second save 'bench2': 51 fps against 19 on the GeForce 6600 LE. At ultra with 4 samples: 20.9 and 21.7 fps against 5.0 and 3.6. Without the extension-list fix (journal 2026-10-06) it used the fixed-function path at about half the frames. |
-| Quake 4 | Not rated | Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name) | 1920x1080 | 47.3 |  | Reported by the user. For scale, Barefeats' Quake 4 at 1920x1200 High: Quad G5 2.5 with GeForce 7800 GT 50 fps, Radeon X1900 39, GeForce 6600 14 (barefeats.com/image06/q15-kak.png; a different demo and settings, and the chart does not say whether SMP was on). Tier waits for how it looked and played. |
+| Quake 4 | Perfect | Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name) | 1920x1080 | 47.3 | glthread off (a leftover from testing SMP; never re-enabled) | Reported by the user: looked and played great. glthread has not been tried with it on. For scale, Barefeats' Quake 4 at 1920x1200 High: Quad G5 2.5 with GeForce 7800 GT 50 fps, Radeon X1900 39, GeForce 6600 14 (barefeats.com/image06/q15-kak.png; a different demo and settings, and the article says all advanced settings were on, including multi-processor mode, but the chart does not show it). |
 | Quake III Arena | Playable | Quake3.app (Mac port, installed on the G5) | 1920x1080 | 149 |  | Full screen seen by the user. Intro video sometimes does not play. Frame rate was 47.8 before the winsys fixes, 96 after, 149 with glthread. No 6600 LE figure recorded for this demo. |
 | Sauerbraten | Not rated | unknown (runs from a disk image) | 1920x1080 |  |  | Seeded from the README's 'Working'. A level showed at 6 frames a second in the first accelerated build (before the speed work); not measured since. Needs a fresh test and a tier. |
 | Tux Racer | Not rated | 0.61-3 |  |  |  | Seeded from the README's 'Working'. First screen right by readback on 2026-10-07; an earlier build only redrew when the window moved. Needs a fresh test by eye, and a tier. |
 | World of Warcraft | Playable | 1.12 | 1920x1080 | 165 |  | Confirmed by the user in the world ('It all looks good'). Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast: 30 fps without it at the login screen. |
 
-Tiers: Playable 4, Not rated 3
+Tiers: Perfect 1, Playable 4, Not rated 2
 
 ## Details
 
@@ -45,7 +45,7 @@ id Software / Raven / Aspyr (Mac) · 2005 · id Tech 4
 
 API: OpenGL 1.x, ARB vertex/fragment programs, stencil shadows, GL_EXT_depth_bounds_test (not offered)
 
-**2026-10-10: Not rated**
+**2026-10-10: Perfect**
 - Driver: G5 bundle of 2026-10-10
 - Machine: Power Mac G5 Late 2005, dual 2.5 GHz (PowerMac11,2), Tiger 10.4.11
 - Mode: fullscreen
