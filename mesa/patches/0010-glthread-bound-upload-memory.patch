@@ -1,0 +1,112 @@
+glthread: bound the memory of live upload buffers
+
+A program that draws from client-side arrays makes glthread copy each
+draw's data into 1 MB upload buffers, and every queued draw keeps its
+buffer alive until the worker thread has run it. With 8 batches of 64 KB
+(patch 0004) that was some 730 MB of upload buffers at once on the G5
+(UT2004, 2026-10-10: the allocator ran dry, 5,402 failed allocations in
+three minutes; none with glthread off). Neither a memory budget in the
+winsys's command streams nor a limit on the command buffers in flight
+changed it: the buffers are held by glthread's own queue.
+
+The memory of live upload buffers (the buffers glthread made) is counted
+for the process. When a new one would take it past 256 MB, the recording
+thread runs what is queued (_mesa_glthread_finish), which lets go of
+buffers. Once per overrun: what is still over after that is held by the
+driver, which waiting does not free.
+
+diff -ruN a/src/mesa/main/bufferobj.c b/src/mesa/main/bufferobj.c
+--- a/src/mesa/main/bufferobj.c
++++ b/src/mesa/main/bufferobj.c
+@@ -1038,6 +1038,9 @@
+                            struct gl_buffer_object *bufObj)
+ {
+    assert(bufObj->RefCount == 0);
++   /* osx-gpu: glthread's upload memory is counted (glthread_bufferobj.c). */
++   if (bufObj->GLThreadInternal)
++      _mesa_glthread_upload_deleted(bufObj->Size);
+    _mesa_buffer_unmap_all_mappings(ctx, bufObj);
+    _mesa_bufferobj_release_buffer(ctx, bufObj);
+ 
+diff -ruN a/src/mesa/main/glthread_bufferobj.c b/src/mesa/main/glthread_bufferobj.c
+--- a/src/mesa/main/glthread_bufferobj.c
++++ b/src/mesa/main/glthread_bufferobj.c
+@@ -29,6 +29,46 @@
+  * Create an upload buffer. This is called from the app thread, so everything
+  * has to be thread-safe in the driver.
+  */
++/* osx-gpu: how much memory the upload buffers that exist right now have, in
++ * KB, for the whole process (buffers may be deleted from any thread and
++ * any context of the share group). */
++static int upload_live_kb;
++static bool upload_waited;
++
++/* More than this, and the thread that is recording waits for the worker to
++ * run what is queued, which lets go of buffers. Without it a program that
++ * draws from client arrays queues 8 batches of draws that each pin their
++ * own 1 MB upload buffers (~730 MB on the G5), and the allocator runs
++ * dry (UT2004, 2026-10-10). */
++#define UPLOAD_LIVE_MAX_KB (256 * 1024)
++
++void
++_mesa_glthread_upload_deleted(GLsizeiptr size)
++{
++   p_atomic_add(&upload_live_kb, -(int)DIV_ROUND_UP(size, 1024));
++}
++
++static void
++wait_for_upload_memory(struct gl_context *ctx, GLsizeiptr size)
++{
++   int kb = DIV_ROUND_UP(size, 1024);
++
++   if (p_atomic_read(&upload_live_kb) + kb <= UPLOAD_LIVE_MAX_KB) {
++      upload_waited = false;
++      return;
++   }
++   /* Once is enough: what is over may be held by the driver, which this
++    * does not free, and waiting at every new buffer would stall the
++    * program for nothing. Start waiting again after it came down. */
++   if (upload_waited) {
++      if (p_atomic_read(&upload_live_kb) < UPLOAD_LIVE_MAX_KB * 3 / 4)
++         upload_waited = false;
++      return;
++   }
++   upload_waited = true;
++   _mesa_glthread_finish(ctx);
++}
++
+ static struct gl_buffer_object *
+ new_upload_buffer(struct gl_context *ctx, GLsizeiptr size, uint8_t **ptr)
+ {
+@@ -45,9 +85,12 @@
+                           GL_WRITE_ONLY,
+                           GL_CLIENT_STORAGE_BIT | GL_MAP_WRITE_BIT,
+                           obj)) {
++      /* Not counted yet: _mesa_glthread_upload_deleted() must not see it. */
++      obj->GLThreadInternal = false;
+       _mesa_delete_buffer_object(ctx, obj);
+       return NULL;
+    }
++   p_atomic_add(&upload_live_kb, (int)DIV_ROUND_UP(size, 1024));
+ 
+    *ptr = _mesa_bufferobj_map_range(ctx, 0, size,
+                                  GL_MAP_WRITE_BIT |
+@@ -107,6 +150,7 @@
+ 
+    /* Allocate a new buffer if needed. */
+    if (unlikely(!glthread->upload_buffer || offset + size > default_size)) {
++      wait_for_upload_memory(ctx, default_size);
+       /* If the size is greater than the buffer size, allocate a separate buffer
+        * just for this upload.
+        */
+diff -ruN a/src/mesa/main/glthread.h b/src/mesa/main/glthread.h
+--- a/src/mesa/main/glthread.h
++++ b/src/mesa/main/glthread.h
+@@ -346,6 +346,7 @@
+ void _mesa_glthread_finish_before(struct gl_context *ctx, const char *func);
+ bool _mesa_glthread_invalidate_zsbuf(struct gl_context *ctx);
+ void _mesa_glthread_release_upload_buffer(struct gl_context *ctx, bool async_release);
++void _mesa_glthread_upload_deleted(GLsizeiptr size);
+ void _mesa_glthread_upload(struct gl_context *ctx, const void *data,
+                            GLsizeiptr size, unsigned *out_offset,
+                            struct gl_buffer_object **out_buffer,

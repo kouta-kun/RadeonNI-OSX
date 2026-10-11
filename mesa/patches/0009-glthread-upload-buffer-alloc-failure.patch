@@ -1,0 +1,33 @@
+glthread: do not dereference an upload buffer that could not be allocated
+
+_mesa_glthread_upload() took the result of new_upload_buffer() for the
+shared 1 MB upload buffer and went straight on to
+"glthread->upload_buffer->RefCount += default_size". new_upload_buffer()
+returns NULL when the buffer's storage or its CPU mapping cannot be had,
+which the winsys reports as soon as it has no memory left to give. The
+program then died with a bad access at address 0 inside glDrawRangeElements
+(Unreal Tournament 2004 on the G5, 2026-10-10).
+
+Return instead, with *out_buffer left NULL. Every caller already tests that
+and raises GL_OUT_OF_MEMORY, so the draw is skipped and the program goes on.
+The shared buffer stays NULL, so the next upload tries again.
+
+diff -ruN a/src/mesa/main/glthread_bufferobj.c b/src/mesa/main/glthread_bufferobj.c
+--- a/src/mesa/main/glthread_bufferobj.c
++++ b/src/mesa/main/glthread_bufferobj.c
+@@ -131,6 +131,15 @@
+
+       glthread->upload_buffer =
+          new_upload_buffer(ctx, default_size, &glthread->upload_ptr);
++
++      /* osx-gpu: no memory. *out_buffer stays NULL; callers report
++       * GL_OUT_OF_MEMORY and skip the draw. */
++      if (unlikely(!glthread->upload_buffer)) {
++         glthread->upload_ptr = NULL;
++         glthread->upload_offset = 0;
++         return;
++      }
++
+       glthread->upload_offset = 0;
+       offset = start_offset;
+

@@ -10,6 +10,7 @@ inc_rdn_frontend = include_directories('include')
 librdn_st = static_library(
   'rdn_st',
   'osmesa.c',
+  'rdn_engine.c',
   include_directories : [
     inc_rdn_frontend, inc_include, inc_src, inc_gallium, inc_gallium_aux,
     inc_glapi, inc_mesa,

@@ -6033,3 +6033,170 @@ uninstall.sh, nvram-lib.sh, README.txt), `scripts/make-linux-package.sh`, `tests
 and a `--dev` option in `scripts/of-hook.py` (default output unchanged: the Tiger block's md5
 is the same as before). The test passes against a fake `nvram`; the package builds. Not run on
 a G5 under Linux. See `docs/OPEN-FIRMWARE.md`, "Installing from Linux".
+
+## 2026-10-11: UT2004 crash in `_mesa_glthread_upload` (patch 0009)
+
+- UT2004 3236.1 (OpenGLDrv, AppleVA=1) crashed on the G5 a minute into the first map:
+  EXC_BAD_ACCESS at 0 in `_mesa_glthread_upload + 308` from `glDrawRangeElements`
+  (`~/Library/Logs/CrashReporter/Unreal Tournament 2004.crash.log`). The faulting word is
+  `lwz r2,0(r3)` with r3 = 0: `glthread->upload_buffer->RefCount += default_size`, the shared
+  1 MB upload buffer, after `new_upload_buffer()` returned NULL (r9 = 0x100000). Upstream Mesa
+  never checks it.
+- `mesa/patches/0009`: return with `*out_buffer` NULL (callers already raise GL_OUT_OF_MEMORY
+  and skip the draw); the shared buffer stays NULL so the next upload retries. Built and put on
+  the G5 by hand (old bundle: `~/RadeonNIGLDriver.before-nullcheck`); not yet run with the game.
+- Why the allocation failed is NOT known. Notes: the game had just started, so "the card is
+  full" is not obvious. `new_upload_buffer` needs storage that the CPU can map (video memory
+  inside the 256 MB aperture, or the GART) as well as the mapping itself; a failure of either
+  gives NULL. Nothing in `system.log` near the crash. Next: run the game's first map with
+  `RDN_STATS=1` and `RDN_GLD_LOG` and see which winsys allocation fails, before designing eviction.
+
+## 2026-10-11: UT2004 with RDN_STATS=1; a grab of a moving scene is a collage
+
+- Run 1 (glthread on, `RDN_STATS=1`, patch 0009 installed): clean exit, no crash. 5,402
+  "out of video memory (1 MB asked, ~800 MB in use)", all between log lines 7,287 and 205,660, the
+  first while the game was still in its menus. At the first failure: aperture 218 MB in 305
+  buffers (218 of them 1 MB), beyond the aperture 20 MB, GART 507 MB in 520 buffers (506 of them
+  1 MB, the 512 MB `GART_MOST_BYTES` cap). The 1 MB buffers are glthread's shared upload buffer
+  (client-side arrays through `glDrawRangeElements`); 913,780 buffers created in the session.
+  The game's own textures were not what filled memory. Why the upload buffers are retained is
+  not known. Log kept as `~/ut2004-stats-glthread1.log` on the G5.
+- `rdnuc grab` takes 2.37 s at 1920x1080 (reads the scanout surface row by row through the
+  aperture). A grab of a moving 3D scene is a collage of many frames: I read a smeared picture
+  of the map as "visibly broken" and the user, who was looking at the monitor, saw nothing
+  wrong. It was the readback. Judge only static scenes from a grab.
+- Run 2 started with `RDN_GLTHREAD=0` to see whether the 1 MB pile-up goes away
+  (`~/ut2004-stats-glthread0.log`).
+
+## 2026-10-11: UT2004 with glthread off; the winsys never told r600 what a stream references
+
+- Run 2 (`RDN_GLTHREAD=0`, same map, about three minutes): 0 failed allocations. Peak GART use 35 MB
+  (512 MB with glthread), aperture 11 MB (218), 72,893 buffers created (913,780), 26,400 command
+  buffers of 1,143 MB (29,068 of 1,185 MB). 77 refusals "GART chunk over the limit" remain, all at
+  start-up while the level loads (a transient 512 MB of texture staging); the fallback takes them.
+- Cause: `rdn_cs_add_buffer` never added to `rcs->used_vram_kb` / `used_gart_kb`, which the radeon
+  DRM winsys does at every first add of a buffer. r600 decides to flush a stream from
+  `radeon_cs_memory_below_limit()` (0.7 x `gart_size_kb`, 179 MB here); with both counters at zero
+  it never did, and a stream kept every buffer it had touched until it was full of commands
+  (64K dwords). glthread's 1 MB upload buffers therefore piled up to the 512 MB GART cap and the
+  aperture. It is not a leak: they came back when the stream was flushed.
+- Fix: count first adds in `rdn_cs_add_buffer` (not the screen's surface), by the buffer's domain.
+  Built and installed on the G5 (bundle md5 3204a231...; the one before is
+  `~/RadeonNIGLDriver.before-budget`, the one before patch 0009 `~/RadeonNIGLDriver.before-nullcheck`).
+  Not yet run with the game. Effects to check: UT2004's stats (no "out of video memory"), and that
+  Quake 3, Doom 3 and the others do not slow down (more flushes if they hold much GTT-domain memory).
+
+## 2026-10-11: UT2004 with the stream accounting: better, not enough (throttle by memory)
+
+- Run 3 (glthread on, bundle 3204a231, accounting in `rdn_cs_add_buffer`): 869 failed allocations
+  (5,402), 12,331 buffers created (913,780), 45,339 command buffers. The peak table still showed
+  218 MB (aperture) + 510 MB (GART) of 1 MB buffers.
+- Reading: r600 now flushes a stream at 0.7 x gart_size_kb (179 MB), but `rdn_throttle` allowed four
+  command buffers in flight, each holding up to that much. 4 x 179 MB is the ~730 MB seen
+  ("at most 425 buffers in one" command buffer agrees).
+- `RDN_MAX_PENDING_GART_KB` (256 MB): `rdn_throttle` also waits while the memory of the GTT domain
+  referenced by the unfinished command buffers plus the one being submitted is over it. Built and
+  installed (md5 ef957f1a...; the one before is `~/RadeonNIGLDriver.before-throttle`). Not yet run
+  with the game.
+
+## 2026-10-11: UT2004 run 4: the throttle did nothing; glthread's own queue holds the buffers (patch 0010)
+
+- Run 4 (bundle ef957f1a, throttle by memory): 871 failed allocations (869 before it), the same
+  peak of ~728 buffers of 1 MB, fence waits 4.9 s -> 18.6 s in all. So the pile is not held by
+  command streams or by command buffers in flight.
+- Where it is: glthread's queue. 8 batches of 64 KB (patch 0004), each draw from client arrays
+  has its own 1 MB upload buffer and keeps it until the worker has run it. With `RDN_GLTHREAD=0`
+  Mesa's own uploader suballocates and there is no pile.
+- `mesa/patches/0010`: the live upload memory of the process is counted (the buffers glthread
+  made, decremented in `_mesa_delete_buffer_object`); a new buffer that would take it past
+  256 MB makes the recording thread `_mesa_glthread_finish`, once per overrun. Built and
+  installed (md5 3236f931...; the one before is `~/RadeonNIGLDriver.before-uploadbound`). Not yet
+  run with the game. The winsys counting (used_*_kb) stays: it is what the Linux winsys does.
+  The memory throttle is kept for now; it showed no benefit and costs fence-wait time, so it is
+  a candidate to remove if the next run is clean.
+
+## 2026-10-11: UT2004 run 5 with patch 0010: no failures; benchmark glthread on vs off
+
+- Run 5 (bundle 3236f931, glthread on, first map by hand, 3.5 min): 0 failed allocations, clean
+  exit. GART peak 404 MB (was 511), 1,194,740 buffers created (1,074,902 from the cache), fence
+  waits 7.5 s. The pile is bounded by the 256 MB limit of patch 0010.
+- Benchmark (`DM-Antalus?spectatoronly=1?numbots=12?quickstart=1?attractcam=1 -benchmark
+  -seconds=77 -nosound`, `RDN_FPS=1 RDN_STATS=1`, one run each, the camera path is random):
+
+  | | glthread on | glthread off |
+  |---|---|---|
+  | frames a second, 11 samples after loading, mean | 41.5 (26 to 66) | 40.4 (26 to 64) |
+  | failed allocations | 0 | 0 |
+  | buffers created | 170,660 | 15,418 |
+  | GART at peak | 284 MB | 51 MB |
+  | fence waits | 32, 173 ms | 1, 0 ms |
+  | command buffers (KB) | 5,135 (357,513) | 4,640 (360,337) |
+
+  No measurable gain from glthread in this game (3 % is inside the noise of one run); it costs
+  buffer churn and memory. The user asked whether glthread is worth it here and for a heuristic
+  to decide per game; see the answer in the session. Per-program off is a line
+  `-Unreal Tournament 2004` in `/Library/Application Support/RadeonNI/glthread` (not written).
+
+## 2026-10-11: glthread on and off in Quake 3, Quake 4 and UT2004 (bundle fab0d4ef)
+
+Bundle fab0d4ef: patches 0009 and 0010, the winsys accounting (`used_*_kb`), no throttle.
+G5, 1920x1080, full screen. The Doom 3 saves `bench` and `bench2` are gone from the G5 (the
+user does not know why), so Quake 4's own network demo stands in for them (same engine family).
+
+| | glthread on | glthread off |
+|---|---|---|
+| Quake 3 `four` (`tools/guest/q3timedemo.sh`) | 145.8, 146.2, 145.6 fps | 116.2, 116.4 fps |
+| Quake 4 `playNetTimeDemo id_demo001` (`tools/guest/q4netdemo.sh`) | 45.64 fps (2,811 frames, 61.6 s) | 26.05 fps (107.9 s) |
+| UT2004 bot match benchmark | 41.5 and 55.7 (different match phases) | 40.4, 40.5 |
+
+glthread is worth +25 % in Quake 3 and +75 % in Quake 4, and nothing measurable in UT2004
+(whose benchmark is random: one run each, the camera path differs). The user's own experience
+of Quake 4 with glthread off: "slow as shit"; the A/B was stopped after one pair at their word.
+
+- UT2004 is off glthread in `/Library/Application Support/RadeonNI/glthread` (line
+  `-Unreal Tournament 2004`; the previous file is `glthread.before-ut2004`). The file works:
+  one fence wait and 15,418 buffers, like `RDN_GLTHREAD=0`.
+- The memory throttle was removed again (`7a21dfb`): no benefit, fence waits 4.9 s -> 18.6 s.
+- Quake 4 notes: `+playNetTimeDemo name` and `+exec file` on the command line do nothing in
+  this build (the game goes to its menu: "idSession: triggering mainmenu watchdog"). The
+  command works from `q4base/autoexec.cfg` after a `wait 300`; the script writes it and removes
+  it at the end. The game prints `N frames in T ms: X fps` and does not quit. Only client
+  demos run (`id_demo001`; `id_server` is refused).
+
+- Quake 4 again, glthread on, same bundle: 44.10 fps (2,811 frames, 63.7 s), so 45.64 and 44.10
+  against 26.05 with it off.
+
+## 2026-10-11: glthread chosen by engine (`mesa/frontend/rdn_engine.c`)
+
+- At context creation `osmesa_want_glthread` now asks which engine the program is, from files
+  next to its executable (the directory, the `.app` bundle, and the directory the bundle is
+  in): `System/Engine.u` + `System/XInterface.u` Unreal Engine 2 (glthread off), `baseq3`
+  id Tech 3, `q4base` / `base/pak000.pk4` / `demo/demo00.pk4` id Tech 4 (both on). Unknown:
+  as before (on, except the window server). Order: `RDN_GLTHREAD`, the program's line in
+  `/Library/Application Support/RadeonNI/glthread`, `*` / `-*` there, the engine, the default.
+  `RDN_STATS=1` prints the decision (`rdn: <program> (<engine>): glthread on|off`).
+- `tests/engine_detect.c` (in `make test`; x86 and big-endian under qemu-ppc both pass) with a
+  made-up file system: UT2004, UT99 (Engine.u alone: unknown, not measured), Quake 3, Quake 4,
+  Doom 3 and its demo, a plain executable, the window server.
+- Only Unreal Engine 2 was measured (UT2004: no gain). Unreal Engine 1 (Engine.u without
+  XInterface.u) is left to the default. Built and installed: bundle feae0dec... (the one
+  before: `~/RadeonNIGLDriver.before-engine`). Not yet seen on the G5 itself: the G5's list
+  still names UT2004 explicitly, which wins over the engine.
+
+### Verified on the G5 (same day, bundle 8bfd6832)
+
+- First try (feae0dec): no decision line and 180,193 buffers: glthread was on. Two causes found
+  one after the other: `_NSGetExecutablePath` returns the path as the program was started
+  (`./Unreal Tournament 2004` from the shell), made absolute with `realpath`; and UT2004 changes
+  into `<bundle>/System` before it makes its context, so the relative path no longer resolves.
+  `rdn_engine_detect_dir` (the working directory and two levels up) is the fallback, in the test.
+- UT2004 with its line gone from the list (`-Unreal Tournament 2004` is not in
+  `/Library/Application Support/RadeonNI/glthread` any more; the file is as before this
+  session; the version with it is `glthread.with-ut2004`): `rdn: Unreal Tournament 2004 (Unreal
+  Engine 2): glthread off`, 15,418 buffers created, 1 fence wait, benchmark 12 samples 25.7 to
+  64.9 fps, as with `RDN_GLTHREAD=0`.
+- Quake 4 (not in the list): `rdn: Quake 4 (id Tech 4): glthread on`, 46.15 fps.
+- Quake 3 and Doom 3 Demo are named in that file (on), which wins over the engine; Quake 3
+  146.2 fps. The decision is not printed when the file decides.
+- `tools/guest/q3timedemo.sh` and `q4netdemo.sh` print the `rdn:` decision lines when
+  `RDN_STATS=1` is among their arguments.
