@@ -16,8 +16,16 @@
  * through the C library, and asking it cost more than everything else
  * here), and the routine needs no stack frame of its own. A thread whose
  * stack pointer is found nowhere (more threads than slots, or code running
- * on a stack that is not the thread's own) takes the long way and is
- * still right.
+ * on a stack that is not the thread's own: a game that runs its code on
+ * stacks it made itself, as fibres) takes the long way and is still right.
+ * That is in two steps: a thread that has a slot is found by pthread_self()
+ * (emutls_mid, a few dozen instructions), and only a thread that has none
+ * goes through pthread_getspecific() (emutls_slow, with a lock on the first
+ * use of a variable).
+ *
+ * RDN_EMUTLS_STATS=1 in the environment prints, when the program ends, how
+ * many calls took each of the steps after the first (the first is the
+ * normal one and is not counted: counting would cost more than it tells).
  *
  * The control object's layout is libgcc's (emutls.c, struct
  * __emutls_object); the code is written for this project.
@@ -28,6 +36,7 @@
 
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
@@ -154,6 +163,9 @@ static void *emutls_new_copy(struct emutls_object *obj)
 	return copy;
 }
 
+/* Calls that missed the short cut: found by thread identity, and the long way. */
+static unsigned long emutls_mid_calls, emutls_slow_calls;
+
 /* The long way: everything the short cut in __emutls_get_address() is not. */
 static void *emutls_slow(struct emutls_object *obj) __attribute__((noinline));
 
@@ -164,6 +176,7 @@ static void *emutls_slow(struct emutls_object *obj)
 	pthread_t self = pthread_self();
 	uintptr_t offset, i;
 
+	emutls_slow_calls++;
 	/* A thread with a slot that is not on its own stack just now. */
 	for (i = 0; i < FAST_THREADS; i++)
 		if (fast[i].array && fast[i].thread == self) {
@@ -233,6 +246,43 @@ static void *emutls_slow(struct emutls_object *obj)
 	return a->slot[offset - 1];
 }
 
+/*
+ * The second step: a thread that has a slot, found by who it is, for the
+ * times its stack pointer is outside the range noted for it. The slot's
+ * `thread` is its owner's alone to match: a slot is given up (array NULL)
+ * before its thread is gone, and one taken again has a new owner.
+ */
+static void *emutls_mid(struct emutls_object *obj) __attribute__((noinline));
+
+static void *emutls_mid(struct emutls_object *obj)
+{
+	uintptr_t index = obj->loc.offset - 1;
+	pthread_t self = pthread_self();
+	const struct emutls_fast *f;
+
+	emutls_mid_calls++;
+	for (f = fast; f < fast + FAST_THREADS; f++)
+		if (f->array && f->thread == self) {
+			if (index < f->count) {
+				void *copy = f->slot[index];
+
+				if (copy)
+					return copy;
+			}
+			break;
+		}
+	return emutls_slow(obj);
+}
+
+static void emutls_report(void) __attribute__((destructor));
+
+static void emutls_report(void)
+{
+	if (getenv("RDN_EMUTLS_STATS"))
+		fprintf(stderr, "emutls: %lu calls by thread identity, %lu the long way\n",
+			emutls_mid_calls, emutls_slow_calls);
+}
+
 void *__emutls_get_address(void *object)
 {
 	struct emutls_object *obj = object;
@@ -242,16 +292,26 @@ void *__emutls_get_address(void *object)
 	register uintptr_t sp __asm__("r1");
 	const struct emutls_fast *f;
 
-	for (f = fast; f < fast + FAST_THREADS; f++)
-		if (sp >= f->low && sp < f->high) {
-			if (index < f->count) {
-				void *copy = f->slot[index];
+	/*
+	 * The first two threads to come here are nearly always the ones that
+	 * count (the program's and glthread's), so they are tried without a loop.
+	 */
+	if (sp >= fast[0].low && sp < fast[0].high)
+		f = &fast[0];
+	else if (sp >= fast[1].low && sp < fast[1].high)
+		f = &fast[1];
+	else if (sp >= fast[2].low && sp < fast[2].high)
+		f = &fast[2];
+	else if (sp >= fast[3].low && sp < fast[3].high)
+		f = &fast[3];
+	else
+		return emutls_mid(obj);
+	if (index < f->count) {
+		void *copy = f->slot[index];
 
-				if (copy)
-					return copy;
-			}
-			break;
-		}
+		if (copy)
+			return copy;
+	}
 	return emutls_slow(obj);
 }
 
