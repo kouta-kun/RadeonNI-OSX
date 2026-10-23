@@ -17,6 +17,7 @@
  */
 
 #include <dlfcn.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,6 +92,23 @@ struct drawable {
 	void *base;
 };
 
+/*
+ * Everything rdn_make_current binds Mesa from, as it was when it last did, so
+ * that a call that would bind the same again can be left out (below).
+ */
+struct bind_sig {
+	struct drawable d;
+	OSMesaContext mesa;
+	const uint32_t *record;
+	long type;
+	unsigned long connection, window, surface;
+	int origin_x, origin_y, placed, direct, stored, backing_extent_set;
+	uint32_t screen_width, screen_height, screen_pitch, screen_rects, rect_hash;
+	uint32_t store_offset, store_row_bytes, store_width, store_height;
+	/* From here on what the binding left in the globals; not compared. */
+	int global_origin_x, global_origin_y, watch, flush_waits;
+};
+
 struct context {
 	void *gld_ctx;
 	/* The thread Mesa's context was last made current in. */
@@ -146,6 +164,10 @@ struct context {
 	unsigned swaps;
 	/* The pixel format asked for a double-buffered context (OSMesaDoubleBuffer). */
 	int dbl;
+	/* What Mesa was last bound from, when it can be told again (rdn_make_current). */
+	struct bind_sig sig;
+	int sig_valid;
+	unsigned sig_age;
 };
 
 #define MAX_CONTEXTS 64
@@ -1581,7 +1603,7 @@ void rdn_mesa_early(void *gld_ctx)
 			"before a drawable");
 }
 
-void rdn_make_current(void *rend)
+static void make_current_slow(void *rend)
 {
 	struct context *c = NULL;
 	struct drawable d;
@@ -1842,6 +1864,106 @@ void rdn_make_current(void *rend)
 	c->nowhere = 0;
 	rdn_flush_waits = glthread;
 	rdn_current_rend = rend;
+}
+
+/*
+ * The bindings that can be told again: a program's window, off-screen buffer
+ * or surface. The others (the screen, pbuffers, backings) are bound anew.
+ */
+static int bind_sig_type(const struct context *c)
+{
+	return c->type == DRAWABLE_WINDOW || c->type == DRAWABLE_OFFSCREEN ||
+	       c->type == DRAWABLE_SURFACE;
+}
+
+/* What the binding of `c` to `d` is made from, in the context's present state. */
+static void bind_sig_of(const struct context *c, const struct drawable *d, struct bind_sig *sig)
+{
+	uint32_t hash = 2166136261u, i;
+	const uint32_t *words = (const uint32_t *)c->screen_rect;
+
+	memset(sig, 0, sizeof(*sig));
+	sig->d = *d;
+	sig->mesa = c->mesa;
+	sig->record = c->record;
+	sig->type = c->type;
+	sig->connection = c->connection;
+	sig->window = c->window;
+	sig->surface = c->surface;
+	sig->origin_x = c->origin_x;
+	sig->origin_y = c->origin_y;
+	sig->placed = c->placed;
+	sig->direct = c->direct;
+	sig->stored = c->stored;
+	sig->backing_extent_set = c->backing_extent_set;
+	sig->screen_width = c->screen_width;
+	sig->screen_height = c->screen_height;
+	sig->screen_pitch = c->screen_pitch;
+	sig->screen_rects = c->screen_rects;
+	for (i = 0; i < c->screen_rects && i < MAX_SCREEN_RECTS * 4; i++)
+		hash = (hash ^ words[i]) * 16777619u;
+	sig->rect_hash = hash;
+	sig->store_offset = c->store_offset;
+	sig->store_row_bytes = c->store_row_bytes;
+	sig->store_width = c->store_width;
+	sig->store_height = c->store_height;
+}
+
+/*
+ * Make the engine context's Mesa context current in this thread, bound to the
+ * program's drawable.
+ *
+ * Programs call aglSetCurrentContext (and for a surface the swap comes
+ * here) every frame, with the same context and drawable as in the last. Doing
+ * it anew each time is not free: OSMesaMakeCurrent* and OSMesaSurfaceStorage
+ * wait for glthread's thread to run everything the program has called (the
+ * calls that follow cannot be queued while it does), and the surface's
+ * storage is registered with the kext again. When the context is still the
+ * one Mesa has current in this thread and nothing it is bound from has
+ * changed (the drawable's size, base and row length, a surface's place,
+ * visible rectangles and storage, the screen's mode), only what the slow
+ * way leaves in the globals is put back. Every 128th call takes the slow way
+ * anyway. RDN_GLD_NO_REBIND_SKIP=1 in the environment always does.
+ */
+void rdn_make_current(void *rend)
+{
+	struct context *c = NULL;
+	struct drawable d;
+	struct bind_sig now;
+	static int never = -1;
+	int i;
+
+	if (never < 0)
+		never = getenv("RDN_GLD_NO_REBIND_SKIP") != NULL;
+	for (i = 0; i < MAX_CONTEXTS; i++)
+		if (contexts[i].gld_ctx && contexts[i].rend == rend)
+			c = &contexts[i];
+	if (c && c->sig_valid && !never && !rdn_trace && c->bound && !c->nowhere && c->mesa &&
+	    (++c->sig_age & 127) && pthread_equal(c->thread, pthread_self()) &&
+	    OSMesaGetCurrentContext() == c->mesa && read_record(c, &d)) {
+		bind_sig_of(c, &d, &now);
+		if (!memcmp(&now, &c->sig, offsetof(struct bind_sig, global_origin_x))) {
+			async_data(c->mesa);
+			rdn_origin_x = c->sig.global_origin_x;
+			rdn_origin_y = c->sig.global_origin_y;
+			rdn_watch = c->sig.watch;
+			rdn_flush_waits = c->sig.flush_waits;
+			rdn_current_rend = rend;
+			return;
+		}
+	}
+	if (c)
+		c->sig_valid = 0;
+	make_current_slow(rend);
+	if (c && !never && c->mesa && c->bound && !c->nowhere && bind_sig_type(c) &&
+	    rdn_current_rend == rend) {
+		bind_sig_of(c, &c->drawable, &c->sig);
+		c->sig.global_origin_x = rdn_origin_x;
+		c->sig.global_origin_y = rdn_origin_y;
+		c->sig.watch = rdn_watch;
+		c->sig.flush_waits = rdn_flush_waits;
+		c->sig_valid = 1;
+	}
 }
 
 /* True if the engine's record no longer says what Mesa is bound to. */
