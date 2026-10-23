@@ -1,71 +1,129 @@
 --- a/src/mesa/main/glthread_bufferobj.c
 +++ b/src/mesa/main/glthread_bufferobj.c
-@@ -132,6 +132,50 @@
+@@ -132,6 +132,108 @@
     }
  }
  
 +#if defined(__APPLE__) && defined(__ppc__)
-+#include <mach/mach.h>
++#include <setjmp.h>
++#include <signal.h>
++#include <pthread.h>
 +#include <stdio.h>
++#include <stdlib.h>
 +/*
-+ * osx-gpu: how many bytes of [data, data + size) can be read. A program
-+ * that passes glDrawElements indices larger than the memory behind them
-+ * (The Sims 2 does when it loads a lot) reads garbage on real hardware and
-+ * nothing happens; glthread copies the range, and the copy runs off the
-+ * end of the mapping.
++ * osx-gpu: a program may pass glDrawElements indices (or vertex arrays,
++ * through the index range) longer than the memory behind them: on real
++ * hardware the extra is read as garbage and nothing happens, but glthread
++ * copies the range and the copy runs off the end of the mapping (The Sims 2
++ * does it every frame in a lot). The copy of a range that crosses a page
++ * boundary is guarded: a SIGSEGV/SIGBUS inside it ends the copy there. A
++ * copy inside one page cannot cross into unmapped memory and is not
++ * guarded. RDN_UPLOAD_GUARD=0 turns the guard off. Cost without a fault: a
++ * sigsetjmp, no system call.
 + */
-+static GLsizeiptr
-+rdn_readable(const void *data, GLsizeiptr size, const void *caller)
++static sigjmp_buf rdn_guard_jb;
++static volatile int rdn_guard_busy;
++static volatile uintptr_t rdn_guard_addr;
++static pthread_t rdn_guard_thread;
++static struct sigaction rdn_old_segv, rdn_old_bus;
++static int rdn_guard_state;      /* 0 not set up, 1 on, -1 off */
++static unsigned rdn_guard_faults;
++
++static void
++rdn_guard_handler(int sig, siginfo_t *info, void *uc)
 +{
-+   uintptr_t a = (uintptr_t)data, end = a + size, at = a;
++   if (rdn_guard_busy && pthread_equal(pthread_self(), rdn_guard_thread)) {
++      sigset_t set;
 +
-+   if ((a & 0xfff) + size <= 0x1000)
-+      return size;
-+   while (at < end) {
-+      vm_address_t ra = at;
-+      vm_size_t rs = 0;
-+      vm_region_basic_info_data_t info;
-+      mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT;
-+      mach_port_t obj;
++      rdn_guard_addr = (uintptr_t)info->si_addr;
++      sigemptyset(&set);
++      sigaddset(&set, SIGSEGV);
++      sigaddset(&set, SIGBUS);
++      sigprocmask(SIG_UNBLOCK, &set, NULL);
++      siglongjmp(rdn_guard_jb, 1);
++   }
++   /* Not ours: give the signal back to what was there; the instruction
++    * runs again and faults into it. */
++   sigaction(sig, sig == SIGSEGV ? &rdn_old_segv : &rdn_old_bus, NULL);
++}
 +
-+      if (vm_region(mach_task_self(), &ra, &rs, VM_REGION_BASIC_INFO,
-+                    (vm_region_info_t)&info, &cnt, &obj) != KERN_SUCCESS ||
-+          ra > at || !(info.protection & VM_PROT_READ)) {
++static void
++rdn_guard_setup(void)
++{
++   const char *e = getenv("RDN_UPLOAD_GUARD");
++   struct sigaction sa;
++
++   if (e && e[0] == '0') {
++      rdn_guard_state = -1;
++      return;
++   }
++   sa.sa_sigaction = rdn_guard_handler;
++   sigemptyset(&sa.sa_mask);
++   sa.sa_flags = SA_SIGINFO;
++   sigaction(SIGSEGV, &sa, &rdn_old_segv);
++   sigaction(SIGBUS, &sa, &rdn_old_bus);
++   rdn_guard_state = 1;
++}
++
++static void
++rdn_guarded_memcpy(void *dst, const void *src, size_t n)
++{
++   if (((uintptr_t)src & 0xfff) + n <= 0x1000) {
++      memcpy(dst, src, n);
++      return;
++   }
++   if (!rdn_guard_state)
++      rdn_guard_setup();
++   if (rdn_guard_state < 0 || !__sync_bool_compare_and_swap(&rdn_guard_busy, 0, 1)) {
++      memcpy(dst, src, n);
++      return;
++   }
++   rdn_guard_thread = pthread_self();
++   if (sigsetjmp(rdn_guard_jb, 0) == 0) {
++      memcpy(dst, src, n);
++      rdn_guard_busy = 0;
++   } else {
++      uintptr_t page = rdn_guard_addr & ~(uintptr_t)0xfff;
++
++      rdn_guard_busy = 0;
++      /* The fast copy stops before it stores its last blocks: copy what
++       * is readable, up to the page that faulted. */
++      if (rdn_guard_addr >= (uintptr_t)src && rdn_guard_addr < (uintptr_t)src + n &&
++          page > (uintptr_t)src)
++         memcpy(dst, src, page - (uintptr_t)src);
++      if (rdn_guard_faults++ < 20) {
 +         FILE *f = fopen("/tmp/rdn-upload-clamp.txt", "a");
 +         if (f) {
-+            fprintf(f, "clamp: %p size %ld readable %ld caller %p\n", data,
-+                    (long)size, (long)(at - a), caller);
++            fprintf(f, "guard: copy of %lu bytes from %p stopped at a fault\n",
++                    (unsigned long)n, src);
 +            fclose(f);
 +         }
-+         return at - a;
 +      }
-+      at = ra + rs;
 +   }
-+   return size;
 +}
-+#define RDN_READABLE(d, n) rdn_readable(d, n, __builtin_return_address(0))
++#define RDN_COPY(d, s, n) rdn_guarded_memcpy(d, s, n)
 +#else
-+#define RDN_READABLE(d, n) (n)
++#define RDN_COPY(d, s, n) memcpy(d, s, n)
 +#endif
 +
  void
  _mesa_glthread_upload(struct gl_context *ctx, const void *data,
                        GLsizeiptr size, unsigned *out_offset,
-@@ -165,7 +209,7 @@
+@@ -165,7 +267,7 @@
           ptr += start_offset;
           *out_offset = start_offset;
           if (data)
 -            memcpy(ptr, data, size);
-+            memcpy(ptr, data, RDN_READABLE(data, size));
++            RDN_COPY(ptr, data, size);
           else
              *out_ptr = ptr;
           return;
-@@ -213,7 +257,7 @@
+@@ -213,7 +315,7 @@
  
     /* Upload data. */
     if (data)
 -      memcpy(glthread->upload_ptr + offset, data, size);
-+      memcpy(glthread->upload_ptr + offset, data, RDN_READABLE(data, size));
++      RDN_COPY(glthread->upload_ptr + offset, data, size);
     else
        *out_ptr = glthread->upload_ptr + offset;
  
