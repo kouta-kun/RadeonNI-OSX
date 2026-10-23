@@ -1854,6 +1854,25 @@ static void ext_cap(char *list)
 		(unsigned)strlen(list));
 }
 
+/*
+ * Experiment: RDN_NO_ROWCOPY=1 drops the glCopyTexSubImage2D calls that copy
+ * one row of 512 pixels or more. The Sims 2 copies its 1024x1024 screen
+ * capture into a texture a row at a time, flipped (a row's yoffset up, its y
+ * down), 1024 calls a frame while its popups are up. What the texture is
+ * for is not known; this shows what the game does without it.
+ */
+static int rowcopy_skip(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		on = getenv("RDN_NO_ROWCOPY") != NULL;
+		if (on)
+			rdn_log("one-row glCopyTexSubImage2D calls of 512 pixels or more are dropped (RDN_NO_ROWCOPY)");
+	}
+	return on;
+}
+
 static int ext_ours(void)
 {
 	static int ours = -1;
@@ -2329,6 +2348,9 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
         if name == 'delete_vertex_arrays_EXT':
             out.append('\tif (var_on())')
             out.append('\t\tvar_delete(ctx, n, ids);')
+        if name == 'copy_tex_sub_image2D':
+            out.append('\tif (height == 1 && width >= 512 && __builtin_expect(rowcopy_skip(), 0))')
+            out.append('\t\treturn;')
         if name == 'get_string':
             out.append('\tif (name == 0x1F03 && ext_ours())\t/* GL_EXTENSIONS */')
             out.append('\t\treturn ext_list(m_get_string(name));')
