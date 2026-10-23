@@ -2057,7 +2057,13 @@ SHADOW_HELP = r"""
  * and what we cannot follow makes the record unknown (the real query
  * answers) until the next glDepthMask: glCallList and glCallLists (a list may
  * hold any of the above), and an attribute pop for which we have no push or
- * whose push came before a list was called. Between glNewList(GL_COMPILE)
+ * whose push came before a list was called.
+ *
+ * The same for what the row coalescer below needs to know: whether
+ * GL_SCISSOR_TEST is enabled (glEnable/glDisable, and the attribute stack:
+ * GL_ENABLE_BIT 0x2000, GL_SCISSOR_BIT 0x80000) and which framebuffer is bound
+ * for reading (glBindFramebufferEXT, glDeleteFramebuffersEXT; not part of
+ * any attribute group, and not compiled into display lists). Between glNewList(GL_COMPILE)
  * and glEndList the calls are recorded, not executed, and are not followed.
  * Not followed: aglCopyContext/CGLCopyContext (the whole state of another
  * context comes over).
@@ -2073,15 +2079,24 @@ SHADOW_HELP = r"""
 struct shadow_saved {
 	unsigned mask, epoch;
 	unsigned char depth_mask, depth_ok;
+	unsigned char scissor, scissor_ok;
 };
 
 struct shadow {
 	void *rend;
 	unsigned char depth_mask, depth_ok;	/* GL_DEPTH_WRITEMASK; ok: it is known */
+	unsigned char scissor, scissor_ok;	/* GL_SCISSOR_TEST */
+	unsigned char read_fb_ok;		/* read_fb is known */
+	GLuint read_fb;				/* GL_READ_FRAMEBUFFER_BINDING */
 	unsigned char compiling;		/* inside glNewList(GL_COMPILE) */
 	unsigned epoch;				/* counts the display lists called */
 	unsigned sp;
 	struct shadow_saved stack[SHADOW_STACK];
+	/* The row coalescer's (below): a framebuffer of ours to flip rows through. */
+	unsigned char rr_off;
+	unsigned rr_checked;
+	GLuint fbo, rb;
+	GLsizei rb_w, rb_h;
 };
 
 static struct shadow shadows[SHADOW_MAX];
@@ -2121,8 +2136,9 @@ static struct shadow *shadow_for(void *rend)
 		for (i = 0; i < SHADOW_MAX; i++)
 			if (!shadows[i].rend) {
 				memset(&shadows[i], 0, sizeof(shadows[i]));
-				/* A new context: GL_TRUE. */
+				/* A new context: GL_TRUE, GL_FALSE, the default framebuffer. */
 				shadows[i].depth_mask = shadows[i].depth_ok = 1;
+				shadows[i].scissor_ok = shadows[i].read_fb_ok = 1;
 				shadows[i].rend = rend;
 				break;
 			}
@@ -2138,8 +2154,7 @@ static struct shadow *shadow_on(void *rend)
 	return shadow_enabled() ? shadow_for(rend) : NULL;
 }
 
-/* The engine context is gone (rdn_mesa_context_destroyed): its address may come back. */
-void rdn_dispatch_forget(void *rend)
+static void shadow_forget(void *rend)
 {
 	unsigned i;
 
@@ -2176,6 +2191,8 @@ static void shadow_push(void *ctx, GLbitfield mask)
 	e->epoch = s->epoch;
 	e->depth_mask = s->depth_mask;
 	e->depth_ok = s->depth_ok;
+	e->scissor = s->scissor;
+	e->scissor_ok = s->scissor_ok;
 }
 
 static void shadow_pop(void *ctx)
@@ -2187,7 +2204,7 @@ static void shadow_pop(void *ctx)
 		return;
 	if (!s->sp) {
 		/* Not ours to say what an entry a list pushed held. */
-		s->depth_ok = 0;
+		s->depth_ok = s->scissor_ok = 0;
 		return;
 	}
 	e = &s->stack[--s->sp];
@@ -2198,6 +2215,13 @@ static void shadow_pop(void *ctx)
 		} else
 			s->depth_ok = 0;
 	}
+	if (e->mask & (0x2000 | 0x80000)) {	/* GL_ENABLE_BIT, GL_SCISSOR_BIT */
+		if (e->epoch == s->epoch && e->scissor_ok) {
+			s->scissor = e->scissor;
+			s->scissor_ok = 1;
+		} else
+			s->scissor_ok = 0;
+	}
 }
 
 /* glCallList, glCallLists: whatever the lists hold has happened. */
@@ -2207,7 +2231,7 @@ static void shadow_lists(void *ctx)
 
 	if (s) {
 		s->epoch++;
-		s->depth_ok = 0;
+		s->depth_ok = s->scissor_ok = 0;
 	}
 }
 
@@ -2227,6 +2251,37 @@ static void shadow_end_list(void *ctx)
 		s->compiling = 0;
 }
 
+static void shadow_enable(void *ctx, GLenum cap, int on)
+{
+	struct shadow *s = cap == 0x0C11 ? shadow_on(ctx) : NULL;	/* GL_SCISSOR_TEST */
+
+	if (s && !s->compiling) {
+		s->scissor = on;
+		s->scissor_ok = 1;
+	}
+}
+
+static void shadow_bind_framebuffer(void *ctx, GLenum target, GLuint framebuffer)
+{
+	struct shadow *s = target == 0x8D40 || target == 0x8CA8 ? shadow_on(ctx) : NULL;
+
+	if (s) {	/* GL_FRAMEBUFFER_EXT, GL_READ_FRAMEBUFFER */
+		s->read_fb = framebuffer;
+		s->read_fb_ok = 1;
+	}
+}
+
+static void shadow_delete_framebuffers(void *ctx, GLsizei n, const GLuint *framebuffers)
+{
+	struct shadow *s = shadow_on(ctx);
+	GLsizei i;
+
+	/* A framebuffer deleted while bound is unbound: the default one is. */
+	for (i = 0; s && framebuffers && i < n; i++)
+		if (framebuffers[i] && framebuffers[i] == s->read_fb)
+			s->read_fb = 0;
+}
+
 /* The mask if it is known. */
 static int shadow_depth_get(void *ctx, GLint *value)
 {
@@ -2239,11 +2294,278 @@ static int shadow_depth_get(void *ctx, GLint *value)
 }
 """
 
+ROWRUN_HELP = r"""
+/*
+ * Runs of one-row glCopyTexSubImage2D calls.
+ *
+ * The Sims 2 copies its screen into a texture flipped, a row at a time:
+ *
+ *	for (row = 0; row < 1024; row++)
+ *		glCopyTexSubImage2D(target, 0, 0, row, 0, 1023 - row, 1024, 1);
+ *
+ * (yoffset up by one, y down by one) 1024 calls a frame while water is on
+ * screen. Each one is a call through the dispatch, a glthread message and a
+ * blit. A run of such calls is held back here, and applied in one go when
+ * the next call of any other kind comes (every entry looks first), or the
+ * frame is swapped, or the context is let go of, or the run has 2048 rows:
+ *
+ *   1. one glBlitNamedFramebuffer from the default framebuffer into a
+ *      renderbuffer of ours (RGBA8), the rows in reverse order (the
+ *      destination rectangle is upside down);
+ *   2. one glCopyTexSubImage2D of the block from that renderbuffer, with our
+ *      framebuffer bound for reading for as long as it takes,
+ *
+ * which leaves the texture as the rows would have, one by one, from the
+ * default framebuffer (a window of 8 bits a channel). The named
+ * entry points change no binding: the program's draw framebuffer, textures,
+ * renderbuffer and the read buffer are as they were. What is changed is the
+ * read framebuffer binding, put back to 0 (the only case taken, known from
+ * glBindFramebufferEXT, see the shadow above), and GL's error flag if the
+ * hardware refuses (below).
+ *
+ * Taken only when everything it needs to be sure of is known: the read
+ * framebuffer is the default one, the scissor test is off (a blit is cut
+ * by it, a copy is not), the target is GL_TEXTURE_2D or GL_TEXTURE_RECTANGLE
+ * and the rows are 256 pixels or more. Otherwise, or when the blit is not
+ * possible, the rows are made one by one, at the end of the run, as the
+ * program asked. Rows or columns outside the framebuffer are left out, as
+ * glCopyTexSubImage2D does; the size is Mesa's own (OSMesaGetIntegerv).
+ *
+ * The first ROWRUN_CHECKS runs are checked with glGetError (a round trip to
+ * glthread's thread, and the error flag the program had is lost); a run
+ * that makes an error is made again row by row and the coalescing is off
+ * for the context from then on. Multisampled framebuffers (blits cannot flip
+ * them) and a Mesa without GL_ARB_direct_state_access end up that way.
+ *
+ * Not seen by the program: the run is applied before anything else it
+ * calls, so what it can see is what it would have seen. Not true of what
+ * does not go through the dispatch (the engine's own entries for Apple's
+ * extensions, other contexts sharing the texture without a glFlush).
+ *
+ * On where the shadow is on (The Sims 2); RDN_NO_ROWCOALESCE=1 turns it off.
+ */
+void OSMesaGetIntegerv(GLint pname, GLint *value);
+
+#define ROWRUN_MAX 2048
+#define ROWRUN_MIN 4
+#define ROWRUN_CHECKS 4
+
+static void (*x_create_framebuffers)(GLsizei n, GLuint *ids);
+static void (*x_create_renderbuffers)(GLsizei n, GLuint *ids);
+static void (*x_named_renderbuffer_storage)(GLuint rb, GLenum format, GLsizei width, GLsizei height);
+static void (*x_named_framebuffer_renderbuffer)(GLuint fb, GLenum attachment, GLenum target, GLuint rb);
+static void (*x_blit_named_framebuffer)(GLuint read, GLuint draw, GLint sx0, GLint sy0, GLint sx1,
+					GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1,
+					GLbitfield mask, GLenum filter);
+static void (*x_bind_framebuffer)(GLenum target, GLuint framebuffer);
+
+/* The run held back. rend is NULL and count 0 when there is none. */
+static struct {
+	void *rend;
+	GLenum target;
+	GLint level, xoffset;
+	GLint yoffset0;		/* of the first row */
+	GLint x_raw, y_raw0;	/* its x and y as the program gave them */
+	GLint x, y0;		/* and with the window's place added */
+	GLsizei width;
+	GLint count;
+} rowrun;
+
+/* The engine context is gone (rdn_mesa_context_destroyed): its address may come back. */
+void rdn_dispatch_forget(void *rend)
+{
+	if (rend && rowrun.rend == rend)
+		rowrun.count = 0;
+	shadow_forget(rend);
+}
+
+static int rowrun_enabled(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		on = shadow_enabled() && !getenv("RDN_NO_ROWCOALESCE") &&
+		     x_create_framebuffers && x_create_renderbuffers && x_named_renderbuffer_storage &&
+		     x_named_framebuffer_renderbuffer && x_blit_named_framebuffer && x_bind_framebuffer &&
+		     m_copy_tex_sub_image2D && m_get_error;
+		if (on)
+			rdn_log("runs of one-row glCopyTexSubImage2D calls are coalesced (RDN_NO_ROWCOALESCE=1: not)");
+	}
+	return on;
+}
+
+/* The rows [from, to) of the run, one call each, as the program made them. */
+static void rowrun_replay(GLenum target, GLint level, GLint xoffset, GLint yoffset0, GLint x, GLint y0,
+			  GLsizei width, GLint from, GLint to)
+{
+	GLint i;
+
+	for (i = from; i < to; i++)
+		m_copy_tex_sub_image2D(target, level, xoffset, yoffset0 + i, x, y0 - i, width, 1);
+}
+
+/* The renderbuffer of ours is made, or made larger, for w by h. */
+static int rowrun_scratch(struct shadow *s, GLsizei w, GLsizei h)
+{
+	if (!s->fbo) {
+		x_create_framebuffers(1, &s->fbo);
+		x_create_renderbuffers(1, &s->rb);
+		if (!s->fbo || !s->rb) {
+			s->fbo = s->rb = 0;
+			return 0;
+		}
+	}
+	if (w > s->rb_w || h > s->rb_h) {
+		GLsizei nw = w > s->rb_w ? w : s->rb_w, nh = h > s->rb_h ? h : s->rb_h;
+
+		if (nw < 1024)
+			nw = 1024;
+		if (nh < 1024)
+			nh = 1024;
+		x_named_renderbuffer_storage(s->rb, 0x8058, nw, nh);		/* GL_RGBA8 */
+		x_named_framebuffer_renderbuffer(s->fbo, 0x8CE0, 0x8D41, s->rb);	/* COLOR_ATTACHMENT0, RENDERBUFFER */
+		s->rb_w = nw;
+		s->rb_h = nh;
+	}
+	return 1;
+}
+
+/* The run as one blit and one copy; 0 if that can not be done (nothing was changed). */
+static int rowrun_blit(struct shadow *s, void *rend, GLenum target, GLint level, GLint xoffset,
+		       GLint yoffset0, GLint x, GLint y0, GLsizei width, GLint count)
+{
+	GLint fb_w = 0, fb_h = 0, i0, i1, rows, cx0, cx1, cw, ytop, ybot;
+	int check = s->rr_checked < ROWRUN_CHECKS;
+
+	if (s->rr_off)
+		return 0;
+	OSMesaGetIntegerv(0x20, &fb_w);		/* OSMESA_WIDTH */
+	OSMesaGetIntegerv(0x21, &fb_h);		/* OSMESA_HEIGHT */
+	if (fb_w <= 0 || fb_h <= 0)
+		return 0;
+	/* Row i reads y0 - i; the rows inside the framebuffer are i0 to i1. */
+	i0 = y0 - (fb_h - 1) > 0 ? y0 - (fb_h - 1) : 0;
+	i1 = y0 < count - 1 ? y0 : count - 1;
+	cx0 = x > 0 ? x : 0;
+	cx1 = x + width < fb_w ? x + width : fb_w;
+	if (i1 < i0 || cx1 <= cx0)
+		return 1;		/* all of it outside: the copies would have changed nothing */
+	rows = i1 - i0 + 1;
+	cw = cx1 - cx0;
+	if (!rowrun_scratch(s, cw, rows)) {
+		s->rr_off = 1;
+		return 0;
+	}
+	ytop = y0 - i0;
+	ybot = y0 - i1;
+	if (check)
+		m_get_error();
+	/* Our row j is the framebuffer's ytop - j: the destination's y runs from rows down to 0. */
+	x_blit_named_framebuffer(0, s->fbo, cx0, ybot, cx0 + cw, ytop + 1, 0, rows, cw, 0,
+				 0x4000, 0x2600);	/* GL_COLOR_BUFFER_BIT, GL_NEAREST */
+	x_bind_framebuffer(0x8CA8, s->fbo);	/* GL_READ_FRAMEBUFFER */
+	m_copy_tex_sub_image2D(target, level, xoffset + (cx0 - x), yoffset0 + i0, 0, 0, cw, rows);
+	x_bind_framebuffer(0x8CA8, 0);
+	if (check) {
+		s->rr_checked++;
+		if (m_get_error()) {
+			s->rr_off = 1;
+			rdn_log("row coalescing: the blit is refused (%d rows of %d); off for this context", rows, cw);
+			return 0;
+		}
+		if (s->rr_checked == ROWRUN_CHECKS)
+			rdn_log("row coalescing: %d runs went through without an error", ROWRUN_CHECKS);
+	}
+	return 1;
+}
+
+/* Make the run held back; the context must be the thread's current one. */
+static void rowrun_flush(void)
+{
+	void *rend = rowrun.rend;
+	GLenum target = rowrun.target;
+	GLint level = rowrun.level, xoffset = rowrun.xoffset, yoffset0 = rowrun.yoffset0;
+	GLint x = rowrun.x, y0 = rowrun.y0, count = rowrun.count;
+	GLsizei width = rowrun.width;
+	struct shadow *s;
+
+	rowrun.count = 0;
+	rowrun.rend = NULL;
+	s = count >= ROWRUN_MIN ? shadow_for(rend) : NULL;
+	if (!s || !rowrun_blit(s, rend, target, level, xoffset, yoffset0, x, y0, width, count))
+		rowrun_replay(target, level, xoffset, yoffset0, x, y0, width, 0, count);
+}
+
+/* The context's turn with a run of its own held: it is made first of all. */
+static void rowrun_flush_for(void *ctx)
+{
+	if (rowrun.rend != ctx)
+		return;
+	RDN_ENTER(ctx);
+	rowrun_flush();
+}
+
+/* Before the context is let go of, or another made current in the thread. */
+void rdn_dispatch_flush_pending(void)
+{
+	if (rowrun.count && rowrun.rend == rdn_current_rend)
+		rowrun_flush();
+}
+
+/*
+ * glCopyTexSubImage2D, before anything is done with it (x and y as the
+ * program gave them): true if the call is held back, and so done with.
+ * Anything that is not the next row of the run held back first makes it.
+ */
+static int rowrun_try(void *ctx, GLenum target, GLint level, GLint xoffset, GLint yoffset,
+		      GLint x, GLint y, GLsizei width, GLsizei height)
+{
+	struct shadow *s;
+
+	if (rowrun.count) {
+		if (rowrun.rend != ctx)
+			return 0;	/* another context's run is held: no second one */
+		if (height == 1 && rowrun.target == target && rowrun.level == level &&
+		    rowrun.xoffset == xoffset && rowrun.x_raw == x && rowrun.width == width &&
+		    rowrun.yoffset0 + rowrun.count == yoffset && rowrun.y_raw0 - rowrun.count == y &&
+		    rowrun.count < ROWRUN_MAX) {
+			rowrun.count++;
+			return 1;
+		}
+		rowrun_flush();
+	}
+	if (height != 1 || width < 256 || (target != 0x0DE1 && target != 0x84F5) || !rowrun_enabled())
+		return 0;
+	s = shadow_for(ctx);
+	if (!s || s->compiling || s->rr_off || !s->read_fb_ok || s->read_fb || !s->scissor_ok || s->scissor)
+		return 0;
+	rowrun.target = target;
+	rowrun.level = level;
+	rowrun.xoffset = xoffset;
+	rowrun.yoffset0 = yoffset;
+	rowrun.x_raw = x;
+	rowrun.y_raw0 = y;
+	/* The default framebuffer is the read one: the window's place is added (drawable_origin). */
+	rowrun.x = x + rdn_origin_x;
+	rowrun.y0 = y + rdn_origin_y;
+	rowrun.width = width;
+	rowrun.rend = ctx;
+	rowrun.count = 1;
+	return 1;
+}
+"""
+
 
 
 def shadow_hook(name, names):
     """Lines that follow the program's depth write mask (SHADOW_HELP): the
     entries that set it, and the queries answered from it."""
+    if name in ('enable', 'disable'):
+        return ['\tshadow_enable(ctx, %s, %d);' % (names[0], name == 'enable')]
+    if name == 'bind_framebuffer_EXT':
+        return ['\tshadow_bind_framebuffer(ctx, %s, %s);' % (names[0], names[1])]
+    if name == 'delete_framebuffers_EXT':
+        return ['\tshadow_delete_framebuffers(ctx, %s, %s);' % (names[0], names[1])]
     if name == 'depth_mask':
         return ['\tshadow_depth_mask(ctx, %s);' % names[0]]
     if name == 'push_attrib':
@@ -2506,6 +2828,7 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
     out.append(APPLE_HELP.replace('@DEFAULTS@', ''.join('\t"%s",\n' % n for n in EXT_DEFAULT)))
     out.append(DRAW_RANGE_HELP)
     out.append(SHADOW_HELP)
+    out.append(ROWRUN_HELP)
     bodies = dict(OWN)
     for more in (VAR_OWN, FENCE_OWN, APPLE_OWN):
         bodies.update(more)
@@ -2517,6 +2840,10 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
         call = 'm_%s(%s)' % (name, ', '.join(names))
         out.append('static %s t_%s(%s)' % (ret, name, full))
         out.append('{')
+        if name != 'copy_tex_sub_image2D':
+            # A run of one-row copies held back (ROWRUN_HELP) is made before anything else.
+            out.append('\tif (__builtin_expect(rowrun.count, 0))')
+            out.append('\t\trowrun_flush_for(ctx);')
         out.append('\tRDN_ENTER(ctx);')
         if name in bodies:
             out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
@@ -2588,6 +2915,11 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
             out.append('\t\tvar_delete(ctx, n, ids);')
         if name == 'copy_tex_sub_image2D':
             out.append('\tif (height == 1 && width >= 512 && __builtin_expect(rowcopy_skip(), 0))')
+            out.append('\t\treturn;')
+            if names != ['target', 'level', 'xoffset', 'yoffset', 'x', 'y', 'width', 'height']:
+                sys.exit('copy_tex_sub_image2D: unexpected arguments %s' % names)
+            out.append('\tif (__builtin_expect(rowrun.count != 0 || height == 1, 0) &&')
+            out.append('\t    rowrun_try(ctx, target, level, xoffset, yoffset, x, y, width, height))')
             out.append('\t\treturn;')
         if name == 'get_string':
             out.append('\tif (name == 0x1F03 && ext_ours())\t/* GL_EXTENSIONS */')
@@ -2715,6 +3047,13 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
     out.append('\tx_fence_sync = lookup("glFenceSync");')
     out.append('\tx_client_wait_sync = lookup("glClientWaitSync");')
     out.append('\tx_delete_sync = lookup("glDeleteSync");')
+    for var, gl in (('create_framebuffers', 'glCreateFramebuffers'),
+                    ('create_renderbuffers', 'glCreateRenderbuffers'),
+                    ('named_renderbuffer_storage', 'glNamedRenderbufferStorage'),
+                    ('named_framebuffer_renderbuffer', 'glNamedFramebufferRenderbuffer'),
+                    ('blit_named_framebuffer', 'glBlitNamedFramebuffer'),
+                    ('bind_framebuffer', 'glBindFramebuffer')):
+        out.append('\tx_%s = lookup("%s");' % (var, gl))
     out.append('\tbyname = strcmp(getprogname(), "WindowServer") &&')
     out.append('\t\trdn_hook_function_lookup(byname_function);')
     out.append('\tflushrange = byname && x_map_buffer_range && x_flush_mapped_buffer_range &&')
@@ -2761,6 +3100,8 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
     out.append('')
     out.append('static void rdn_swap_entry(GLIContext ctx)')
     out.append('{')
+    out.append('\tif (__builtin_expect(rowrun.count, 0))')
+    out.append('\t\trowrun_flush_for(ctx);')
     out.append('\tswap_count();')
     out.append('\tvar_swaps++;')
     out.append('\tif (__builtin_expect(rdn_logging, 0))')

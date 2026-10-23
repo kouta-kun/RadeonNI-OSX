@@ -32,6 +32,11 @@ extern const unsigned rdn_dispatch_entries;
 void rdn_dispatch_kept_report(const char *when);
 /* rdn_mesa.c has destroyed the context whose engine context is `rend`: forget what the glue knows of it. */
 void rdn_dispatch_forget(void *rend);
+/*
+ * Run what the glue holds back for the thread's current context (a run of
+ * one-row glCopyTexSubImage2D calls) before the thread lets the context go.
+ */
+void rdn_dispatch_flush_pending(void);
 
 /* rdn_mesa.c: the engine context whose Mesa context is current. */
 /* Per thread: Mesa's current context is too. */

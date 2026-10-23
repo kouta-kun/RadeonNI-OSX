@@ -19,8 +19,10 @@
 /* Every GL entry point starts with this. */
 #define RDN_ENTER(rend) \
 	do { \
-		if (__builtin_expect((void *)(rend) != rdn_current_rend, 0)) \
+		if (__builtin_expect((void *)(rend) != rdn_current_rend, 0)) { \
+			rdn_dispatch_flush_pending(); \
 			rdn_make_current(rend); \
+		} \
 	} while (0)
 
 #endif /* RDN_DISPATCH_H */

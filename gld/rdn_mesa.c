@@ -1509,6 +1509,8 @@ void rdn_mesa_early_all(void *cgl_ctx)
 {
 	int i;
 
+	/* What the glue holds back for the context that is current now is made first. */
+	rdn_dispatch_flush_pending();
 	if (!cgl_ctx) {
 		OSMesaContext m = OSMesaGetCurrentContext();
 
