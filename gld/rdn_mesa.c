@@ -367,6 +367,7 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 	}
 	if (c->mesa)
 		OSMesaDestroyContext(c->mesa);
+	rdn_dispatch_forget(c->rend);
 	/* WindowServer owns the surface lifetime, independently of this context. */
 	memset(c, 0, sizeof(*c));
 }

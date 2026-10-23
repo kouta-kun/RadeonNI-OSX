@@ -2041,6 +2041,242 @@ static int draw_range_as_given(void)
 }
 """
 
+SHADOW_HELP = r"""
+/*
+ * What the program last told its context, for the questions that Mesa could
+ * only answer after glthread's thread has caught up (a glGet* is a full
+ * synchronisation: _mesa_marshal_GetBooleanv -> _mesa_glthread_finish_before).
+ * The Sims 2 asks for GL_DEPTH_WRITEMASK about once a frame, to put it back
+ * after its own drawing; with the answer here the main thread goes on.
+ *
+ * One record a context (they are not shared), found by the engine context
+ * every entry gets. Everything that sets the value is followed:
+ *   - glDepthMask,
+ *   - glPushAttrib/glPopAttrib (GL_DEPTH_BUFFER_BIT 0x100, GL_ALL_ATTRIB_BITS),
+ *     with a stack of the same depth as Mesa's (16),
+ * and what we cannot follow makes the record unknown (the real query
+ * answers) until the next glDepthMask: glCallList and glCallLists (a list may
+ * hold any of the above), and an attribute pop for which we have no push or
+ * whose push came before a list was called. Between glNewList(GL_COMPILE)
+ * and glEndList the calls are recorded, not executed, and are not followed.
+ * Not followed: aglCopyContext/CGLCopyContext (the whole state of another
+ * context comes over).
+ *
+ * On for The Sims 2; RDN_STATE_SHADOW=1 in a program's environment turns it
+ * on for any (not the window server), RDN_STATE_SHADOW=0 off.
+ */
+#include <pthread.h>
+
+#define SHADOW_MAX 8
+#define SHADOW_STACK 16
+
+struct shadow_saved {
+	unsigned mask, epoch;
+	unsigned char depth_mask, depth_ok;
+};
+
+struct shadow {
+	void *rend;
+	unsigned char depth_mask, depth_ok;	/* GL_DEPTH_WRITEMASK; ok: it is known */
+	unsigned char compiling;		/* inside glNewList(GL_COMPILE) */
+	unsigned epoch;				/* counts the display lists called */
+	unsigned sp;
+	struct shadow_saved stack[SHADOW_STACK];
+};
+
+static struct shadow shadows[SHADOW_MAX];
+static struct shadow *volatile shadow_last;
+static pthread_mutex_t shadow_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int shadow_enabled(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		const char *name = getprogname(), *env = getenv("RDN_STATE_SHADOW");
+
+		on = name && strcmp(name, "WindowServer") &&
+		     (env ? *env != '0' : !strcmp(name, "The Sims 2"));
+		if (on)
+			rdn_log("the program's depth write mask is followed here (RDN_STATE_SHADOW=0: off)");
+	}
+	return on;
+}
+
+/* The context's record, made on the first call; NULL when there is no room. */
+static struct shadow *shadow_for(void *rend)
+{
+	struct shadow *s = shadow_last;
+	unsigned i;
+
+	if (__builtin_expect(s != NULL && s->rend == rend, 1))
+		return s;
+	if (!rend)
+		return NULL;
+	pthread_mutex_lock(&shadow_lock);
+	for (i = 0; i < SHADOW_MAX; i++)
+		if (shadows[i].rend == rend)
+			break;
+	if (i == SHADOW_MAX)
+		for (i = 0; i < SHADOW_MAX; i++)
+			if (!shadows[i].rend) {
+				memset(&shadows[i], 0, sizeof(shadows[i]));
+				/* A new context: GL_TRUE. */
+				shadows[i].depth_mask = shadows[i].depth_ok = 1;
+				shadows[i].rend = rend;
+				break;
+			}
+	s = i < SHADOW_MAX ? &shadows[i] : NULL;
+	if (s)
+		shadow_last = s;
+	pthread_mutex_unlock(&shadow_lock);
+	return s;
+}
+
+static struct shadow *shadow_on(void *rend)
+{
+	return shadow_enabled() ? shadow_for(rend) : NULL;
+}
+
+/* The engine context is gone (rdn_mesa_context_destroyed): its address may come back. */
+void rdn_dispatch_forget(void *rend)
+{
+	unsigned i;
+
+	pthread_mutex_lock(&shadow_lock);
+	for (i = 0; i < SHADOW_MAX; i++)
+		if (rend && shadows[i].rend == rend) {
+			if (shadow_last == &shadows[i])
+				shadow_last = NULL;
+			memset(&shadows[i], 0, sizeof(shadows[i]));
+		}
+	pthread_mutex_unlock(&shadow_lock);
+}
+
+static void shadow_depth_mask(void *ctx, GLboolean flag)
+{
+	struct shadow *s = shadow_on(ctx);
+
+	if (s && !s->compiling) {
+		s->depth_mask = flag != 0;
+		s->depth_ok = 1;
+	}
+}
+
+static void shadow_push(void *ctx, GLbitfield mask)
+{
+	struct shadow *s = shadow_on(ctx);
+	struct shadow_saved *e;
+
+	/* Mesa's stack is 16 deep; a push beyond that is an error and no push. */
+	if (!s || s->compiling || s->sp >= SHADOW_STACK)
+		return;
+	e = &s->stack[s->sp++];
+	e->mask = mask;
+	e->epoch = s->epoch;
+	e->depth_mask = s->depth_mask;
+	e->depth_ok = s->depth_ok;
+}
+
+static void shadow_pop(void *ctx)
+{
+	struct shadow *s = shadow_on(ctx);
+	struct shadow_saved *e;
+
+	if (!s || s->compiling)
+		return;
+	if (!s->sp) {
+		/* Not ours to say what an entry a list pushed held. */
+		s->depth_ok = 0;
+		return;
+	}
+	e = &s->stack[--s->sp];
+	if (e->mask & 0x100) {		/* GL_DEPTH_BUFFER_BIT, and all bits */
+		if (e->epoch == s->epoch && e->depth_ok) {
+			s->depth_mask = e->depth_mask;
+			s->depth_ok = 1;
+		} else
+			s->depth_ok = 0;
+	}
+}
+
+/* glCallList, glCallLists: whatever the lists hold has happened. */
+static void shadow_lists(void *ctx)
+{
+	struct shadow *s = shadow_on(ctx);
+
+	if (s) {
+		s->epoch++;
+		s->depth_ok = 0;
+	}
+}
+
+static void shadow_new_list(void *ctx, GLenum mode)
+{
+	struct shadow *s = shadow_on(ctx);
+
+	if (s)
+		s->compiling = mode == 0x1300;	/* GL_COMPILE; GL_COMPILE_AND_EXECUTE executes */
+}
+
+static void shadow_end_list(void *ctx)
+{
+	struct shadow *s = shadow_on(ctx);
+
+	if (s)
+		s->compiling = 0;
+}
+
+/* The mask if it is known. */
+static int shadow_depth_get(void *ctx, GLint *value)
+{
+	struct shadow *s = shadow_on(ctx);
+
+	if (!s || !s->depth_ok)
+		return 0;
+	*value = s->depth_mask;
+	return 1;
+}
+"""
+
+
+
+def shadow_hook(name, names):
+    """Lines that follow the program's depth write mask (SHADOW_HELP): the
+    entries that set it, and the queries answered from it."""
+    if name == 'depth_mask':
+        return ['\tshadow_depth_mask(ctx, %s);' % names[0]]
+    if name == 'push_attrib':
+        return ['\tshadow_push(ctx, %s);' % names[0]]
+    if name == 'pop_attrib':
+        return ['\tshadow_pop(ctx);']
+    if name in ('call_list', 'call_lists'):
+        return ['\tshadow_lists(ctx);']
+    if name == 'new_list':
+        return ['\tshadow_new_list(ctx, %s);' % names[1]]
+    if name == 'end_list':
+        return ['\tshadow_end_list(ctx);']
+    if name in SHADOW_GETS:
+        if names[:2] != ['pname', 'params']:
+            sys.exit('%s: unexpected arguments %s' % (name, names))
+        return ['\tif (pname == 0x0B72) {\t/* GL_DEPTH_WRITEMASK */',
+                '\t\tGLint known;',
+                '',
+                '\t\tif (shadow_depth_get(ctx, &known)) {',
+                '\t\t\t*params = %sknown;' % SHADOW_GETS[name],
+                '\t\t\treturn;',
+                '\t\t}',
+                '\t}']
+    return []
+
+
+SHADOW_GETS = {
+    'get_booleanv': '(GLboolean)',
+    'get_integerv': '',
+    'get_floatv': '(GLfloat)',
+    'get_doublev': '(GLdouble)',
+}
+
 PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len), *own2 = NULL;
 
 \tif (own)
@@ -2269,6 +2505,7 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
     out.append(VAR_HELP)
     out.append(APPLE_HELP.replace('@DEFAULTS@', ''.join('\t"%s",\n' % n for n in EXT_DEFAULT)))
     out.append(DRAW_RANGE_HELP)
+    out.append(SHADOW_HELP)
     bodies = dict(OWN)
     for more in (VAR_OWN, FENCE_OWN, APPLE_OWN):
         bodies.update(more)
@@ -2304,6 +2541,7 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
             out.append('\t\t%s' % note)
             out.append('\t\treturn;')
             out.append('\t}')
+        out.extend(shadow_hook(name, names))
         if name in APPLE_GETS:
             out.append('\tif (pname == 0x8A16) { *params = rdn_mesa_unpack_row_bytes(ctx, -1); return; }')
             out.append('\tif (pname == 0x0BA2 || pname == 0x0C10) {')

@@ -30,6 +30,8 @@ extern const unsigned rdn_dispatch_entries;
  * reports apart.
  */
 void rdn_dispatch_kept_report(const char *when);
+/* rdn_mesa.c has destroyed the context whose engine context is `rend`: forget what the glue knows of it. */
+void rdn_dispatch_forget(void *rend);
 
 /* rdn_mesa.c: the engine context whose Mesa context is current. */
 /* Per thread: Mesa's current context is too. */
