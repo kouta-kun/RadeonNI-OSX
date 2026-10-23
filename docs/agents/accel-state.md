@@ -207,6 +207,18 @@ been planned in detail.
   `nhoodterrainlightingmaterial` (its texture `nhoodlightmap` has no image when validated: the game's data,
   not the driver) and the frame rate is unchanged (the shadow shader is a `tex` and a `mul`; 9.8 fps).
   Constants not set with `def` are read as `program.env[n]`: not verified, the Sims 2 has none.
+  Sims 2 speed work (2026-10-23, Tiger, G5, `scripts/sims2-cpu.sh`: main-thread ms per frame, steady Pleasantview
+  view; run to run it varies by about 6 %, only paired runs mean something): `RDN_CALL_STATS=1` counts calls per
+  entry (`/tmp/rdn-callstats.txt`); half of the 67M counted calls were `glActiveTexture` and `glClientActiveTexture`
+  (25 % each, almost none redundant: it flips units). Holding the switches back until a unit-dependent call comes
+  (`lazy_flush` in `gld/gen_dispatch.py`, `RDN_LAZY_UNIT=0` off) sends 14 % of them and took the main thread from
+  74.2 to 66.4 ms a frame (+12 % fps); a removed call is worth about 270 ns. Still redundant and not elided:
+  `glDisableVertexAttribArrayARB`, `glBindTexture`, `glTexParameteri`, `glSecondaryColor3f`,
+  `glProgramEnvParameter4fvARB`, probably 5 % together. Caching the client-array uploads (88 % of the bytes
+  glthread copies are identical to the last copy from the same address; `mesa/experiments/`) does not pay: exact
+  comparison is 7-13 % slower, a sampled comparison (wrong when only other bytes change) is level; any check reads
+  the cold vertex data, and that read is the cost, not the copy. 30 fps is not reachable from the driver
+  side: the game's own work is a large part of the 66 ms.
 - Where the two games stand (2026-10-06, end of day, G5, 1920x1080):
   Doom 3 demo 48 and 51 fps on the saves `bench` and `bench2` (ARB2
   path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.

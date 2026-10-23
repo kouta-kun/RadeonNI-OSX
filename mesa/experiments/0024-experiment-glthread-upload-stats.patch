@@ -1,0 +1,107 @@
+--- a/src/mesa/main/glthread_bufferobj.c
++++ b/src/mesa/main/glthread_bufferobj.c
+@@ -132,6 +132,95 @@
+    }
+ }
+ 
++/* osx-gpu, experiment (RDN_UPLOAD_STATS=1 in the environment): what the
++ * program's thread copies for glthread and how much of it is the same bytes
++ * at the same address and size as the last copy from that address. The
++ * hash reads all of the data again, so this slows the program: it is for
++ * measuring, not for running. Prints to stderr every 20,000 copies. Only
++ * the program's thread calls _mesa_glthread_upload. */
++#include <stdio.h>
++#include <stdlib.h>
++#include <stdint.h>
++
++#define UPLOAD_STATS_SLOTS 16384
++static struct { const void *ptr; GLsizeiptr size; uint32_t hash; }
++   upload_seen[UPLOAD_STATS_SLOTS];
++static int upload_stats_on = -1;
++static FILE *upload_log(void)
++{
++   static FILE *f;
++
++   if (!f) {
++      f = fopen("/tmp/rdn-upload.txt", "w");
++      if (f)
++         setvbuf(f, NULL, _IOLBF, 0);
++   }
++   return f ? f : stderr;
++}
++static uint64_t us_calls, us_bytes, us_same_calls, us_same_bytes;
++static uint64_t us_hist_calls[4], us_hist_bytes[4];
++
++static uint32_t
++upload_stats_hash(const void *data, GLsizeiptr size)
++{
++   const uint8_t *p = data;
++   uint32_t h = 2166136261u;
++   GLsizeiptr i = 0;
++
++   if (!((uintptr_t)p & 3)) {
++      for (; i + 4 <= size; i += 4)
++         h = (h ^ *(const uint32_t *)(p + i)) * 16777619u;
++   }
++   for (; i < size; i++)
++      h = (h ^ p[i]) * 16777619u;
++   return h;
++}
++
++static void
++upload_stats_note(const void *data, GLsizeiptr size)
++{
++   unsigned slot, bucket;
++   uint32_t h;
++
++   if (upload_stats_on < 0)
++      upload_stats_on = getenv("RDN_UPLOAD_STATS") != NULL;
++   if (!upload_stats_on || !data || size <= 0)
++      return;
++
++   h = upload_stats_hash(data, size);
++   slot = (unsigned)(((uintptr_t)data >> 3) * 2654435761u) % UPLOAD_STATS_SLOTS;
++   us_calls++;
++   us_bytes += size;
++   bucket = size < 256 ? 0 : size < 4096 ? 1 : size < 65536 ? 2 : 3;
++   us_hist_calls[bucket]++;
++   us_hist_bytes[bucket] += size;
++   if (upload_seen[slot].ptr == data && upload_seen[slot].size == size &&
++       upload_seen[slot].hash == h) {
++      us_same_calls++;
++      us_same_bytes += size;
++   }
++   upload_seen[slot].ptr = data;
++   upload_seen[slot].size = size;
++   upload_seen[slot].hash = h;
++
++   if (us_calls % 20000 == 0) {
++      fprintf(upload_log(),
++              "rdn upload: %llu copies %llu KB, unchanged since the last "
++              "copy from there: %llu copies %llu KB; <256 B %llu/%llu KB, "
++              "<4 KB %llu/%llu KB, <64 KB %llu/%llu KB, more %llu/%llu KB\n",
++              (unsigned long long)us_calls, (unsigned long long)(us_bytes >> 10),
++              (unsigned long long)us_same_calls,
++              (unsigned long long)(us_same_bytes >> 10),
++              (unsigned long long)us_hist_calls[0], (unsigned long long)(us_hist_bytes[0] >> 10),
++              (unsigned long long)us_hist_calls[1], (unsigned long long)(us_hist_bytes[1] >> 10),
++              (unsigned long long)us_hist_calls[2], (unsigned long long)(us_hist_bytes[2] >> 10),
++              (unsigned long long)us_hist_calls[3], (unsigned long long)(us_hist_bytes[3] >> 10));
++      us_calls = us_bytes = us_same_calls = us_same_bytes = 0;
++      for (bucket = 0; bucket < 4; bucket++)
++         us_hist_calls[bucket] = us_hist_bytes[bucket] = 0;
++   }
++}
++
+ void
+ _mesa_glthread_upload(struct gl_context *ctx, const void *data,
+                       GLsizeiptr size, unsigned *out_offset,
+@@ -145,6 +234,8 @@
+    if (unlikely(size > INT_MAX))
+       return;
+ 
++   upload_stats_note(data, size);
++
+    /* The alignment was chosen arbitrarily. */
+    unsigned offset = align(glthread->upload_offset, size <= 4 ? 4 : 8) + start_offset;
+ 

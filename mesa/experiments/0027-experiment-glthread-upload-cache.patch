@@ -1,0 +1,140 @@
+--- a/src/mesa/main/glthread_bufferobj.c
++++ b/src/mesa/main/glthread_bufferobj.c
+@@ -221,6 +221,128 @@
+    }
+ }
+ 
++/* osx-gpu, experiment (RDN_UPLOAD_CACHE=full or =sample in the environment): the data
++ * glthread copies for client arrays and indices is kept in buffers that live on, and
++ * a later copy from the same address and size that is found unchanged uses them
++ * instead of copying again. "full" compares every byte (exact), "sample" a few
++ * words and the ends (cheap, and wrong when only other bytes changed). Only the
++ * program's thread calls _mesa_glthread_upload. Entries are left behind when a chunk
++ * is recycled; the buffers are kept alive by the draws that use them. */
++#define UC_SLOTS 16384
++#define UC_CHUNK (4u << 20)
++#define UC_CHUNKS 8
++#define UC_MIN 256
++#define UC_MAX (256u << 10)
++
++struct uc_entry {
++   const void *ptr;
++   unsigned size, start, offset, chunk, serial;
++};
++static struct uc_entry uc_tab[UC_SLOTS];
++static struct {
++   struct gl_buffer_object *buf;
++   uint8_t *ptr;
++   unsigned used, serial;
++} uc_chunk[UC_CHUNKS];
++static unsigned uc_cur, uc_next_serial = 1;
++static int uc_mode = -1;
++static uint64_t uc_hit, uc_miss, uc_stale, uc_hit_bytes, uc_total;
++
++static bool
++uc_same(const void *a, const uint8_t *b, unsigned size)
++{
++   if (uc_mode == 1)
++      return !memcmp(a, b, size);
++   {
++      const uint8_t *x = a;
++      unsigned i, step = (size / 16) & ~3u;
++
++      if (memcmp(x, b, 32) || memcmp(x + size - 32, b + size - 32, 32))
++         return false;
++      for (i = step; i < size - 32; i += step)
++         if (memcmp(x + i, b + i, 4))
++            return false;
++   }
++   return true;
++}
++
++static bool
++upload_cache(struct gl_context *ctx, const void *data, GLsizeiptr gsize,
++             unsigned *out_offset, struct gl_buffer_object **out_buffer,
++             unsigned start_offset)
++{
++   unsigned size = gsize, slot;
++   struct uc_entry *e;
++   unsigned offset;
++
++   if (uc_mode < 0) {
++      const char *env = getenv("RDN_UPLOAD_CACHE");
++
++      uc_mode = !env ? 0 : !strcmp(env, "sample") ? 2 : 1;
++   }
++   if (!uc_mode || size < UC_MIN || size > UC_MAX || start_offset > 4096)
++      return false;
++
++   slot = (unsigned)((((uintptr_t)data >> 2) ^ (size * 40503u) ^ (start_offset * 977u)) * 2654435761u) % UC_SLOTS;
++   e = &uc_tab[slot];
++   uc_total++;
++   if (e->ptr == data && e->size == size && e->start == start_offset &&
++       uc_chunk[e->chunk].buf && uc_chunk[e->chunk].serial == e->serial) {
++      if (uc_same(data, uc_chunk[e->chunk].ptr + e->offset, size)) {
++         p_atomic_inc(&uc_chunk[e->chunk].buf->RefCount);
++         *out_buffer = uc_chunk[e->chunk].buf;
++         *out_offset = e->offset;
++         uc_hit++;
++         uc_hit_bytes += size;
++         return true;
++      }
++      uc_stale++;
++   }
++   uc_miss++;
++
++   if (!uc_chunk[uc_cur].buf ||
++       align(uc_chunk[uc_cur].used, 8) + start_offset + size > UC_CHUNK) {
++      struct gl_buffer_object *old;
++
++      uc_cur = (uc_cur + 1) % UC_CHUNKS;
++      old = uc_chunk[uc_cur].buf;
++      uc_chunk[uc_cur].buf = NULL;
++      if (old)
++         _mesa_marshal_InternalReleaseBufferMESA(old);
++      wait_for_upload_memory(ctx, UC_CHUNK);
++      uc_chunk[uc_cur].buf = new_upload_buffer(ctx, UC_CHUNK, &uc_chunk[uc_cur].ptr);
++      if (!uc_chunk[uc_cur].buf)
++         return false;
++      uc_chunk[uc_cur].used = 0;
++      uc_chunk[uc_cur].serial = uc_next_serial++;
++   }
++   offset = align(uc_chunk[uc_cur].used, 8) + start_offset;
++   memcpy(uc_chunk[uc_cur].ptr + offset, data, size);
++   uc_chunk[uc_cur].used = offset + size;
++   e->ptr = data;
++   e->size = size;
++   e->start = start_offset;
++   e->offset = offset;
++   e->chunk = uc_cur;
++   e->serial = uc_chunk[uc_cur].serial;
++   p_atomic_inc(&uc_chunk[uc_cur].buf->RefCount);
++   *out_buffer = uc_chunk[uc_cur].buf;
++   *out_offset = offset;
++
++   if (!(uc_total % 20000)) {
++      FILE *f = fopen("/tmp/rdn-upcache.txt", "w");
++
++      if (f) {
++         fprintf(f, "cache lookups %llu: hit %llu (%llu KB), changed %llu, new %llu\n",
++                 (unsigned long long)uc_total, (unsigned long long)uc_hit,
++                 (unsigned long long)(uc_hit_bytes >> 10), (unsigned long long)uc_stale,
++                 (unsigned long long)(uc_miss - uc_stale));
++         fclose(f);
++      }
++   }
++   return true;
++}
++
+ void
+ _mesa_glthread_upload(struct gl_context *ctx, const void *data,
+                       GLsizeiptr size, unsigned *out_offset,
+@@ -235,6 +357,8 @@
+       return;
+ 
+    upload_stats_note(data, size);
++   if (data && upload_cache(ctx, data, size, out_offset, out_buffer, start_offset))
++      return;
+ 
+    /* The alignment was chosen arbitrarily. */
+    unsigned offset = align(glthread->upload_offset, size <= 4 ? 4 : 8) + start_offset;
