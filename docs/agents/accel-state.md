@@ -194,6 +194,19 @@ been planned in detail.
   (`Graphics Rules.sgr` sets `useShaders false` for every non-software device), not in `TSData/Res`.
   `RDN_SOFTWARE=1` in a program's environment, or its name in `/Library/Application Support/RadeonNI/software`
   (the lines of `glversion21`), leaves that program to Apple's software renderer (`gld/rdn_mesa.c`).
+  Why the Sims 2 shaders fail to build (2026-10-23): of 809 materials validated, the tree and forest shadow
+  and `neighborhood_roundshadow` materials (60 of 145 shader creations) failed because the game's own D3D
+  assembler (Rev F `0x2a7a8` -> `0x58764`) returns null for any `ps_` text (`0x589c4`: a `bne` on the shader-type
+  byte, status `0x8876086A` = D3DERR_NOTAVAILABLE); its `vs_1_1` shaders all assemble. With that `bne` made a
+  nop (a patch of the game copy, file offset 30316996 of the ppc slice, `60 00 00 00`; backup
+  `sm2-binary-before-psnull`) the byte code comes out, and the engine then passes it (`0xFFFF0101`, `def`
+  `0x51`, `tex` `0x42`, `mul` `0x05`, ..., `0x0000FFFF`) to `glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB)` as
+  text, its length a strlen of the tokens (4). The bundle translates ps_1_x byte code to ARB fragment text
+  (`rdn_d3d_ps_to_arb` in `gld/rdn_arbtext.c`, `tests/d3d_ps.c`; any program, valid text never starts with
+  `0xFF`); Mesa accepts it. Result with the patch: 800 of 809 validate, the one material left is
+  `nhoodterrainlightingmaterial` (its texture `nhoodlightmap` has no image when validated: the game's data,
+  not the driver) and the frame rate is unchanged (the shadow shader is a `tex` and a `mul`; 9.8 fps).
+  Constants not set with `def` are read as `program.env[n]`: not verified, the Sims 2 has none.
 - Where the two games stand (2026-10-06, end of day, G5, 1920x1080):
   Doom 3 demo 48 and 51 fps on the saves `bench` and `bench2` (ARB2
   path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.

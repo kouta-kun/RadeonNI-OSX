@@ -2599,7 +2599,7 @@ SHADOW_GETS = {
     'get_doublev': '(GLdouble)',
 }
 
-PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len), *own2 = NULL;
+PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len), *own2 = NULL, *own3 = NULL;
 
 \tif (own)
 \t\tstring = own;
@@ -2616,6 +2616,20 @@ PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len), *own2 
 \t\t\t\trdn_log("program: ALIAS of a binding or a component rewritten, %d bytes now", n);
 \t\t}
 \t}
+\t/* The Sims 2 hands Direct3D pixel shader byte code (0xFFFF01nn...) here
+\t * as if it were text: translate it (rdn_arbtext.h). */
+\tif (target == 0x8804 && string && ((const unsigned char *)string)[0] == 0xff &&
+\t    ((const unsigned char *)string)[1] == 0xff) {
+\t\tint n = 0;
+
+\t\town3 = rdn_d3d_ps_to_arb(string, &n);
+\t\tif (own3) {
+\t\t\tstring = own3;
+\t\t\tlen = (GLsizei)n;
+\t\t} else if (__builtin_expect(rdn_logging, 0)) {
+\t\t\trdn_log("program: Direct3D pixel shader byte code not translated");
+\t\t}
+\t}
 \tm_program_string_ARB(target, format, len, string);
 \tif (__builtin_expect(rdn_logging, 0)) {
 \t\tGLint at = -1;
@@ -2627,7 +2641,8 @@ PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len), *own2 
 \t\t\t(int)len, (const char *)string);
 \t}
 \tfree(own);
-\tfree(own2);"""
+\tfree(own2);
+\tfree(own3);"""
 
 APPLE_ONLY = {
     'pixel_storei': ('pname', (0x85B2,), 'apple_ctx(ctx)->client_storage = param != 0;'),

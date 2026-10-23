@@ -29,4 +29,12 @@
  */
 char *rdn_arb_alias_rewrite(const char *text, int *len);
 
+/*
+ * Direct3D pixel shader 1.x byte code (0xFFFF01nn ... 0x0000FFFF, as the
+ * engine of The Sims 2 hands it to glProgramStringARB) as ARB fragment
+ * program text. Returns a malloc'd string and sets *len, or NULL for byte
+ * code that is not ps_1_x or uses an instruction not translated.
+ */
+char *rdn_d3d_ps_to_arb(const void *code, int *len);
+
 #endif

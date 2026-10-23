@@ -34,7 +34,7 @@ HW_OBJS   = hw/rdn_uvd.o hw/rdn_gart.o hw/rdn_mc.o hw/rdn_watermark.o hw/rdn_pm.
 HW_HDRS   = $(wildcard hw/*.h hw/atom/*.h hw/linux/*.h)
 HW_OBJS  += hw/rdn_mc_layout.o
 
-TESTS     = atom_replay edid_modes i2c_edid board_outputs dp_link modeset_replay accel_replay blit_ops mem_alloc pm_states mc_replay gart_replay handover engine_detect arb_alias
+TESTS     = atom_replay edid_modes i2c_edid board_outputs dp_link modeset_replay accel_replay blit_ops mem_alloc pm_states mc_replay gart_replay handover engine_detect arb_alias d3d_ps
 TESTS    += uvd_model uvd_guarded_model mc_layout_model gart_scratch mem_segment mem_range_compat
 
 X86_TESTS = $(addprefix build/x86/,$(TESTS))
@@ -106,6 +106,7 @@ test: all test-uvd test-mc-layout test-gart-scratch test-mem-segment
 		$(call run_test,engine_detect,); \
 		$(call run_test,uvd_model,$(VBIOS)); \
 		$(call run_test,arb_alias,); \
+		$(call run_test,d3d_ps,); \
 		if [ -f private/monitor-edid.bin ] && [ -f private/g5-monitor-edid.bin ]; then \
 			$(call run_test,edid_modes,private/monitor-edid.bin private/g5-monitor-edid.bin); \
 		else echo "SKIP edid_modes: need the two EDID files in private/"; fi; \
