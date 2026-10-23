@@ -1,0 +1,135 @@
+glapi: Mac OS X 10.4 PowerPC: read the current context and dispatch table without thread-local storage on the thread that draws
+
+Tiger has no native TLS: every read of _mesa_glapi_tls_Context and
+_mesa_glapi_tls_Dispatch is a call to __emutls_get_address(). Each
+function of the program's goes through two of them (the dispatch stub's
+GET_DISPATCH(), the glthread marshal function's GET_CURRENT_CONTEXT()), and
+the sample profile of The Sims 2 puts 6.5 % of the program's thread in that
+routine.
+
+mesa/darwin8/tiger_emutls.c now keeps copies of both values for one
+thread, the first that makes a context current and has one of its short-cut
+slots, together with the range of its stack. On Apple PowerPC the two macros
+take the copies when the stack pointer is inside that range (one subtract
+and one compare; no other thread's stack pointer is) and the variables
+otherwise. The only writers of the variables are _mesa_glapi_set_context and
+_mesa_glapi_set_dispatch, which update the copies when they run on the
+owner. The owner is given up when it makes no context current and when it
+ends. The glthread worker, other contexts' threads and code on stacks of
+their own use the variables as before.
+
+_mesa_make_current offers the thread to _mesa_glapi_claim_fast() after
+setting the context (not _mesa_glapi_set_context itself: the glthread worker
+calls that, and must not become the owner). Off unless the program is The
+Sims 2 or RDN_TLS_FAST=1 is set (RDN_TLS_FAST=0: off), see tiger_emutls.c.
+
+Needs tiger_emutls.o in every link that has libmesa (build-mesa.sh).
+
+--- a/src/mesa/glapi/glapi/glapi.h	2026-10-23 13:14:12.626233844 -0300
++++ b/src/mesa/glapi/glapi/glapi.h	2026-10-23 13:16:31.602129033 -0300
+@@ -72,7 +72,52 @@
+ _GLAPI_EXPORT extern __THREAD_INITIAL_EXEC struct _glapi_table * _mesa_glapi_tls_Dispatch;
+ _GLAPI_EXPORT extern __THREAD_INITIAL_EXEC void * _mesa_glapi_tls_Context;
+ 
+-#if DETECT_OS_WINDOWS && !defined(MAPI_MODE_SHARED_GLAPI)
++#if defined(__APPLE__) && defined(__ppc__)
++/*
++ * osx-gpu: Mac OS X 10.4 has no thread-local storage; the compiler's
++ * emulation is a function call for every read of the two variables, twice
++ * for each call of the program's. tiger_emutls.c keeps copies of both for
++ * the thread that made the first context current, with its stack's range
++ * (the reader below takes them when the stack pointer is in it, which the
++ * other threads' never are). The copies are written together with the
++ * variables, by _mesa_glapi_set_context/_mesa_glapi_set_dispatch, which
++ * are the only writers. RDN_TLS_FAST=0 leaves it unused (no owner).
++ */
++struct rdn_tls_primary {
++   uintptr_t low, len;
++   void *ctx, *disp;
++};
++extern struct rdn_tls_primary rdn_tls_primary __attribute__((visibility("hidden")));
++
++static inline void *
++rdn_tls_get_ctx(void)
++{
++   uintptr_t sp;
++
++   __asm__("mr %0,r1" : "=r"(sp));
++   if (sp - rdn_tls_primary.low < rdn_tls_primary.len)
++      return rdn_tls_primary.ctx;
++   return _mesa_glapi_tls_Context;
++}
++
++static inline struct _glapi_table *
++rdn_tls_get_disp(void)
++{
++   uintptr_t sp;
++
++   __asm__("mr %0,r1" : "=r"(sp));
++   if (sp - rdn_tls_primary.low < rdn_tls_primary.len)
++      return (struct _glapi_table *) rdn_tls_primary.disp;
++   return _mesa_glapi_tls_Dispatch;
++}
++
++void rdn_tls_set_context(void *ctx);
++void rdn_tls_set_dispatch(void *disp);
++void rdn_tls_claim(void *ctx, void *disp);
++
++# define GET_DISPATCH() rdn_tls_get_disp()
++# define GET_CURRENT_CONTEXT(C)  struct gl_context *C = (struct gl_context *) rdn_tls_get_ctx()
++#elif DETECT_OS_WINDOWS && !defined(MAPI_MODE_SHARED_GLAPI)
+ # define GET_DISPATCH() _mesa_glapi_get_dispatch()
+ # define GET_CURRENT_CONTEXT(C)  struct gl_context *C = (struct gl_context *) _mesa_glapi_get_context()
+ #else
+@@ -84,6 +129,11 @@
+ _GLAPI_EXPORT void
+ _mesa_glapi_set_context(void *context);
+ 
++/* osx-gpu: the thread that made `context` current may become the one whose
++ * context and dispatch table are read without thread-local storage (above). */
++_GLAPI_EXPORT void
++_mesa_glapi_claim_fast(void *context);
++
+ 
+ _GLAPI_EXPORT void *
+ _mesa_glapi_get_context(void);
+--- a/src/mesa/glapi/shared-glapi/core.c	2026-10-23 13:14:12.783236440 -0300
++++ b/src/mesa/glapi/shared-glapi/core.c	2026-10-23 13:16:31.602226678 -0300
+@@ -239,6 +239,17 @@
+ _mesa_glapi_set_context(void *ptr)
+ {
+    _mesa_glapi_tls_Context = ptr;
++#if defined(__APPLE__) && defined(__ppc__)
++   rdn_tls_set_context(ptr);
++#endif
++}
++
++void
++_mesa_glapi_claim_fast(void *ptr)
++{
++#if defined(__APPLE__) && defined(__ppc__)
++   rdn_tls_claim(ptr, _mesa_glapi_tls_Dispatch);
++#endif
+ }
+ 
+ /**
+@@ -265,6 +276,9 @@
+ 
+    _mesa_glapi_tls_Dispatch =
+       tbl ? tbl : (struct _glapi_table *)table_noop_array;
++#if defined(__APPLE__) && defined(__ppc__)
++   rdn_tls_set_dispatch(_mesa_glapi_tls_Dispatch);
++#endif
+ }
+ 
+ /**
+--- a/src/mesa/main/context.c	2026-10-23 13:14:12.950239201 -0300
++++ b/src/mesa/main/context.c	2026-10-23 13:16:31.602313903 -0300
+@@ -1497,6 +1497,7 @@
+    }
+    else {
+       _mesa_glapi_set_context((void *) newCtx);
++      _mesa_glapi_claim_fast((void *) newCtx);
+       assert(_mesa_get_current_context() == newCtx);
+       _mesa_set_dispatch(newCtx, newCtx->GLApi);
+ 

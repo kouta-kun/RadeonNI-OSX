@@ -2074,6 +2074,16 @@ SHADOW_HELP = r"""
 #include <pthread.h>
 
 #define SHADOW_MAX 8
+
+/* The client arrays followed (glEnableClientState), as bits; texture coordinates one per unit. */
+#define CS_VERTEX 0x1
+#define CS_NORMAL 0x2
+#define CS_COLOR 0x4
+#define CS_SECONDARY 0x8
+#define CS_FOG 0x10
+#define CS_TEX(unit) (0x100u << (unit))
+#define CS_UNITS 8
+#define CS_ALL (0x1fu | (0xffu << 8))
 #define SHADOW_STACK 16
 
 struct shadow_saved {
@@ -2089,6 +2099,12 @@ struct shadow {
 	unsigned char read_fb_ok;		/* read_fb is known */
 	GLuint read_fb;				/* GL_READ_FRAMEBUFFER_BINDING */
 	unsigned char compiling;		/* inside glNewList(GL_COMPILE) */
+	/* Client-state elision (below). */
+	unsigned char listing;			/* inside glNewList, either mode: calls are recorded too */
+	unsigned char in_begin;			/* between glBegin and glEnd (or a glBegin that failed) */
+	unsigned char cs_unit_ok, cs_unit;	/* glClientActiveTexture's unit, if known */
+	unsigned char at_ok, at_unit;		/* glActiveTexture's unit, if known */
+	unsigned arr_known, arr_val;		/* CS_* bits: which arrays' enables are known, and on */
 	unsigned epoch;				/* counts the display lists called */
 	unsigned sp;
 	struct shadow_saved stack[SHADOW_STACK];
@@ -2139,6 +2155,9 @@ static struct shadow *shadow_for(void *rend)
 				/* A new context: GL_TRUE, GL_FALSE, the default framebuffer. */
 				shadows[i].depth_mask = shadows[i].depth_ok = 1;
 				shadows[i].scissor_ok = shadows[i].read_fb_ok = 1;
+				/* Unit 0 is active, every client array is off. */
+				shadows[i].cs_unit_ok = shadows[i].at_ok = 1;
+				shadows[i].arr_known = CS_ALL;
 				shadows[i].rend = rend;
 				break;
 			}
@@ -2200,6 +2219,8 @@ static void shadow_pop(void *ctx)
 	struct shadow *s = shadow_on(ctx);
 	struct shadow_saved *e;
 
+	if (s)
+		s->at_ok = 0;	/* GL_TEXTURE_BIT holds the active unit */
 	if (!s || s->compiling)
 		return;
 	if (!s->sp) {
@@ -2232,6 +2253,9 @@ static void shadow_lists(void *ctx)
 	if (s) {
 		s->epoch++;
 		s->depth_ok = s->scissor_ok = 0;
+		/* The lists may change any of the client state. */
+		s->cs_unit_ok = s->at_ok = 0;
+		s->arr_known = 0;
 	}
 }
 
@@ -2239,16 +2263,187 @@ static void shadow_new_list(void *ctx, GLenum mode)
 {
 	struct shadow *s = shadow_on(ctx);
 
-	if (s)
+	if (s) {
 		s->compiling = mode == 0x1300;	/* GL_COMPILE; GL_COMPILE_AND_EXECUTE executes */
+		s->listing = 1;
+		/* GL_COMPILE_AND_EXECUTE changes the client state without our seeing it. */
+		s->cs_unit_ok = s->at_ok = 0;
+		s->arr_known = 0;
+	}
 }
 
 static void shadow_end_list(void *ctx)
 {
 	struct shadow *s = shadow_on(ctx);
 
-	if (s)
+	if (s) {
 		s->compiling = 0;
+		s->listing = 0;
+		s->cs_unit_ok = s->at_ok = 0;
+		s->arr_known = 0;
+	}
+}
+
+/*
+ * Client state: glClientActiveTexture, glActiveTexture, and
+ * glEnableClientState/glDisableClientState of the arrays above. The Sims 2
+ * sets them for every draw, mostly to what they already are, and each call
+ * costs the program's thread a dispatch, three thread-local lookups and a
+ * glthread message (a fifth of that thread's time in its profile). A call
+ * that would set what the context has is not made.
+ *
+ * Exact when: every way the values change is followed or makes them unknown
+ * (glCallList(s) and display list building; glPopAttrib for the active
+ * unit; glPopClientAttrib and the binding or deletion of vertex array
+ * objects for the array enables, which a vertex array object holds; the
+ * generic attribute enables, to be safe); nothing is skipped or followed
+ * while a display list is being built (the call must be recorded) or between
+ * glBegin and glEnd (an error there, which Mesa must record); only values
+ * Mesa accepts are followed (units below 8, the six arrays above), anything
+ * else goes to Mesa, which reports the error. A new context has unit 0 and
+ * no array on.
+ *
+ * Not followed: aglCopyContext/CGLCopyContext, as above.
+ * RDN_NO_STATE_ELIDE=1 turns it off.
+ */
+static int elide_enabled(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		on = shadow_enabled() && !getenv("RDN_NO_STATE_ELIDE");
+		if (on)
+			rdn_log("redundant glActiveTexture, glClientActiveTexture and glEnable/DisableClientState calls are left out (RDN_NO_STATE_ELIDE=1: not)");
+	}
+	return on;
+}
+
+/* Calls seen and left out, per kind (0 ClientActiveTexture, 1 ActiveTexture, 2 Enable, 3 Disable...ClientState); RDN_ELIDE_STATS=1 prints them at exit. */
+static unsigned long elide_seen[4], elide_hit[4];
+
+static void elide_report(void) __attribute__((destructor));
+
+static void elide_report(void)
+{
+	static const char *const what[4] = { "glClientActiveTexture", "glActiveTexture",
+					     "glEnableClientState", "glDisableClientState" };
+	int i;
+
+	if (!getenv("RDN_ELIDE_STATS"))
+		return;
+	for (i = 0; i < 4; i++)
+		fprintf(stderr, "elide: %s: %lu calls, %lu left out\n", what[i], elide_seen[i], elide_hit[i]);
+}
+
+static struct shadow *elide_for(void *ctx)
+{
+	struct shadow *s = elide_enabled() ? shadow_for(ctx) : NULL;
+
+	return s && !s->listing && !s->in_begin ? s : NULL;
+}
+
+/* True: the unit is the one already set, the call is not needed. */
+static int elide_client_active_texture(void *ctx, GLenum texture)
+{
+	struct shadow *s = elide_for(ctx);
+	GLuint unit = texture - 0x84C0;	/* GL_TEXTURE0 */
+
+	elide_seen[0]++;
+	if (!s || unit >= CS_UNITS)
+		return 0;
+	if (s->cs_unit_ok && s->cs_unit == unit) {
+		elide_hit[0]++;
+		return 1;
+	}
+	s->cs_unit = unit;
+	s->cs_unit_ok = 1;
+	return 0;
+}
+
+static int elide_active_texture(void *ctx, GLenum texture)
+{
+	struct shadow *s = elide_for(ctx);
+	GLuint unit = texture - 0x84C0;
+
+	elide_seen[1]++;
+	if (!s || unit >= CS_UNITS)
+		return 0;
+	if (s->at_ok && s->at_unit == unit) {
+		elide_hit[1]++;
+		return 1;
+	}
+	s->at_unit = unit;
+	s->at_ok = 1;
+	return 0;
+}
+
+static unsigned elide_array_bit(struct shadow *s, GLenum array)
+{
+	switch (array) {
+	case 0x8074: return CS_VERTEX;		/* GL_VERTEX_ARRAY */
+	case 0x8075: return CS_NORMAL;
+	case 0x8076: return CS_COLOR;
+	case 0x845E: return CS_SECONDARY;	/* GL_SECONDARY_COLOR_ARRAY */
+	case 0x8457: return CS_FOG;		/* GL_FOG_COORD_ARRAY */
+	case 0x8078:				/* GL_TEXTURE_COORD_ARRAY, of the client unit */
+		return s->cs_unit_ok ? CS_TEX(s->cs_unit) : 0;
+	}
+	return 0;
+}
+
+static int elide_client_state(void *ctx, GLenum array, int on)
+{
+	struct shadow *s = elide_for(ctx);
+	unsigned bit;
+
+	elide_seen[2 + !on]++;
+	if (!s)
+		return 0;
+	bit = elide_array_bit(s, array);
+	if (!bit) {
+		/* The unit is not known: what is known of the texture arrays goes. */
+		if (array == 0x8078)
+			s->arr_known &= ~0xff00u;
+		return 0;
+	}
+	if ((s->arr_known & bit) && !(s->arr_val & bit) == !on) {
+		elide_hit[2 + !on]++;
+		return 1;
+	}
+	s->arr_known |= bit;
+	if (on)
+		s->arr_val |= bit;
+	else
+		s->arr_val &= ~bit;
+	return 0;
+}
+
+static void elide_begin(void *ctx)
+{
+	struct shadow *s = elide_enabled() ? shadow_for(ctx) : NULL;
+
+	if (s)
+		s->in_begin = 1;
+}
+
+static void elide_end(void *ctx)
+{
+	struct shadow *s = elide_enabled() ? shadow_for(ctx) : NULL;
+
+	if (s)
+		s->in_begin = 0;
+}
+
+/* The array enables are not known (vertex array objects, glPopClientAttrib, generic attributes). */
+static void elide_arrays_unknown(void *ctx, int unit_too)
+{
+	struct shadow *s = elide_enabled() ? shadow_for(ctx) : NULL;
+
+	if (s) {
+		s->arr_known = 0;
+		if (unit_too)
+			s->cs_unit_ok = 0;
+	}
 }
 
 static void shadow_enable(void *ctx, GLenum cap, int on)
@@ -2574,6 +2769,15 @@ def shadow_hook(name, names):
         return ['\tshadow_pop(ctx);']
     if name in ('call_list', 'call_lists'):
         return ['\tshadow_lists(ctx);']
+    if name == 'begin':
+        return ['\telide_begin(ctx);']
+    if name == 'end':
+        return ['\telide_end(ctx);']
+    if name == 'pop_client_attrib':
+        return ['\telide_arrays_unknown(ctx, 1);']
+    if name in ('bind_vertex_array_EXT', 'delete_vertex_arrays_EXT',
+                'enable_vertex_attrib_ARB', 'disable_vertex_attrib_ARB', 'interleaved_arrays'):
+        return ['\telide_arrays_unknown(ctx, 0);']
     if name == 'new_list':
         return ['\tshadow_new_list(ctx, %s);' % names[1]]
     if name == 'end_list':
@@ -2962,6 +3166,14 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
             out.append('\t\t%s(1);' % CLIENT_STATE[name])
             out.append('\t\treturn;')
             out.append('\t}')
+            out.append('\tif (elide_client_state(ctx, array, %d))' % (name == 'enable_client_state'))
+            out.append('\t\treturn;')
+        if name == 'client_active_texture':
+            out.append('\tif (elide_client_active_texture(ctx, target))')
+            out.append('\t\treturn;')
+        if name == 'active_texture':
+            out.append('\tif (elide_active_texture(ctx, target))')
+            out.append('\t\treturn;')
         if name == 'viewport':
             out.append('\t{')
             out.append('\t\tGLint framebuffer; m_get_integerv(0x8CA6, &framebuffer);')

@@ -1,0 +1,29 @@
+util: bit counting without a library call on Mac OS X PowerPC
+
+util_bitcount() is __builtin_popcount(), which on 32-bit PowerPC without
+the popcntb instruction (every G4 and G5) is a call to libgcc's
+__popcountsi2. glthread counts the user buffers of every draw that reads
+client arrays (util_bitcount(user_buffer_mask), several times), and the
+profile of The Sims 2 has __popcountsi2 at 1 % of the program's thread. A
+parallel-sum count in registers is 12 instructions and no call.
+
+--- a/src/util/bitscan.h	2026-10-23 13:19:32.536524956 -0300
++++ b/src/util/bitscan.h	2026-10-23 13:19:44.181237793 -0300
+@@ -338,7 +338,16 @@
+ static inline unsigned
+ util_bitcount(unsigned n)
+ {
+-#if defined(HAVE___BUILTIN_POPCOUNT)
++#if defined(__APPLE__) && defined(__ppc__)
++   /* osx-gpu: the 32-bit PowerPC of Mac OS X (a G4 or G5) has no popcnt
++    * instruction, and __builtin_popcount is then a call to libgcc's
++    * __popcountsi2 (1 % of The Sims 2's thread: glthread counts the user
++    * buffers of every draw). Branch-free bit counting in registers. */
++   n = n - ((n >> 1) & 0x55555555u);
++   n = (n & 0x33333333u) + ((n >> 2) & 0x33333333u);
++   n = (n + (n >> 4)) & 0x0f0f0f0fu;
++   return (n * 0x01010101u) >> 24;
++#elif defined(HAVE___BUILTIN_POPCOUNT)
+    return __builtin_popcount(n);
+ #elif __OPENCL_VERSION__
+    return popcount(n);

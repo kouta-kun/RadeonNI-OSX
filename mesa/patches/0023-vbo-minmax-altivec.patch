@@ -1,0 +1,186 @@
+vbo: AltiVec min/max scan of client-memory indices
+
+glthread scans the indices of every glDrawElements that reads client
+memory (vbo_get_minmax_index_mapped, from draw_elements) to learn how much
+vertex data to copy. The scalar loops compare and branch per index; indices
+that mostly climb (typical mesh order) take the "new maximum" branch often
+and the G5 pays a misprediction for it. In the Sims 2 neighborhood view this
+scan is about 4 % of the program's thread.
+
+For the unsigned short and unsigned int cases without primitive restart,
+and 32 indices or more, use AltiVec's vmaxuh/vminuh/vmaxuw/vminuw: 8 or 4
+indices per instruction, two independent chains, one reduction at the end.
+Smaller counts, odd addresses and restart stay on the scalar loops.
+
+AltiVec is enabled per function (target attribute) and with the compiler's
+builtins, not <altivec.h>, which redefines `bool` (four bytes here) and
+`vector`. The build targets a G4 (ppc7400) and the G5, both have AltiVec.
+The result is the same on all inputs: checked against the scalar loops on
+200,000 random cases (lengths 0 to 299, all alignments, ascending,
+random, extreme values) with a big-endian AltiVec build under qemu-ppc64.
+Not built against Mesa or run on Tiger.
+
+--- a/src/mesa/vbo/vbo_minmax_index.c
++++ b/src/mesa/vbo/vbo_minmax_index.c
+@@ -228,6 +228,135 @@
+ }
+ 
+ 
++/*
++ * osx-gpu: min/max of the indices of a glDrawElements from client memory.
++ * glthread scans them for every such draw, on the program's thread, to know
++ * how much vertex data to copy. The loops above compare and branch per
++ * element; for indices that mostly climb the branches are taken often and
++ * the G5 pays a misprediction for each. With AltiVec (the G4 and G5 have
++ * it; the build targets a G4) 8 shorts or 4 ints are compared per
++ * instruction and nothing branches. Endianness does not matter: every
++ * lane is combined with every other at the end.
++ *
++ * AltiVec is switched on for these functions only, with the compiler's
++ * builtins: <altivec.h> would redefine `bool` and `vector`.
++ */
++#if (defined(__powerpc__) || defined(__ppc__) || defined(_ARCH_PPC)) && \
++    !defined(__LITTLE_ENDIAN__) && \
++    defined(__GNUC__) && (__GNUC__ >= 5)
++#define RDN_ALTIVEC_MINMAX 1
++
++typedef unsigned short rdn_v8hi __attribute__((vector_size(16)));
++typedef unsigned int rdn_v4si __attribute__((vector_size(16)));
++
++#define RDN_VEC_FN __attribute__((target("altivec"), noinline))
++
++/* Elements of 2 bytes, 2-byte aligned address. */
++RDN_VEC_FN static void
++rdn_minmax_u16(const GLushort *p, unsigned count, GLuint *min_out,
++               GLuint *max_out)
++{
++   GLuint mn = ~0U, mx = 0;
++
++   /* Up to the first 16-byte boundary. */
++   while (count && ((uintptr_t)p & 15)) {
++      GLuint v = *p++;
++      if (v > mx) mx = v;
++      if (v < mn) mn = v;
++      count--;
++   }
++
++   if (count >= 16) {
++      rdn_v8hi vmx0 = {0, 0, 0, 0, 0, 0, 0, 0};
++      rdn_v8hi vmx1 = vmx0;
++      rdn_v8hi vmn0 = {0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff};
++      rdn_v8hi vmn1 = vmn0;
++      const rdn_v8hi *vp = (const rdn_v8hi *)p;
++      unsigned n = count / 16;
++
++      count -= n * 16;
++      p += n * 16;
++      while (n--) {
++         rdn_v8hi a = vp[0], b = vp[1];
++
++         vmx0 = __builtin_altivec_vmaxuh(vmx0, a);
++         vmn0 = __builtin_altivec_vminuh(vmn0, a);
++         vmx1 = __builtin_altivec_vmaxuh(vmx1, b);
++         vmn1 = __builtin_altivec_vminuh(vmn1, b);
++         vp += 2;
++      }
++      vmx0 = __builtin_altivec_vmaxuh(vmx0, vmx1);
++      vmn0 = __builtin_altivec_vminuh(vmn0, vmn1);
++      for (unsigned i = 0; i < 8; i++) {
++         GLuint hi = (GLushort)vmx0[i], lo = (GLushort)vmn0[i];
++
++         if (hi > mx) mx = hi;
++         if (lo < mn) mn = lo;
++      }
++   }
++
++   while (count--) {
++      GLuint v = *p++;
++      if (v > mx) mx = v;
++      if (v < mn) mn = v;
++   }
++   *min_out = mn;
++   *max_out = mx;
++}
++
++/* Elements of 4 bytes, 4-byte aligned address. */
++RDN_VEC_FN static void
++rdn_minmax_u32(const GLuint *p, unsigned count, GLuint *min_out,
++               GLuint *max_out)
++{
++   GLuint mn = ~0U, mx = 0;
++
++   while (count && ((uintptr_t)p & 15)) {
++      GLuint v = *p++;
++      if (v > mx) mx = v;
++      if (v < mn) mn = v;
++      count--;
++   }
++
++   if (count >= 8) {
++      rdn_v4si vmx0 = {0, 0, 0, 0};
++      rdn_v4si vmx1 = vmx0;
++      rdn_v4si vmn0 = {~0U, ~0U, ~0U, ~0U};
++      rdn_v4si vmn1 = vmn0;
++      const rdn_v4si *vp = (const rdn_v4si *)p;
++      unsigned n = count / 8;
++
++      count -= n * 8;
++      p += n * 8;
++      while (n--) {
++         rdn_v4si a = vp[0], b = vp[1];
++
++         vmx0 = __builtin_altivec_vmaxuw(vmx0, a);
++         vmn0 = __builtin_altivec_vminuw(vmn0, a);
++         vmx1 = __builtin_altivec_vmaxuw(vmx1, b);
++         vmn1 = __builtin_altivec_vminuw(vmn1, b);
++         vp += 2;
++      }
++      vmx0 = __builtin_altivec_vmaxuw(vmx0, vmx1);
++      vmn0 = __builtin_altivec_vminuw(vmn0, vmn1);
++      for (unsigned i = 0; i < 4; i++) {
++         GLuint hi = (GLuint)vmx0[i], lo = (GLuint)vmn0[i];
++
++         if (hi > mx) mx = hi;
++         if (lo < mn) mn = lo;
++      }
++   }
++
++   while (count--) {
++      GLuint v = *p++;
++      if (v > mx) mx = v;
++      if (v < mn) mn = v;
++   }
++   *min_out = mn;
++   *max_out = mx;
++}
++#endif /* AltiVec */
++
+ void
+ vbo_get_minmax_index_mapped(unsigned count, unsigned index_size,
+                             unsigned restartIndex, bool restart,
+@@ -254,6 +383,12 @@
+          }
+          else
+ #endif
++#if defined(RDN_ALTIVEC_MINMAX)
++         if (count >= 32 && ((uintptr_t)ui_indices & 3) == 0) {
++            rdn_minmax_u32(ui_indices, count, &min_ui, &max_ui);
++         }
++         else
++#endif
+             for (unsigned i = 0; i < count; i++) {
+                if (ui_indices[i] > max_ui) max_ui = ui_indices[i];
+                if (ui_indices[i] < min_ui) min_ui = ui_indices[i];
+@@ -276,6 +411,12 @@
+          }
+       }
+       else {
++#if defined(RDN_ALTIVEC_MINMAX)
++         if (count >= 32 && ((uintptr_t)us_indices & 1) == 0) {
++            rdn_minmax_u16(us_indices, count, &min_us, &max_us);
++         }
++         else
++#endif
+          for (unsigned i = 0; i < count; i++) {
+             if (us_indices[i] > max_us) max_us = us_indices[i];
+             if (us_indices[i] < min_us) min_us = us_indices[i];

@@ -41,6 +41,14 @@ void rdn_dispatch_flush_pending(void);
 /* rdn_mesa.c: the engine context whose Mesa context is current. */
 /* Per thread: Mesa's current context is too. */
 extern __thread void *rdn_current_rend;
+/* Every write to rdn_current_rend is made by this (rdn_mesa.c, rdn_fast_rend). */
+void rdn_set_current_rend(void *rend);
+/* The drawing thread's stack range and context, for RDN_ENTER's short cut. */
+struct rdn_fast_rend {
+	uintptr_t low, len;
+	void *rend;
+};
+extern struct rdn_fast_rend rdn_fast_rend;
 extern int rdn_modern_contexts;
 int RDNGLRequestCompatibilityContext(int major, int minor);
 int RDNGLMakeCurrent(void *cgl_context);

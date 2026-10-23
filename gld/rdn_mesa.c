@@ -213,6 +213,102 @@ void rdn_mesa_pbuffer_layout(int window_server)
 }
 
 __thread void *rdn_current_rend;
+
+/*
+ * The thread that draws, found without the thread-local lookup (which on
+ * Tiger is a call to __emutls_get_address for every GL call of the program:
+ * rdn_current_rend is read by every entry, RDN_ENTER). The first thread to
+ * make a context current takes this, with the range of its stack; its
+ * entries compare the stack pointer to the range (no other thread's is in
+ * it) and the context to .rend, which is what the thread's variable holds:
+ * every write to rdn_current_rend goes through rdn_set_current_rend, which
+ * updates both. A thread that is not in the range, or a context that is not
+ * .rend, takes the variable. The owner gives the place up by making no
+ * context current. A thread that ends while it owns it leaves its range
+ * behind; a thread made later with the same stack sets its own contexts
+ * through the same function, and has the same answers as its variable.
+ * On for The Sims 2, or RDN_FAST_REND=1; RDN_FAST_REND=0 off.
+ */
+struct rdn_fast_rend rdn_fast_rend;
+static pthread_mutex_t fast_rend_lock = PTHREAD_MUTEX_INITIALIZER;
+
+#if defined(__APPLE__) && defined(__ppc__)
+#include <sys/resource.h>
+
+static int fast_rend_enabled(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		const char *name = getprogname(), *env = getenv("RDN_FAST_REND");
+
+		on = name && strcmp(name, "WindowServer") &&
+		     (env ? *env != '0' : !strcmp(name, "The Sims 2"));
+	}
+	return on;
+}
+
+static int fast_rend_mine(void)
+{
+	uintptr_t sp;
+
+	__asm__("mr %0,r1" : "=r"(sp));
+	return sp - rdn_fast_rend.low < rdn_fast_rend.len;
+}
+
+/* The calling thread's stack as [*low, *high); nothing if the stack pointer is not in what the C library says. */
+static int fast_rend_stack(uintptr_t *low, uintptr_t *high)
+{
+	pthread_t self = pthread_self();
+	uintptr_t top = (uintptr_t)pthread_get_stackaddr_np(self);
+	uintptr_t size = pthread_get_stacksize_np(self);
+	uintptr_t sp;
+	struct rlimit limit;
+
+	__asm__("mr %0,r1" : "=r"(sp));
+	/* The first thread's real limit is the process's (at most 64 MB, the kernel's). */
+	if (pthread_main_np() && !getrlimit(RLIMIT_STACK, &limit) &&
+	    limit.rlim_cur > size && limit.rlim_cur <= (64u << 20))
+		size = (uintptr_t)limit.rlim_cur;
+	if (size > top || sp < top - size || sp >= top)
+		return 0;
+	*low = top - size;
+	*high = top;
+	return 1;
+}
+
+void rdn_set_current_rend(void *rend)
+{
+	uintptr_t low, high;
+
+	rdn_current_rend = rend;
+	if (fast_rend_mine()) {
+		if (rend)
+			rdn_fast_rend.rend = rend;
+		else {
+			rdn_fast_rend.len = 0;
+			rdn_fast_rend.rend = NULL;
+		}
+		return;
+	}
+	if (!rend || rdn_fast_rend.len || !fast_rend_enabled())
+		return;
+	pthread_mutex_lock(&fast_rend_lock);
+	if (!rdn_fast_rend.len && fast_rend_stack(&low, &high)) {
+		rdn_fast_rend.rend = rend;
+		rdn_fast_rend.low = low;
+		__sync_synchronize();
+		/* Last: from here on this thread's entries use it. */
+		rdn_fast_rend.len = high - low;
+	}
+	pthread_mutex_unlock(&fast_rend_lock);
+}
+#else
+void rdn_set_current_rend(void *rend)
+{
+	rdn_current_rend = rend;
+}
+#endif
 int rdn_origin_x, rdn_origin_y;
 long rdn_async_limit, rdn_async_piece;
 int rdn_flush_waits;
@@ -385,7 +481,7 @@ void rdn_mesa_context_destroyed(void *gld_ctx)
 		return;
 	if (c->rend && c->rend == rdn_current_rend) {
 		OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 	}
 	if (c->mesa)
 		OSMesaDestroyContext(c->mesa);
@@ -412,7 +508,7 @@ void rdn_mesa_pbuffer_destroyed(void *record)
 			c->record = NULL;
 			c->bound = 0;
 			if (c->rend && c->rend == rdn_current_rend)
-				rdn_current_rend = NULL;
+				rdn_set_current_rend(NULL);
 		}
 	}
 	for (i = 0; i < MAX_PBUFFERS; i++) {
@@ -956,7 +1052,7 @@ int rdn_mesa_attach(void *gld_ctx, long type, const void *drawable)
 	c->bound = 0;
 	/* The next GL call binds the new drawable. */
 	if (c->rend && c->rend == rdn_current_rend)
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 	read_record(c, &d);
 	rdn_log("attach: context %p, type 0x%lx, %ux%u, rowbytes %u, base %p",
 		gld_ctx, type, (unsigned)d.width, (unsigned)d.height,
@@ -1019,7 +1115,7 @@ int rdn_mesa_attach_surface(void *gld_ctx, unsigned long connection,
 	c->record = NULL;
 	c->bound = 0;
 	if (c->rend && c->rend == rdn_current_rend)
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 	rdn_log("attach: context %p draws on surface 0x%lx", gld_ctx, surface);
 	return 1;
 }
@@ -1050,7 +1146,7 @@ void rdn_mesa_detach(void *gld_ctx)
 		/* An imported pbuffer can outlive its producer's drawable binding. */
 		if (OSMesaAdoptContext(c->mesa)) {
 			OSMesaFlushRender(c->mesa, GL_TRUE);
-			rdn_current_rend = NULL;
+			rdn_set_current_rend(NULL);
 		}
 	}
 	if (c->type == DRAWABLE_SURFACE && c->stored) {
@@ -1062,7 +1158,7 @@ void rdn_mesa_detach(void *gld_ctx)
 	c->record = NULL;
 	c->bound = 0;
 	if (c->rend && c->rend == rdn_current_rend)
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 }
 
 /*
@@ -1178,7 +1274,7 @@ void rdn_mesa_backing_viewport(void *rend, int x, int y, int width, int height)
 			c->screen_width = width;
 			c->screen_height = height;
 		}
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 		rdn_make_current(rend);
 		return;
 	}
@@ -1221,7 +1317,7 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 		c->screen.rowbytes = backing_stride;
 		c->screen.base = backing;
 		c->screen_pitch = c->store_row_bytes / 4;
-		if (c->rend == rdn_current_rend) rdn_current_rend = NULL;
+		if (c->rend == rdn_current_rend) rdn_set_current_rend(NULL);
 		rdn_log("attach: context %p draws into backing surface %lu, %ux%u",
 		        gld_ctx, surface, backing_width, backing_height);
 		return 1;
@@ -1267,7 +1363,7 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 	c->screen.rowbytes = pitch * 4;
 	c->screen.base = (void *)(pixels + (uint32_t)b[1] * pitch + (uint32_t)b[0]);
 	if (c->rend && c->rend == rdn_current_rend)
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 	rdn_log("attach: context %p draws on the screen at %d,%d %dx%d (surface %lu, %u rectangles, %s)",
 		gld_ctx, (int)b[0], (int)b[1], (int)b[2], (int)b[3], surface,
 		(unsigned)count, c->direct ? "direct" : "copied");
@@ -1552,7 +1648,7 @@ void rdn_mesa_early_all(void *cgl_ctx)
 					OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
 				break;
 			}
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 		return;
 	}
 	for (i = 0; i < MAX_CONTEXTS; i++)
@@ -1569,7 +1665,7 @@ void rdn_mesa_early_all(void *cgl_ctx)
 				return;
 			}
 		OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 	}
 }
 
@@ -1648,7 +1744,7 @@ static void make_current_slow(void *rend)
 			c->thread = pthread_self();
 			if (rdn_trace)
 				rdn_log("Mesa adopted in this thread for context %p", c->gld_ctx);
-			rdn_current_rend = rend;
+			rdn_set_current_rend(rend);
 			return;
 		}
 	}
@@ -1701,7 +1797,7 @@ static void make_current_slow(void *rend)
 		if (c->nowhere && OSMesaGetCurrentContext() == c->mesa)
 			return;
 		rdn_origin_x = rdn_origin_y = 0;
-		rdn_current_rend = NULL;
+		rdn_set_current_rend(NULL);
 		if (!OSMesaMakeCurrent(c->mesa, nowhere, GL_UNSIGNED_BYTE, side, side))
 			return;
 		OSMesaPixelStore(OSMESA_ROW_LENGTH, side);
@@ -1721,7 +1817,7 @@ static void make_current_slow(void *rend)
 		c->bound = 1;
 		c->nowhere = 0;
 		rdn_watch = 0;
-		rdn_current_rend = rend;
+		rdn_set_current_rend(rend);
 		return;
 	}
 	if (c->type == DRAWABLE_SURFACE) {
@@ -1753,7 +1849,7 @@ static void make_current_slow(void *rend)
 		c->drawable = d;
 		c->bound = 1;
 		c->nowhere = 0;
-		rdn_current_rend = rend;
+		rdn_set_current_rend(rend);
 		return;
 	}
 	if (c->type == DRAWABLE_SCREEN && c->direct) {
@@ -1785,7 +1881,7 @@ static void make_current_slow(void *rend)
 		c->drawable = d;
 		c->bound = 1;
 		c->nowhere = 0;
-		rdn_current_rend = rend;
+		rdn_set_current_rend(rend);
 		return;
 	}
 	if (c->type == DRAWABLE_PBUFFER) {
@@ -1820,7 +1916,7 @@ static void make_current_slow(void *rend)
 		c->drawable = d;
 		c->bound = 1;
 		c->nowhere = 0;
-		rdn_current_rend = rend;
+		rdn_set_current_rend(rend);
 		if (pbuffer_ws && !c->ws_state) {
 			/*
 			 * The window server's contexts start with rectangle
@@ -1863,7 +1959,7 @@ static void make_current_slow(void *rend)
 	c->bound = 1;
 	c->nowhere = 0;
 	rdn_flush_waits = glthread;
-	rdn_current_rend = rend;
+	rdn_set_current_rend(rend);
 }
 
 /*
@@ -1948,7 +2044,7 @@ void rdn_make_current(void *rend)
 			rdn_origin_y = c->sig.global_origin_y;
 			rdn_watch = c->sig.watch;
 			rdn_flush_waits = c->sig.flush_waits;
-			rdn_current_rend = rend;
+			rdn_set_current_rend(rend);
 			return;
 		}
 	}
