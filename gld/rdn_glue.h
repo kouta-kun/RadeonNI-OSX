@@ -161,6 +161,7 @@ extern int rdn_logging;
 extern int rdn_kept_now;
 /* Log every GL call that reaches Mesa (set when /tmp/rdngld.trace exists). */
 extern int rdn_trace;
+extern void rdn_lazy_flush(void);	/* the unit switches held back are made (gen_dispatch.py, lazy_flush) */
 
 /*
  * RDN_GLD_TRACE_ONLY in the environment limits the trace to the calls it

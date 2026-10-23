@@ -2104,6 +2104,8 @@ struct shadow {
 	unsigned char in_begin;			/* between glBegin and glEnd (or a glBegin that failed) */
 	unsigned char cs_unit_ok, cs_unit;	/* glClientActiveTexture's unit, if known */
 	unsigned char at_ok, at_unit;		/* glActiveTexture's unit, if known */
+	/* The units Mesa was last told (lazy switches below), when known; mm_tex: the matrix mode may be GL_TEXTURE. */
+	unsigned char cs_real_ok, cs_real, at_real_ok, at_real, mm_tex;
 	unsigned arr_known, arr_val;		/* CS_* bits: which arrays' enables are known, and on */
 	unsigned epoch;				/* counts the display lists called */
 	unsigned sp;
@@ -2116,6 +2118,8 @@ struct shadow {
 };
 
 static struct shadow shadows[SHADOW_MAX];
+static volatile int lazy_pending;
+static void *lazy_rend;
 static struct shadow *volatile shadow_last;
 static pthread_mutex_t shadow_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -2157,6 +2161,7 @@ static struct shadow *shadow_for(void *rend)
 				shadows[i].scissor_ok = shadows[i].read_fb_ok = 1;
 				/* Unit 0 is active, every client array is off. */
 				shadows[i].cs_unit_ok = shadows[i].at_ok = 1;
+				shadows[i].cs_real_ok = shadows[i].at_real_ok = 1;
 				shadows[i].arr_known = CS_ALL;
 				shadows[i].rend = rend;
 				break;
@@ -2182,6 +2187,8 @@ static void shadow_forget(void *rend)
 		if (rend && shadows[i].rend == rend) {
 			if (shadow_last == &shadows[i])
 				shadow_last = NULL;
+			if (lazy_rend == rend)
+				lazy_pending = 0;
 			memset(&shadows[i], 0, sizeof(shadows[i]));
 		}
 	pthread_mutex_unlock(&shadow_lock);
@@ -2220,7 +2227,7 @@ static void shadow_pop(void *ctx)
 	struct shadow_saved *e;
 
 	if (s)
-		s->at_ok = 0;	/* GL_TEXTURE_BIT holds the active unit */
+		s->at_ok = s->at_real_ok = 0, s->mm_tex = 1;	/* GL_TEXTURE_BIT holds the active unit */
 	if (!s || s->compiling)
 		return;
 	if (!s->sp) {
@@ -2254,7 +2261,7 @@ static void shadow_lists(void *ctx)
 		s->epoch++;
 		s->depth_ok = s->scissor_ok = 0;
 		/* The lists may change any of the client state. */
-		s->cs_unit_ok = s->at_ok = 0;
+		s->cs_unit_ok = s->cs_real_ok = s->at_ok = s->at_real_ok = 0, s->mm_tex = 1;
 		s->arr_known = 0;
 	}
 }
@@ -2267,7 +2274,7 @@ static void shadow_new_list(void *ctx, GLenum mode)
 		s->compiling = mode == 0x1300;	/* GL_COMPILE; GL_COMPILE_AND_EXECUTE executes */
 		s->listing = 1;
 		/* GL_COMPILE_AND_EXECUTE changes the client state without our seeing it. */
-		s->cs_unit_ok = s->at_ok = 0;
+		s->cs_unit_ok = s->cs_real_ok = s->at_ok = s->at_real_ok = 0, s->mm_tex = 1;
 		s->arr_known = 0;
 	}
 }
@@ -2279,7 +2286,7 @@ static void shadow_end_list(void *ctx)
 	if (s) {
 		s->compiling = 0;
 		s->listing = 0;
-		s->cs_unit_ok = s->at_ok = 0;
+		s->cs_unit_ok = s->cs_real_ok = s->at_ok = s->at_real_ok = 0, s->mm_tex = 1;
 		s->arr_known = 0;
 	}
 }
@@ -2306,17 +2313,17 @@ static void shadow_end_list(void *ctx)
  * Not followed: aglCopyContext/CGLCopyContext, as above.
  * RDN_NO_STATE_ELIDE=1 turns it off.
  */
-static int elide_enabled(void)
-{
-	static int on = -1;
+static int elide_on = -1;
 
-	if (on < 0) {
-		on = shadow_enabled() && !getenv("RDN_NO_STATE_ELIDE");
-		if (on)
-			rdn_log("redundant glActiveTexture, glClientActiveTexture and glEnable/DisableClientState calls are left out (RDN_NO_STATE_ELIDE=1: not)");
-	}
-	return on;
+static int elide_init(void)
+{
+	elide_on = shadow_enabled() && !getenv("RDN_NO_STATE_ELIDE");
+	if (elide_on)
+		rdn_log("redundant glActiveTexture, glClientActiveTexture and glEnable/DisableClientState calls are left out (RDN_NO_STATE_ELIDE=1: not)");
+	return elide_on;
 }
+
+#define elide_enabled() (__builtin_expect(elide_on >= 0, 1) ? elide_on : elide_init())
 
 /* Calls seen and left out, per kind (0 ClientActiveTexture, 1 ActiveTexture, 2 Enable, 3 Disable...ClientState); RDN_ELIDE_STATS=1 prints them at exit. */
 static unsigned long elide_seen[4], elide_hit[4];
@@ -2342,7 +2349,92 @@ static struct shadow *elide_for(void *ctx)
 	return s && !s->listing && !s->in_begin ? s : NULL;
 }
 
-/* True: the unit is the one already set, the call is not needed. */
+/*
+ * Lazy unit switches. The Sims 2 switches the active and the client active texture unit
+ * back and forth (a quarter of its calls each, hardly any of them redundant); most
+ * switches are followed by another before anything that depends on the unit. A switch is
+ * kept in the shadow state and made when a call that depends on the unit comes (every entry
+ * not known to be independent of both units: lazy_flush in the entry's start). The
+ * switches Mesa has been told are cs_real and at_real. RDN_LAZY_UNIT=0 turns it off.
+ */
+static pthread_t lazy_thread;
+static unsigned long lazy_sent[2];
+
+static int lazy_enabled = -1;
+
+static int lazy_init(void)
+{
+	const char *e = getenv("RDN_LAZY_UNIT");
+
+	lazy_enabled = elide_enabled() && !(e && *e == '0');
+	if (lazy_enabled)
+		rdn_log("glActiveTexture and glClientActiveTexture are held back until a call depends on them (RDN_LAZY_UNIT=0: not)");
+	return lazy_enabled;
+}
+
+#define lazy_on() (__builtin_expect(lazy_enabled >= 0, 1) ? lazy_enabled : lazy_init())
+
+static void lazy_flush(void *ctx)
+{
+	struct shadow *s;
+
+	lazy_pending = 0;
+	s = shadow_for(lazy_rend ? lazy_rend : ctx);
+	if (!s)
+		return;
+	if (s->at_ok && s->at_real_ok && s->at_unit != s->at_real) {
+		s->at_real = s->at_unit;
+		lazy_sent[1]++;
+		m_active_texture(0x84C0 + s->at_unit);
+	}
+	if (s->cs_unit_ok && s->cs_real_ok && s->cs_unit != s->cs_real) {
+		s->cs_real = s->cs_unit;
+		lazy_sent[0]++;
+		m_client_active_texture(0x84C0 + s->cs_unit);
+	}
+}
+
+/* Before the context or the thread changes hands (rdn_glue.h). */
+void rdn_lazy_flush(void)
+{
+	if (lazy_pending && pthread_equal(lazy_thread, pthread_self()))
+		lazy_flush(NULL);
+}
+
+/* A matrix call: it depends on the active unit when the matrix mode may be GL_TEXTURE. */
+static void lazy_matrix(void *ctx)
+{
+	struct shadow *s = shadow_for(ctx);
+
+	if (!s || s->mm_tex)
+		lazy_flush(ctx);
+}
+
+static void lazy_matrix_mode(void *ctx, GLenum mode)
+{
+	struct shadow *s = lazy_on() ? shadow_for(ctx) : NULL;
+
+	if (!s)
+		return;
+	if (!(mode == 0x1700 || mode == 0x1701 || mode == 0x1800 || (mode >= 0x8630 && mode < 0x8650)))
+		s->mm_tex = 1;		/* GL_TEXTURE, or an error: it may be */
+	else if (!s->listing)
+		s->mm_tex = 0;
+}
+
+/* Capabilities that do not depend on the unit. */
+static int lazy_cap_free(GLenum cap)
+{
+	switch (cap) {
+	case 0x0BE2: case 0x0B71: case 0x0B44: case 0x0BC0: case 0x0B50: case 0x0B60:
+	case 0x0C11: case 0x0B90: case 0x0BA1: case 0x0B57: case 0x8037: case 0x8620:
+	case 0x8804: case 0x0B20: case 0x0B10: case 0x0B11: case 0x0BE3: case 0x0BD0:
+		return 1;
+	}
+	return (cap >= 0x4000 && cap < 0x4008) || (cap >= 0x3000 && cap < 0x3006);
+}
+
+/* True: the unit is the one already set, or will be set when something needs it. */
 static int elide_client_active_texture(void *ctx, GLenum texture)
 {
 	struct shadow *s = elide_for(ctx);
@@ -2355,8 +2447,18 @@ static int elide_client_active_texture(void *ctx, GLenum texture)
 		elide_hit[0]++;
 		return 1;
 	}
+	if (s->cs_unit_ok && s->cs_real_ok && lazy_on()) {
+		s->cs_unit = unit;
+		lazy_pending = 1;
+		lazy_rend = ctx;
+		lazy_thread = pthread_self();
+		elide_hit[0]++;
+		return 1;
+	}
 	s->cs_unit = unit;
 	s->cs_unit_ok = 1;
+	s->cs_real = unit;
+	s->cs_real_ok = 1;
 	return 0;
 }
 
@@ -2372,8 +2474,18 @@ static int elide_active_texture(void *ctx, GLenum texture)
 		elide_hit[1]++;
 		return 1;
 	}
+	if (s->at_ok && s->at_real_ok && lazy_on()) {
+		s->at_unit = unit;
+		lazy_pending = 1;
+		lazy_rend = ctx;
+		lazy_thread = pthread_self();
+		elide_hit[1]++;
+		return 1;
+	}
 	s->at_unit = unit;
 	s->at_ok = 1;
+	s->at_real = unit;
+	s->at_real_ok = 1;
 	return 0;
 }
 
@@ -2442,7 +2554,7 @@ static void elide_arrays_unknown(void *ctx, int unit_too)
 	if (s) {
 		s->arr_known = 0;
 		if (unit_too)
-			s->cs_unit_ok = 0;
+			s->cs_unit_ok = s->cs_real_ok = 0;
 	}
 }
 
@@ -2803,6 +2915,79 @@ SHADOW_GETS = {
     'get_doublev': '(GLdouble)',
 }
 
+
+LAZY_FREE_PREFIX = ('glColor', 'glSecondaryColor', 'glNormal', 'glVertex', 'glTexCoord', 'glMultiTexCoord', 'glFogCoord',
+                    'glMaterial', 'glLight', 'glProgramEnvParameter', 'glProgramLocalParameter', 'glStencil',
+                    'glClear', 'glBlend', 'glDraw', 'glMultiDraw', 'glFog', 'glDepth', 'glPolygon', 'glLineW',
+                    'glPointS')
+LAZY_FREE_EXACT = ('glBindProgramARB', 'glAlphaFunc', 'glCullFace', 'glFrontFace', 'glShadeModel', 'glScissor',
+                   'glViewport', 'glEnableVertexAttribArrayARB', 'glDisableVertexAttribArrayARB')
+LAZY_UNIT_DEPENDENT = ('glTexCoordPointer', 'glTexCoordPointerEXT')
+LAZY_MATRIX = ('glLoadMatrixf', 'glLoadMatrixd', 'glMultMatrixf', 'glMultMatrixd', 'glLoadIdentity', 'glPushMatrix',
+               'glPopMatrix', 'glTranslatef', 'glTranslated', 'glRotatef', 'glRotated', 'glScalef', 'glScaled',
+               'glFrustum', 'glOrtho', 'glLoadTransposeMatrixf', 'glLoadTransposeMatrixd',
+               'glMultTransposeMatrixf', 'glMultTransposeMatrixd')
+
+
+def lazy_prologue(gl):
+    """Lines that make the held-back unit switches before a call that depends on a unit."""
+    if gl in ('glActiveTexture', 'glClientActiveTexture', 'glActiveTextureARB', 'glClientActiveTextureARB'):
+        return []
+    if gl in ('glEnable', 'glDisable'):
+        return ['\tif (__builtin_expect(lazy_pending, 0) && !lazy_cap_free(cap))', '\t\tlazy_flush(ctx);']
+    if gl in ('glEnableClientState', 'glDisableClientState'):
+        return ['\tif (__builtin_expect(lazy_pending, 0) && array == 0x8078)', '\t\tlazy_flush(ctx);']
+    if gl == 'glMatrixMode':
+        return ['\tlazy_matrix_mode(ctx, mode);']
+    if gl in LAZY_MATRIX:
+        return ['\tif (__builtin_expect(lazy_pending, 0))', '\t\tlazy_matrix(ctx);']
+    if gl not in LAZY_UNIT_DEPENDENT and (gl in LAZY_FREE_EXACT or gl.startswith(LAZY_FREE_PREFIX)):
+        return []
+    return ['\tif (__builtin_expect(lazy_pending, 0))', '\t\tlazy_flush(ctx);']
+
+CALL_STATS_HELP = """/*
+ * RDN_CALL_STATS=1: counts the calls the program makes to each entry and rewrites
+ * /tmp/rdn-callstats.txt every 2^21 calls (a game is stopped by a signal: no exit hook runs).
+ */
+static int call_stats = -1;
+static unsigned long call_total;
+
+static void call_dump(void)
+{
+	FILE *f = fopen("/tmp/rdn-callstats.txt", "w");
+	int top[40], n = 0, i, j;
+
+	if (!f)
+		return;
+	for (i = 0; i < (int)(sizeof call_count / sizeof call_count[0]); i++) {
+		if (!call_count[i])
+			continue;
+		for (j = n < 40 ? n++ : 39; j > 0 && call_count[top[j - 1]] < call_count[i]; j--)
+			top[j] = top[j - 1];
+		if (j < 40)
+			top[j] = i;
+	}
+	fprintf(f, "total %lu\\n", call_total);
+	for (i = 0; i < n; i++)
+		fprintf(f, "%10lu %5.1f%%  %s\\n", call_count[top[i]], 100.0 * call_count[top[i]] / call_total, call_names[top[i]]);
+	for (i = 0; i < 4; i++)
+		fprintf(f, "elide kind %d: %lu seen, %lu left out\\n", i, elide_seen[i], elide_hit[i]);
+	fprintf(f, "lazy: %lu client and %lu active switches sent\\n", lazy_sent[0], lazy_sent[1]);
+	fclose(f);
+}
+
+static void call_note(int i)
+{
+	call_count[i]++;
+	if (!(++call_total & 0x1fffff))
+		call_dump();
+}
+
+__attribute__((constructor)) static void call_stats_init(void)
+{
+	call_stats = getenv("RDN_CALL_STATS") != NULL;
+}"""
+
 PROGRAM_STRING = """\tchar *own = weight_as_attrib(target, string, &len), *own2 = NULL, *own3 = NULL;
 
 \tif (own)
@@ -3054,7 +3239,13 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
     for name in list(bodies) + list(APPLE_ONLY) + list(APPLE_GETS) + list(APPLE_TEX_GETS):
         if name not in index:
             sys.exit('no entry %s' % name)
-    for ret, name, params, names in entries:
+    out.append('static unsigned long call_count[%d];' % len(entries))
+    out.append('static const char *const call_names[%d] = {' % len(entries))
+    for e in entries:
+        out.append('\t"%s",' % gl_name(e[1]))
+    out.append('};')
+    out.append(CALL_STATS_HELP)
+    for entry_index, (ret, name, params, names) in enumerate(entries):
         full = 'GLIContext ctx' + (', ' + params if params else '')
         call = 'm_%s(%s)' % (name, ', '.join(names))
         out.append('static %s t_%s(%s)' % (ret, name, full))
@@ -3064,6 +3255,8 @@ static void drawable_origin(int reading, GLint *x, GLint *y)
             out.append('\tif (__builtin_expect(rowrun.count, 0))')
             out.append('\t\trowrun_flush_for(ctx);')
         out.append('\tRDN_ENTER(ctx);')
+        out.append('\tif (__builtin_expect(call_stats, 0))\n\t\tcall_note(%d);' % entry_index)
+        out.extend(lazy_prologue(gl_name(name)))
         if name in bodies:
             out.append('\tif (__builtin_expect(rdn_trace, 0) && rdn_trace_wanted("%s"))' % gl_name(name))
             out.append('\t\t%s;' % trace_call(name, params, names))

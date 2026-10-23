@@ -279,6 +279,7 @@ static int fast_rend_stack(uintptr_t *low, uintptr_t *high)
 
 void rdn_set_current_rend(void *rend)
 {
+	rdn_lazy_flush();
 	uintptr_t low, high;
 
 	rdn_current_rend = rend;
@@ -306,6 +307,7 @@ void rdn_set_current_rend(void *rend)
 #else
 void rdn_set_current_rend(void *rend)
 {
+	rdn_lazy_flush();
 	rdn_current_rend = rend;
 }
 #endif
@@ -2023,6 +2025,7 @@ static void bind_sig_of(const struct context *c, const struct drawable *d, struc
  */
 void rdn_make_current(void *rend)
 {
+	rdn_lazy_flush();
 	struct context *c = NULL;
 	struct drawable d;
 	struct bind_sig now;
