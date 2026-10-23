@@ -1,0 +1,71 @@
+--- a/src/mesa/main/glthread_bufferobj.c
++++ b/src/mesa/main/glthread_bufferobj.c
+@@ -132,6 +132,50 @@
+    }
+ }
+ 
++#if defined(__APPLE__) && defined(__ppc__)
++#include <mach/mach.h>
++#include <stdio.h>
++/*
++ * osx-gpu: how many bytes of [data, data + size) can be read. A program
++ * that passes glDrawElements indices larger than the memory behind them
++ * (The Sims 2 does when it loads a lot) reads garbage on real hardware and
++ * nothing happens; glthread copies the range, and the copy runs off the
++ * end of the mapping.
++ */
++static GLsizeiptr
++rdn_readable(const void *data, GLsizeiptr size, const void *caller)
++{
++   uintptr_t a = (uintptr_t)data, end = a + size, at = a;
++
++   if ((a & 0xfff) + size <= 0x1000)
++      return size;
++   while (at < end) {
++      vm_address_t ra = at;
++      vm_size_t rs = 0;
++      vm_region_basic_info_data_t info;
++      mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT;
++      mach_port_t obj;
++
++      if (vm_region(mach_task_self(), &ra, &rs, VM_REGION_BASIC_INFO,
++                    (vm_region_info_t)&info, &cnt, &obj) != KERN_SUCCESS ||
++          ra > at || !(info.protection & VM_PROT_READ)) {
++         FILE *f = fopen("/tmp/rdn-upload-clamp.txt", "a");
++         if (f) {
++            fprintf(f, "clamp: %p size %ld readable %ld caller %p\n", data,
++                    (long)size, (long)(at - a), caller);
++            fclose(f);
++         }
++         return at - a;
++      }
++      at = ra + rs;
++   }
++   return size;
++}
++#define RDN_READABLE(d, n) rdn_readable(d, n, __builtin_return_address(0))
++#else
++#define RDN_READABLE(d, n) (n)
++#endif
++
+ void
+ _mesa_glthread_upload(struct gl_context *ctx, const void *data,
+                       GLsizeiptr size, unsigned *out_offset,
+@@ -165,7 +209,7 @@
+          ptr += start_offset;
+          *out_offset = start_offset;
+          if (data)
+-            memcpy(ptr, data, size);
++            memcpy(ptr, data, RDN_READABLE(data, size));
+          else
+             *out_ptr = ptr;
+          return;
+@@ -213,7 +257,7 @@
+ 
+    /* Upload data. */
+    if (data)
+-      memcpy(glthread->upload_ptr + offset, data, size);
++      memcpy(glthread->upload_ptr + offset, data, RDN_READABLE(data, size));
+    else
+       *out_ptr = glthread->upload_ptr + offset;
+ 
