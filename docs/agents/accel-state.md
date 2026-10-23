@@ -181,6 +181,17 @@ been planned in detail.
   page is `0x?38aa000`, the heap base moving 16 MB a run), with `RDN_NO_APPLE=1`, and with `RDN_SOFTWARE=1`
   (Mesa not used at all; the game shows a blue screen): so not ours. Without the three intro movies in
   `TSData/Res/Movies` the original build reaches its menu through our driver.
+  Profile and trace of the Sims 2 on Tiger (2026-10-23, Rev F, glthread on 15 fps, off 6 fps: glthread stays on):
+  the main thread stalls on `glGetBooleanv(GL_DEPTH_WRITEMASK)` (about 0.65 a frame, a glthread sync, 15 % of
+  its time), and in the frames where water is on screen it makes 1024 one-row `glCopyTexSubImage2D` calls (a
+  vertical flip done row by row: Direct3D port, `cDeviceDX`) that are the water reflection (without them the
+  reflections break: `RDN_NO_ROWCOPY=1`, an experiment switch). The game uses only ARB vertex programs
+  (7, no ARBfp, whatever `useShaders` says). Why "Programmable 1.1 / Pixel program 1.1" in its config log
+  (`~/Documents/EA Games/The Sims 2/Logs`): its startup probe (Rev F `0x1c15c..0x1c300`) fills a D3D caps
+  structure with constants, vertex shader `0xFFFE0101` if `GL_ARB_vertex_program` is there and pixel shader
+  `0xFFFF0101` always; nothing in GL, the PCI ID (`tools/g5/fake_device_id.c` fakes it per process) or the card
+  database changes it. The rules that the game reads are in the app bundle's `Contents/Resources/Config`
+  (`Graphics Rules.sgr` sets `useShaders false` for every non-software device), not in `TSData/Res`.
   `RDN_SOFTWARE=1` in a program's environment, or its name in `/Library/Application Support/RadeonNI/software`
   (the lines of `glversion21`), leaves that program to Apple's software renderer (`gld/rdn_mesa.c`).
 - Where the two games stand (2026-10-06, end of day, G5, 1920x1080):
