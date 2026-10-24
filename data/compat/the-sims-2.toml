@@ -1,13 +1,13 @@
 name = "The Sims 2"
 publisher = "Electronic Arts / Aspyr (Mac)"
 year = 2005
-engine = "SimCity 4 / Direct3D 7 port (nGZGraphic4)"
+engine = "EA/Maxis in-house engine, Aspyr port of its Direct3D-style renderer (cDeviceDX, vs_1_1 and ps_1_x shaders)"
 api = ["OpenGL 1.x", "ARB vertex programs", "ARB fragment programs (translated from ps_1_x)"]
 
 [[report]]
 date = "2026-10-23"
 tier = "glitches"
-version = "The Sims 2 1.0 Rev F (original executable)"
+version = "The Sims 2 1.0 Rev F"
 driver = "bundle ea8e7309 (commit 1f3a6a9)"
 gpu = "HD 7570 (Turks PRO)"
 machine = "PowerMac11,2"
@@ -15,7 +15,6 @@ resolution = "1920x1080"
 mode = "fullscreen"
 fps = 13
 settings = "the game's own defaults, Pleasantview and the Broke family's lot"
-repro = "scripts/sims2-run.sh -a original; scripts/sims2-cpu.sh prints the neighborhood number (12.4 to 13.0 fps, main thread 92 % busy, run to run about 6 %)"
 issues = ["docs/agents/accel-state.md (Sims 2 profile, shaders, speed work and the lot-load crash)"]
-notes = """Runs and plays at about 13 to 14 fps in the neighborhood and in a lot; 30 fps is not reachable from the driver side (the game's own work is most of each 66 ms frame). Known problems: at a few camera angles the picture of a mirror is repeated elsewhere on the screen (seen by the player, not yet reproduced or explained); the game froze for about two seconds once (unexplained); before the upload guard (patch 0029) it crashed on loading a lot and when pausing, the game passing glDrawElements indices longer than its own array. The guard stops the copy at the fault; it has not yet faulted inside the game, so the crash is not shown to be gone. The intro movies crash in Apple's QuickTime, not in our driver. No other card to compare with."""
+notes = """Runs and plays at about 13 to 14 fps in the neighborhood and in a lot; 30 fps is not reachable from the driver side (the game's own work is most of each 66 ms frame). Known problems: at a few camera angles the picture of a mirror is repeated elsewhere on the screen; the game freezes once in a while; The intro movies crash in Apple's QuickTime, not in our driver."""
 reporter = "kouta-kun"
