@@ -12,10 +12,11 @@ How to read it and how to report: `data/compat/README.md`.
 | Quake 4 | Perfect | Quake 4.app, 1.2 (build 2386, Universal Binary; from the patch's file name) | 1920x1080 | 47.3 | glthread on |  |
 | Quake III Arena | Playable | Quake3.app (Mac port, installed on the G5) | 1920x1080 | 149 |  | Intro video sometimes does not play. |
 | Sid Meier's Pirates (2004) | Playable | Sid Meier's Pirates.app | 1920x1080 |  |  |  |
+| The Sims 2 | Glitches | The Sims 2 1.0 Rev F (original executable) | 1920x1080 | 13 |  | Runs and plays at about 13 to 14 fps in the neighborhood and in a lot; 30 fps is not reachable from the driver side (the game's own work is most of each 66 ms frame). Known problems: at a few camera angles the picture of a mirror is repeated elsewhere on the screen (seen by the player, not yet reproduced or explained); the game froze for about two seconds once (unexplained); before the upload guard (patch 0029) it crashed on loading a lot and when pausing, the game passing glDrawElements indices longer than its own array. The guard stops the copy at the fault; it has not yet faulted inside the game, so the crash is not shown to be gone. The intro movies crash in Apple's QuickTime, not in our driver. No other card to compare with. |
 | Unreal Tournament 2004 | Perfect | Unreal Tournament 2004.app, 3236.1 (from the bundle's Info.plist) | 1920x1080 | 40 | glthread off | glthread gave no measurable gain in the benchmark (41.5 and 55.7 fps on in two runs with different camera paths, 40.4 and 40.5 off) and made the game's client-array draws pile up about 730 MB of 1 MB upload buffers, which ran the allocator dry (5,402 failed allocations in three minutes, and the earlier crash) |
 | World of Warcraft | Playable | 1.12 | 1920x1080 | 165 |  | Needs the bundle's GL_APPLE_flush_buffer_range (default) to be fast. |
 
-Tiers: Perfect 2, Playable 5
+Tiers: Perfect 2, Playable 5, Glitches 1
 
 ## Details
 
@@ -69,6 +70,21 @@ API: OpenGL 1.x, ARB vertex/fragment programs
 **2026-10-11: Playable**
 - Driver: glthread on
 - Mode: fullscreen
+
+### The Sims 2
+Electronic Arts / Aspyr (Mac) · 2005 · SimCity 4 / Direct3D 7 port (nGZGraphic4)
+
+API: OpenGL 1.x, ARB vertex programs, ARB fragment programs (translated from ps_1_x)
+
+**2026-10-23: Glitches**
+- Driver: bundle ea8e7309 (commit 1f3a6a9)
+- Card: HD 7570 (Turks PRO)
+- Machine: PowerMac11,2
+- Mode: fullscreen
+- Settings: the game's own defaults, Pleasantview and the Broke family's lot
+- Reproduce: scripts/sims2-run.sh -a original; scripts/sims2-cpu.sh prints the neighborhood number (12.4 to 13.0 fps, main thread 92 % busy, run to run about 6 %)
+- Reported by: kouta-kun
+- Issue: docs/agents/accel-state.md (Sims 2 profile, shaders, speed work and the lot-load crash)
 
 ### Unreal Tournament 2004
 Epic Games · 2004 · Unreal Engine 2

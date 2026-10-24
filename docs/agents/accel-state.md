@@ -219,6 +219,19 @@ been planned in detail.
   comparison is 7-13 % slower, a sampled comparison (wrong when only other bytes change) is level; any check reads
   the cold vertex data, and that read is the cost, not the copy. 30 fps is not reachable from the driver
   side: the game's own work is a large part of the 66 ms.
+  Sims 2 crash in `_mesa_glthread_upload` (2026-10-23, original executable and the pre-round-2 bundle alike, so
+  not the speed work): loading a lot, pausing or moving the camera could end in `EXC_BAD_ACCESS` inside the
+  `memcpy` of a `glDrawElements` from client memory. The game passes a range longer than its array (a probe
+  logged one draw a frame asking 12424 bytes of which 5704 were mapped); real hardware reads the extra as
+  garbage, glthread copies it and faults when the array ends at the end of a mapping (heap luck, hence
+  "sometimes"). Patch `0029` runs a copy that crosses a page boundary under `sigsetjmp` and a SIGSEGV/SIGBUS
+  handler, stops the copy at the fault and copies the readable part again (`RDN_UPLOAD_GUARD=0` off; a short
+  copy is logged to `/tmp/rdn-upload-clamp.txt`, at most 20 lines). A first version asked the kernel
+  (`vm_region`) before each copy and cost 18 % of the frame rate; the guard costs about 3 % (12.4 to 12.6 fps
+  against 12.8 to 13.0, two pairs). Tested alone on the G5 (2000 forced faults, each survives, the readable part
+  is copied) and in the Broke lot (load, six pause toggles, ten camera moves, no crash); the guard has not
+  faulted inside the game yet. Open: a mirror's picture repeated elsewhere at a few camera angles (also with
+  the bundle from before the speed work), and one freeze of about two seconds.
 - Where the two games stand (2026-10-06, end of day, G5, 1920x1080):
   Doom 3 demo 48 and 51 fps on the saves `bench` and `bench2` (ARB2
   path, glthread; the GeForce 6600 LE 26 and 19), Quake 3 `four` 149.
