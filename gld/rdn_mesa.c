@@ -147,7 +147,7 @@ struct context {
 	int placed;
 	/* Its picture: video memory of our own, registered with the kext. */
 	uint32_t store_offset, store_row_bytes, store_width, store_height;
-	int stored, store_new, backing_extent_set;
+	int stored, store_new, backing_extent_set, gpu_backing;
 	int bound;
 	/* The window server's Core Image context has had its start state set. */
 	int ws_state;
@@ -177,6 +177,7 @@ static int resolved, usable = -1;
 /* Core Animation can bind one context to several independently live surfaces. */
 struct surface_store {
 	uint32_t id, offset, row_bytes, width, height;
+    int unknown;
 	struct surface_store *next;
 };
 static struct surface_store *surface_stores;
@@ -747,7 +748,7 @@ int rdn_mesa_tex_image_pbuffer_ws(void *cgls_ctx, void *pbuffer, int source, int
  * word.
  */
 static int backing_store(struct context *c, void *backing, uint32_t stride,
-                         uint32_t width, uint32_t height);
+                         uint32_t width, uint32_t height, int gpu, int drawable);
 
 int rdn_surface_texture_hook;
 
@@ -773,9 +774,12 @@ int rdn_mesa_cgls_set_integer(void *cgls_ctx, int pname, int *vals, int *result)
 		return 0;
 	void *backing;
 	uint32_t backing_stride, backing_width, backing_height;
-	int is_backing = rdn_target_surface_backing((uint32_t)vals[0], &backing,
-	                                           &backing_stride, &backing_width,
-	                                           &backing_height);
+	int gpu_backing = rdn_target_surface_gpu_info((uint32_t)vals[0],
+        &backing_stride, &backing_width, &backing_height);
+    backing = NULL;
+    int is_backing = gpu_backing || rdn_target_surface_backing((uint32_t)vals[0], &backing,
+                                               &backing_stride, &backing_width,
+                                               &backing_height);
 	if (pname == 999 && !is_backing && !pbuffer_find((uint32_t)vals[0]))
 		return 0;
 	if (pname == 0x3e5 || ((pname == 0x3e6 || pname == 999) && is_backing &&
@@ -786,10 +790,15 @@ int rdn_mesa_cgls_set_integer(void *cgls_ctx, int pname, int *vals, int *result)
 			struct context storage = {0};
 			storage.surface = (uint32_t)vals[0];
 			if (!backing_store(&storage, backing, backing_stride,
-			                   backing_width, backing_height)) {
+			                   backing_width, backing_height, gpu_backing, 0)) {
 				*result = 0x2717;
 				return 1;
 			}
+            rdn_make_current(c->rend);
+            *result = OSMesaTexStoreImage(c->mesa, (GLenum)vals[1], RDN_TARGET_VRAM_HANDLE,
+                storage.store_row_bytes, storage.store_offset, backing_width, backing_height,
+                (vals[2] == GL_RGB || vals[2] == GL_RGB8) ? 0 : OSMESA_STORE_ALPHA) ? 0 : 0x2717;
+            return 1;
 		}
 		rdn_make_current(c->rend);
 		if (rdn_target_surface_query((uint32_t)vals[0], info, &found) &&
@@ -851,7 +860,7 @@ static void clear_surface_store(struct surface_store *store)
 	store->id = store->offset = store->row_bytes = store->width = store->height = 0;
 }
 
-static void surface_store(struct context *c, uint32_t width, uint32_t height)
+static void surface_store(struct context *c, uint32_t width, uint32_t height, int publish)
 {
 	uint32_t row_bytes = ((width + 63) & ~63u) * 4;
 	uint32_t rows = (height + 63) & ~63u;
@@ -866,7 +875,7 @@ static void surface_store(struct context *c, uint32_t width, uint32_t height)
 	pthread_mutex_lock(&surface_store_lock);
 	/* Reclaim only after WindowServer has removed the surface. */
 	for (struct surface_store *s = surface_stores; s; s = s->next) {
-		if (s->id && s->id != c->surface &&
+		if (!s->unknown && s->id && s->id != c->surface &&
 		    rdn_target_surface_query(s->id, info, &found) && !found) {
 			rdn_target_vram_free(s->offset);
 			clear_surface_store(s);
@@ -876,9 +885,10 @@ static void surface_store(struct context *c, uint32_t width, uint32_t height)
 		else if (!s->id && !empty)
 			empty = s;
 	}
-	if (store && (store->width != width || store->height != height)) {
-		if (!rdn_target_surface_buffer(store->id, 0, 0, 0, 0))
-			goto out;
+	if (store && store->unknown) goto out;
+    if (store && (store->width != width || store->height != height)) {
+        if (publish && !rdn_target_surface_buffer(store->id, 0, 0, 0, 0))
+            goto out;
 		rdn_target_vram_free(store->offset);
 		clear_surface_store(store);
 	}
@@ -900,7 +910,7 @@ static void surface_store(struct context *c, uint32_t width, uint32_t height)
 		store->width = width;
 		store->height = height;
 	}
-	if (!rdn_target_surface_buffer(store->id, store->offset,
+	if (publish && !rdn_target_surface_buffer(store->id, store->offset,
 				      store->row_bytes, width, height)) {
 		if (c->store_new) {
 			rdn_target_vram_free(store->offset);
@@ -919,19 +929,38 @@ out:
 
 /* CPU-drawn backings also need storage when first imported as textures. */
 static int backing_store(struct context *c, void *backing, uint32_t stride,
-                         uint32_t width, uint32_t height)
+                         uint32_t width, uint32_t height, int gpu, int drawable)
 {
-	surface_store(c, width, height);
-	if (!c->stored) return 0;
-	if (c->store_new) {
-		uint8_t *gpu = rdn_target_vram_map(c->store_offset);
-		if (!gpu) return 0;
-		for (uint32_t y = 0; y < height; ++y)
-			memcpy(gpu + y * c->store_row_bytes,
-			       (uint8_t *)backing + y * stride, width * 4);
-		__sync_synchronize();
-	}
-	return 1;
+    surface_store(c, width, height, 0);
+    if (!c->stored) return 0;
+    if (gpu) {
+        OSMesaContext current = OSMesaGetCurrentContext();
+        if (current) OSMesaFlushRender(current, GL_FALSE);
+        int result = rdn_target_surface_gpu_copy((uint32_t)c->surface, c->store_offset,
+            c->store_row_bytes, width, height);
+        if (result) {
+            static unsigned failures;
+            if (failures++ < 16) rdn_log("GPU backing import %lu (%ux%u) failed: %d",
+                (unsigned long)c->surface, width, height, result);
+            if (result == 2) {
+                pthread_mutex_lock(&surface_store_lock);
+                for (struct surface_store *s = surface_stores; s; s = s->next)
+                    if (s->id == c->surface) s->unknown = 1;
+                pthread_mutex_unlock(&surface_store_lock);
+            }
+            c->stored = 0;
+            return 0;
+        }
+    } else if (c->store_new) {
+        uint8_t *pixels = rdn_target_vram_map(c->store_offset);
+        if (!pixels) return 0;
+        for (uint32_t y = 0; y < height; ++y)
+            memcpy(pixels + y * c->store_row_bytes, (uint8_t *)backing + y * stride, width * 4);
+        __sync_synchronize();
+    }
+    if (drawable && !rdn_target_surface_buffer((uint32_t)c->surface, c->store_offset,
+        c->store_row_bytes, width, height)) return 0;
+    return 1;
 }
 
 /*
@@ -1260,7 +1289,12 @@ void rdn_mesa_backing_viewport(void *rend, int x, int y, int width, int height)
 	int i;
 	if (x || y || width <= 0 || height <= 0) return;
 	for (i = 0; i < MAX_CONTEXTS; ++i) {
-		struct context *c = &contexts[i];
+        struct context *c = &contexts[i];
+        if (c->gld_ctx && c->rend == rend && c->type == DRAWABLE_SURFACE && !c->window) {
+            uint32_t stride, backing_width, backing_height;
+            if (rdn_target_surface_gpu_info((uint32_t)c->surface, &stride, &backing_width, &backing_height))
+                rdn_mesa_attach_screen(c->gld_ctx, c->surface);
+        }
 		if (!c->gld_ctx || c->rend != rend ||
 		    (c->type != DRAWABLE_BACKING &&
 		     (c->type != DRAWABLE_SURFACE || c->window)) ||
@@ -1302,13 +1336,17 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 	}
 	void *backing;
 	uint32_t backing_stride, backing_width, backing_height;
-	if (surface != 1 && rdn_target_surface_backing((uint32_t)surface, &backing,
-	                                              &backing_stride, &backing_width,
-	                                              &backing_height)) {
+	int gpu_backing = surface != 1 && rdn_target_surface_gpu_info((uint32_t)surface,
+        &backing_stride, &backing_width, &backing_height);
+    backing = NULL;
+    if (surface != 1 && (gpu_backing || rdn_target_surface_backing((uint32_t)surface, &backing,
+                                                   &backing_stride, &backing_width,
+                                                   &backing_height))) {
 		c->surface = surface;
-		if (!backing_store(c, backing, backing_stride, backing_width, backing_height))
+		if (!backing_store(c, backing, backing_stride, backing_width, backing_height, gpu_backing, 1))
 			return 0;
 		c->type = DRAWABLE_BACKING;
+        c->gpu_backing = gpu_backing;
 		c->backing_extent_set = 0;
 		c->record = NULL;
 		c->bound = 0;
@@ -1317,7 +1355,7 @@ int rdn_mesa_attach_screen(void *gld_ctx, unsigned long surface)
 		c->screen.width = c->screen_width = backing_width;
 		c->screen.height = c->screen_height = backing_height;
 		c->screen.rowbytes = backing_stride;
-		c->screen.base = backing;
+		c->screen.base = gpu_backing ? (void *)c : backing;
 		c->screen_pitch = c->store_row_bytes / 4;
 		if (c->rend == rdn_current_rend) rdn_set_current_rend(NULL);
 		rdn_log("attach: context %p draws into backing surface %lu, %ux%u",
@@ -1813,7 +1851,8 @@ static void make_current_slow(void *rend)
 		if (!OSMesaMakeCurrentStore(c->mesa, RDN_TARGET_VRAM_HANDLE,
 		                            c->store_row_bytes, c->store_offset,
 		                            d.width, d.height, 0)) return;
-		if (!OSMesaStoreBacking(c->mesa, d.base, d.rowbytes)) return;
+		if (!OSMesaStoreBacking(c->mesa, c->gpu_backing ? NULL : d.base,
+            c->gpu_backing ? 0 : d.rowbytes)) return;
 		OSMesaReadbackRects(c->mesa, 0, NULL);
 		c->drawable = d;
 		c->bound = 1;
@@ -1824,9 +1863,9 @@ static void make_current_slow(void *rend)
 	}
 	if (c->type == DRAWABLE_SURFACE) {
 		if (!c->window && c->backing_extent_set)
-			surface_store(c, c->store_width, c->store_height);
+			surface_store(c, c->store_width, c->store_height, 1);
 		else
-			surface_store(c, d.width, d.height);
+			surface_store(c, d.width, d.height, 1);
 		OSMesaSurfaceStorage(c->mesa, c->stored ? RDN_TARGET_VRAM_HANDLE : 0,
 				     (GLsizei)c->store_row_bytes, c->store_offset);
 		if (!OSMesaMakeCurrentSurface(c->mesa, RDN_TARGET_SCREEN_HANDLE,

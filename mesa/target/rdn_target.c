@@ -323,3 +323,19 @@ rdn_target_surface_backing(uint32_t id, void **address, uint32_t *stride,
    return the_device && the_device->surface_backing &&
           the_device->surface_backing(the_device, id, address, stride, width, height);
 }
+
+bool rdn_target_surface_gpu_info(uint32_t id, uint32_t *stride, uint32_t *width, uint32_t *height)
+{
+   struct rdn_surface surface;
+   if (!the_device || !the_device->surface_gpu_info ||
+       !the_device->surface_gpu_info(the_device, id, &surface)) return false;
+   *stride = surface.row_bytes; *width = surface.width; *height = surface.height;
+   return true;
+}
+
+int rdn_target_surface_gpu_copy(uint32_t id, uint32_t offset, uint32_t stride,
+                                uint32_t width, uint32_t height)
+{
+   return the_device && the_device->surface_gpu_copy ?
+      the_device->surface_gpu_copy(the_device, id, offset, stride, width, height) : 1;
+}

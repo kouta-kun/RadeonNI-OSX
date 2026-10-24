@@ -173,3 +173,41 @@ int rdn_cp_dma_fill_build_list(const struct rdn_cp_dma_fill *fills,
     *word_count = n;
     return 0;
 }
+
+int rdn_cp_dma_surface_build(uint64_t source, uint32_t source_stride,
+    uint64_t destination, uint32_t destination_stride, uint32_t width,
+    uint32_t height, void *output, size_t capacity, uint32_t *word_count)
+{
+    uint32_t *words = output, n = 0, y, count, bytes;
+    uint64_t source_bytes, destination_bytes;
+    if (!width || !height || width > 16384 || height > 16384 ||
+        source_stride < width * 4 || destination_stride < width * 4 ||
+        ((source | destination | source_stride | destination_stride) & 3)) return -EINVAL;
+    source_bytes = (uint64_t)source_stride * (height - 1) + width * 4;
+    destination_bytes = (uint64_t)destination_stride * (height - 1) + width * 4;
+    if (source >= GPU_LIMIT || destination >= GPU_LIMIT ||
+        source_bytes > GPU_LIMIT - source || destination_bytes > GPU_LIMIT - destination ||
+        overlaps(source, source_bytes, destination, destination_bytes)) return -EINVAL;
+    count = source_stride == width * 4 && destination_stride == width * 4 &&
+        (uint64_t)width * height * 4 <= COPY_CHUNK ? 1 : height;
+    if (!cpu_span(output, (size_t)(count * 6 + 12) * 4) ||
+        capacity < (size_t)(count * 6 + 12) * 4 || !cpu_span(word_count, sizeof(*word_count)) ||
+        ((uintptr_t)output & 3) || ((uintptr_t)word_count & 3) ||
+        overlaps((uintptr_t)output, (count * 6 + 12) * 4,
+                 (uintptr_t)word_count, sizeof(*word_count))) return -EINVAL;
+    words[n++] = 0xc0034300u; words[n++] = 0x1980003cu;
+    words[n++] = 0xffffffffu; words[n++] = 0; words[n++] = 10;
+    bytes = count == 1 ? width * height * 4 : width * 4;
+    for (y = 0; y < count; ++y) {
+        words[n++] = 0xc0044100u; words[n++] = (uint32_t)source;
+        words[n++] = (y + 1 == count ? 0x80000000u : 0) | (uint32_t)(source >> 32);
+        words[n++] = (uint32_t)destination;
+        words[n++] = (uint32_t)(destination >> 32); words[n++] = bytes;
+        source += source_stride; destination += destination_stride;
+    }
+    words[n++] = 0xc0034300u; words[n++] = 0x1980003cu;
+    words[n++] = 0xffffffffu; words[n++] = 0; words[n++] = 10;
+    words[n++] = 0xc0004200u; words[n++] = 0;
+    *word_count = n;
+    return 0;
+}

@@ -2171,8 +2171,8 @@ OSMesaStoreBacking(OSMesaContext osmesa, void *backing, GLsizei stride)
 {
    osmesa_sync(osmesa);
    struct osmesa_buffer *buffer = osmesa ? osmesa->current_buffer : NULL;
-   if (!buffer || !buffer->store || !backing ||
-       stride < (GLsizei)(buffer->width * util_format_get_blocksize(buffer->visual.color_format)))
+   if (!buffer || !buffer->store || (!backing && stride) ||
+       (backing && stride < (GLsizei)(buffer->width * util_format_get_blocksize(buffer->visual.color_format))))
       return GL_FALSE;
    buffer->map = backing;
    buffer->backing_stride = stride;

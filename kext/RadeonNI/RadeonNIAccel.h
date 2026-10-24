@@ -34,6 +34,7 @@ extern "C" {
 }
 
 class RadeonNI;
+class RadeonNISurfaceClient;
 class RadeonNIVideoUserClient;
 struct RadeonNIVideoSession;
 #include "rdn_video.h"
@@ -169,11 +170,26 @@ public:
 	 * OpenGL windows, not the window server's own windows of 10.5.
 	 */
 	bool surfaceGate(void) { return fSurfaceGate; }
+    bool surfaceGpuReady(void) { return fGart.ready && fEngineUp && !fRetiring && !fSurfaceGpuStalled; }
 	bool isGLSurface(UInt32 wid);
 	bool setSurfaceBacking(UInt32 wid, task_t task, const struct rdn_user_backing *backing);
 	bool getSurfaceBacking(UInt32 wid, task_t task, struct rdn_user_backing *backing);
+    void setSurfaceBackingOwner(UInt32 wid, RadeonNISurfaceClient *owner);
+    void clearSurfaceBackingOwner(UInt32 wid, RadeonNISurfaceClient *owner);
+    RadeonNISurfaceClient *retainSurfaceBacking(UInt32 wid, task_t task, bool administrator);
+    IOReturn surfaceGpuInfo(UInt32 wid, task_t task, bool administrator,
+        struct rdn_user_surface_info *info);
+    IOReturn surfaceGpuCopy(UInt32 wid, task_t task, bool administrator,
+        UInt32 offset, UInt32 stride, UInt32 width, UInt32 height);
+    IOReturn surfaceGpuTransfer(UInt64 source, UInt32 sourceStride,
+        UInt64 destination, UInt32 destinationStride, UInt32 width, UInt32 height, UInt32 surface = 0, bool locked = false);
+    IOReturn syncSurfaceGpu(UInt32 surface, UInt64 ram, UInt32 stride, UInt32 width, UInt32 height, bool toCPU);
+    IOReturn refreshSurfaceGpuOwner(void *owner);
+    IOReturn initializeSurfaceGpu(UInt32 wid, task_t task);
+    bool surfaceDestination(UInt32 offset, UInt32 stride, UInt32 width, UInt32 height);
+    UInt64 surfaceVramAddress(UInt32 offset) { return rdn_vram_addr(&fAccel, offset); }
 	bool setSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
-			      UInt32 width, UInt32 height, void *owner);
+			      UInt32 width, UInt32 height, void *owner, task_t producerTask = 0);
 	bool getSurfaceBuffer(UInt32 wid, UInt32 *offset, UInt32 *rowBytes,
 			      UInt32 *width, UInt32 *height);
 	void listSurfaces(struct rdn_user_surfaces *list);
@@ -303,6 +319,11 @@ private:
 	/* Hand out surface clients (RadeonNISurface.h)? */
 	bool fSurfaces;
 	bool fSurfaceGate;
+    bool fSurfaceGpuStalled;
+    UInt64 fSurfaceGpuCopies, fSurfaceGpuBytes;
+	struct SurfaceMirror { UInt32 surface, offset, stride, width, height; };
+    enum { kSurfaceMirrors = 1024 };
+    SurfaceMirror fSurfaceMirrors[kSurfaceMirrors];
 	struct SurfaceRecord {
 		UInt32 wid;
 		bool used;
@@ -312,9 +333,11 @@ private:
 		/* The surface's picture, if its owner has said where it is. */
 		UInt32 bufOffset, bufRowBytes, bufWidth, bufHeight;
 		void *owner;
-		task_t backingTask;
+		task_t backingTask, producerTask;
+        RadeonNISurfaceClient *backingClient;
 		struct rdn_user_backing backing;
 	};
+	void clearSurfaceBufferRecord(SurfaceRecord *record);
 	SurfaceRecord *fShapes;
 	UInt32 fShapeCapacity;
 	int surfaceSlot(UInt32 wid, bool create);
@@ -397,6 +420,8 @@ public:
 				     UInt32 width, UInt32 height);
 	IOReturn methodSurfaceBacking(UInt32 wid, struct rdn_user_backing *backing, IOByteCount *size);
 	IOReturn methodSurfaceQuery(UInt32 wid, struct rdn_user_surface_info *info, IOByteCount *size);
+    IOReturn methodSurfaceGpuInfo(UInt32 wid, struct rdn_user_surface_info *info, IOByteCount *size);
+    IOReturn methodSurfaceGpuCopy(UInt32 wid, UInt32 offset, UInt32 stride, UInt32 width, UInt32 height);
 	IOReturn methodSurfaceList(struct rdn_user_surfaces *list, IOByteCount *size);
 	IOReturn methodSurfaceLocked(UInt32 *wid);
 	IOReturn methodRegRead(UInt32 offset, UInt32 *value);
@@ -437,6 +462,10 @@ private:
 	RadeonNIAccel *fAccel;
 	task_t fTask;
 	bool fUvdAdministrator;
+    bool fSurfaceGpuFailed;
+    bool fSurfaceCompositor;
+    IOLock *fAllocationLock;
+    IOReturn allocateMemory(UInt32 size, UInt32 align, UInt32 *offset, bool hidden, bool segment);
 	/* What this client allocated, so that it can be freed when it goes. */
 	UInt32 *fOffsets;
 	UInt32 fCount;

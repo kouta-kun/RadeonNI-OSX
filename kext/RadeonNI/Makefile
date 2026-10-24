@@ -67,7 +67,7 @@ $(BUNDLE): $(OBJS) Info.plist
 		-o $(BUNDLE)/Contents/MacOS/$(KEXT)
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
 ifeq ($(LEOPARD),1)
-	perl -0777 -pi -e 's/com\.apple\.kernel\.(iokit|libkern|mach)/com.apple.kpi.$$1/g; s/<string>6\.0<\/string>/<string>9.0.0<\/string>/g; s{(<key>OSBundleLibraries</key>\s*<dict>)}{$$1\n\t\t<key>com.apple.kpi.unsupported</key>\n\t\t<string>9.0.0</string>}' $(BUNDLE)/Contents/Info.plist
+	perl -0777 -pi -e 's/com\.apple\.kernel\.(iokit|libkern|mach)/com.apple.kpi.$$1/g; s/<string>6\.0<\/string>/<string>9.0.0<\/string>/g; s{(<key>OSBundleLibraries</key>\s*<dict>)}{$$1\n\t\t<key>com.apple.kpi.bsd</key>\n\t\t<string>9.0.0</string>\n\t\t<key>com.apple.kpi.unsupported</key>\n\t\t<string>9.0.0</string>}' $(BUNDLE)/Contents/Info.plist
 endif
 
 clean:

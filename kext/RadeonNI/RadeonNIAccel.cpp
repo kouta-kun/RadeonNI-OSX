@@ -12,6 +12,10 @@
 #include <stdarg.h>
 #include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 #include <sys/errno.h>
+#ifdef RDN_LEOPARD
+#include <sys/proc.h>
+#include <sys/kauth.h>
+#endif
 
 #include "RadeonNI.h"
 #include "RadeonNIAccel.h"
@@ -19,6 +23,9 @@
 #include "RadeonNISurface.h"
 #include "rdn_uvd_reg.h"
 #include "rdn_mc.h"
+extern "C" {
+#include "rdn_cp_dma_readback.h"
+}
 
 /* sync: orders every earlier store, also to write-combined memory, before the next one (eieio orders only guarded I/O) */
 static inline void rdnStoreBarrier(void)
@@ -249,6 +256,9 @@ void *RadeonNIAccel::copyFirmware(const char *key, UInt32 *size)
 
 bool RadeonNIAccel::startEngine(void)
 {
+    bzero(fSurfaceMirrors, sizeof(fSurfaceMirrors));
+    fSurfaceGpuCopies = fSurfaceGpuBytes = 0;
+    fSurfaceGpuStalled = false;
 	typedef char ScratchAfterScreenSlots[
 		SCREEN_OFFSET + kScreenSlots * SCREEN_SLOT_BYTES <=
 		RDN_MC_LAYOUT_SCRATCH_OFFSET ? 1 : -1];
@@ -501,6 +511,7 @@ IOReturn RadeonNIAccel::gartBind(task_t task, UInt64 address, UInt32 size,
 
 IOReturn RadeonNIAccel::gartUnbind(UInt32 offset, void *owner)
 {
+    if (fSurfaceGpuStalled) return kIOReturnNotReady;
 	IOMemoryDescriptor *memory = 0;
 	UInt32 slot, done;
 
@@ -534,6 +545,14 @@ void RadeonNIAccel::gartUnbindAll(void *owner)
 			gartUnbind(fGartBound[slot].offset, owner);
 }
 
+void RadeonNIAccel::clearSurfaceBufferRecord(SurfaceRecord *record)
+{
+    if (record->backingClient) {
+        record->owner = 0; record->producerTask = 0; record->gl = false;
+        record->bufOffset = record->bufRowBytes = record->bufWidth = record->bufHeight = 0;
+    } else bzero(record, sizeof(*record));
+}
+
 void RadeonNIAccel::retainClientMemory(const UInt32 *offsets,UInt32 count,void *owner)
 {
  if(!owner) return;
@@ -541,9 +560,9 @@ void RadeonNIAccel::retainClientMemory(const UInt32 *offsets,UInt32 count,void *
  for(UInt32 i=0;i<kMaxGartBindings;++i)
   if(fGartBound[i].memory && fGartBound[i].owner==owner) fGartBound[i].owner=0;
  for(UInt32 i=0;i<fShapeCapacity;++i) {
-  if(fShapes[i].used && fShapes[i].owner==owner) bzero(&fShapes[i],sizeof(fShapes[i]));
+  if(fShapes[i].used && fShapes[i].owner==owner) clearSurfaceBufferRecord(&fShapes[i]);
   for(UInt32 j=0;fShapes[i].used && j<count;++j)
-   if(fShapes[i].bufWidth && fShapes[i].bufOffset==offsets[j]) bzero(&fShapes[i],sizeof(fShapes[i]));
+   if(fShapes[i].bufWidth && fShapes[i].bufOffset==offsets[j]) clearSurfaceBufferRecord(&fShapes[i]);
  }
  IOLockUnlock(fLock);
 }
@@ -561,7 +580,7 @@ void RadeonNIAccel::releaseClientMemory(const UInt32 *offsets, UInt32 count,
 	/* Reservations have no VRAM offset to match during client teardown. */
 	for (i = 0; i < fShapeCapacity; i++)
 		if (fShapes[i].used && fShapes[i].owner == owner)
-			bzero(&fShapes[i], sizeof(fShapes[i]));
+			clearSurfaceBufferRecord(&fShapes[i]);
 	if (!hasMemory) {
 		IOLockUnlock(fLock);
 		return;
@@ -570,13 +589,13 @@ void RadeonNIAccel::releaseClientMemory(const UInt32 *offsets, UInt32 count,
 	for (i = 0; i < fShapeCapacity; i++)
 		for (j = 0; fShapes[i].used && j < count; j++)
 			if (fShapes[i].bufWidth && fShapes[i].bufOffset == offsets[j]) {
-				bzero(&fShapes[i], sizeof(fShapes[i]));
+				clearSurfaceBufferRecord(&fShapes[i]);
 				break;
 			}
 	fence = fAccel.fence_emitted;
 	IOLockUnlock(fLock);
 
-	if (!fenceWait(fence, 10000)) {
+	if (fSurfaceGpuStalled || !fenceWait(fence, 10000)) {
 		/* Keep GPU-visible memory pinned until reboot after a hang. */
 		retainClientMemory(offsets,count,owner);
 		IOLog("RadeonNI: client cleanup fence %lu timed out; retaining GPU memory\n", fence);
@@ -1005,6 +1024,9 @@ IOReturn RadeonNIAccel::allocVram(UInt32 size, UInt32 align, UInt32 *offset,
 void RadeonNIAccel::freeVram(UInt32 offset)
 {
 	IOLockLock(fLock);
+    if (fSurfaceGpuStalled) { IOLockUnlock(fLock); return; }
+    for (UInt32 i = 0; i < kSurfaceMirrors; ++i)
+        if (fSurfaceMirrors[i].offset == offset) fSurfaceMirrors[i].surface = 0;
 	if (fHiddenSize && offset >= fHiddenOffset)
 		rdn_mem_free(&fHidden, offset);
 	else
@@ -2716,7 +2738,7 @@ bool RadeonNIAccel::getSurfaceRegion(UInt32 wid, struct rdn_user_region *region)
 }
 
 bool RadeonNIAccel::setSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
-				     UInt32 width, UInt32 height, void *owner)
+				     UInt32 width, UInt32 height, void *owner, task_t producerTask)
 {
 	int slot;
 
@@ -2737,6 +2759,7 @@ bool RadeonNIAccel::setSurfaceBuffer(UInt32 wid, UInt32 offset, UInt32 rowBytes,
 		fShapes[slot].bufRowBytes = rowBytes;
 		fShapes[slot].bufWidth = width;
 		fShapes[slot].bufHeight = height;
+        if (width) fShapes[slot].producerTask = producerTask;
 	}
 	IOLockUnlock(fLock);
 	return slot >= 0;
@@ -2935,7 +2958,7 @@ void RadeonNIAccel::forgetSurface(UInt32 wid)
 
 	IOLockLock(fLock);
 	for (i = 0; i < fShapeCapacity; i++)
-		if (fShapes[i].used && fShapes[i].wid == wid)
+		if (fShapes[i].used && fShapes[i].wid == wid && !fShapes[i].backingClient)
 			bzero(&fShapes[i], sizeof(fShapes[i]));
 	IOLockUnlock(fLock);
 }
@@ -3208,10 +3231,26 @@ bool RadeonNIUserClient::initWithTask(task_t owningTask, void *securityID,
 	if (!super::initWithTask(owningTask, securityID, type))
 		return false;
 	fTask = owningTask;
+    fSurfaceGpuFailed = false;
 	fProtocolV2 = type == RDN_UC_TYPE_V2;
 	fUvdAdministrator = clientHasPrivilege(securityID,
 		kIOClientPrivilegeAdministrator) == kIOReturnSuccess;
-	fOffsets = (UInt32 *)IOMalloc(kMaxAllocations * sizeof(UInt32));
+    fSurfaceCompositor = fUvdAdministrator;
+#ifdef RDN_LEOPARD
+    char processName[32];
+    bzero(processName, sizeof(processName));
+    proc_selfname(processName, sizeof(processName));
+    fSurfaceCompositor = fUvdAdministrator ||
+        (kauth_cred_getuid(kauth_cred_get()) == 88 && !strcmp(processName, "WindowServer"));
+#endif
+	fAllocationLock = IOLockAlloc();
+    fOffsets = (UInt32 *)IOMalloc(kMaxAllocations * sizeof(UInt32));
+    if (!fAllocationLock || !fOffsets) {
+        if (fAllocationLock) IOLockFree(fAllocationLock);
+        if (fOffsets) IOFree(fOffsets, kMaxAllocations * sizeof(UInt32));
+        fAllocationLock = 0; fOffsets = 0;
+        return false;
+    }
 	fCount = 0;
 	fUvdUser = false;
 	fUvdHandleCount = 0;
@@ -3230,8 +3269,9 @@ void RadeonNIUserClient::freeAll(void)
 {
 	if (!fAccel || !fOffsets)
 		return;
+    IOLockLock(fAllocationLock);
 	bool uvdSafe = !fUvdUser || fAccel->uvdDestroy(fUvdHandles, fUvdHandleCount, fUvdHandleEpoch);
-	if (uvdSafe)
+	if (uvdSafe && !fSurfaceGpuFailed)
 		fAccel->releaseClientMemory(fOffsets, fCount, this);
 	else
 		fAccel->retainClientMemory(fOffsets, fCount, this);
@@ -3241,6 +3281,7 @@ void RadeonNIUserClient::freeAll(void)
 		fUvdUser = false;
 		fAccel->uvdUser(false);
 	}
+    IOLockUnlock(fAllocationLock);
 }
 
 IOReturn RadeonNIUserClient::clientClose(void)
@@ -3262,6 +3303,7 @@ void RadeonNIUserClient::stop(IOService *provider)
 		IOFree(fOffsets, kMaxAllocations * sizeof(UInt32));
 		fOffsets = 0;
 	}
+    if (fAllocationLock) { IOLockFree(fAllocationLock); fAllocationLock = 0; }
 	super::stop(provider);
 }
 
@@ -3347,6 +3389,10 @@ IOExternalMethod *RadeonNIUserClient::getTargetAndMethodForIndex(
 		  kIOUCScalarIStructO, 1, sizeof(struct rdn_user_uvd_fixture) },
 		{ 0, (IOMethod)&RadeonNIUserClient::methodUvdFixtureRead,
 		  kIOUCScalarIStructO, 2, RDN_UVD_FIXTURE_CHUNK_BYTES },
+        { 0, (IOMethod)&RadeonNIUserClient::methodSurfaceGpuInfo,
+          kIOUCScalarIStructO, 1, sizeof(struct rdn_user_surface_info) },
+        { 0, (IOMethod)&RadeonNIUserClient::methodSurfaceGpuCopy,
+          kIOUCScalarIScalarO, 5, 0 },
 	};
 
 	if (index >= (fProtocolV2 ? RDN_UC_METHOD_COUNT : RDN_UC_V1_METHOD_COUNT))
@@ -3411,43 +3457,27 @@ IOReturn RadeonNIUserClient::methodSurfaceQuery(UInt32 wid,
 	return kIOReturnSuccess;
 }
 
-IOReturn RadeonNIUserClient::methodAlloc(UInt32 size, UInt32 align,
-					 UInt32 *offset)
+IOReturn RadeonNIUserClient::allocateMemory(UInt32 size, UInt32 align, UInt32 *offset,
+    bool hidden, bool segment)
 {
-	IOReturn r;
-
-	if (fCount >= kMaxAllocations)
-		return kIOReturnNoResources;
-	r = fAccel->allocVram(size, align, offset);
-	if (r == kIOReturnSuccess)
-		fOffsets[fCount++] = *offset;
-	return r;
+    IOLockLock(fAllocationLock);
+    IOReturn result = kIOReturnNoResources;
+    if (fCount < kMaxAllocations && !fSurfaceGpuFailed) {
+        result = fAccel->allocVram(size, align, offset, hidden, segment);
+        if (result == kIOReturnSuccess) fOffsets[fCount++] = *offset;
+    }
+    IOLockUnlock(fAllocationLock);
+    return result;
 }
 
-IOReturn RadeonNIUserClient::methodAllocHidden(UInt32 size, UInt32 align,
-					       UInt32 *offset)
-{
-	IOReturn r;
+IOReturn RadeonNIUserClient::methodAlloc(UInt32 size, UInt32 align, UInt32 *offset)
+{ return allocateMemory(size, align, offset, false, false); }
 
-	if (fCount >= kMaxAllocations)
-		return kIOReturnNoResources;
-	r = fAccel->allocVram(size, align, offset, true);
-	if (r == kIOReturnSuccess)
-		fOffsets[fCount++] = *offset;
-	return r;
-}
+IOReturn RadeonNIUserClient::methodAllocHidden(UInt32 size, UInt32 align, UInt32 *offset)
+{ return allocateMemory(size, align, offset, true, false); }
 
 IOReturn RadeonNIUserClient::methodAllocUvd(UInt32 size, UInt32 align, UInt32 *offset)
-{
-	IOReturn r;
-
-	if (fCount >= kMaxAllocations)
-		return kIOReturnNoResources;
-	r = fAccel->allocVram(size, align, offset, false, true);
-	if (r == kIOReturnSuccess)
-		fOffsets[fCount++] = *offset;
-	return r;
-}
+{ return allocateMemory(size, align, offset, false, true); }
 
 IOReturn RadeonNIUserClient::methodUvdSegment(UInt32 *mode, UInt32 *first, UInt32 *size)
 {
@@ -3533,23 +3563,26 @@ IOReturn RadeonNIUserClient::methodScreenCopy(UInt32 sx, UInt32 sy, UInt32 dx,
 
 IOReturn RadeonNIUserClient::methodFree(UInt32 offset)
 {
-	UInt32 i;
-
-	/* Only what this client allocated. */
-	for (i = 0; i < fCount; i++)
-		if (fOffsets[i] == offset) {
-			fOffsets[i] = fOffsets[--fCount];
-			fAccel->freeVram(offset);
-			return kIOReturnSuccess;
-		}
-	return kIOReturnBadArgument;
+    IOLockLock(fAllocationLock);
+    IOReturn result = fSurfaceGpuFailed ? kIOReturnNotReady : kIOReturnBadArgument;
+    for (UInt32 i = 0; !fSurfaceGpuFailed && i < fCount; ++i) {
+        if (fOffsets[i] != offset) continue;
+        fOffsets[i] = fOffsets[--fCount];
+        fAccel->freeVram(offset);
+        result = kIOReturnSuccess;
+        break;
+    }
+    IOLockUnlock(fAllocationLock);
+    return result;
 }
 
 IOReturn RadeonNIUserClient::methodSubmit(UInt32 offset, UInt32 words,
 					  UInt32 *fence)
 {
 	fAccel->ibRecord('3', this, offset, words);
-	return fAccel->submit(offset, words, fence);
+	IOReturn result = fAccel->submit(offset, words, fence);
+    if (result == kIOReturnSuccess) result = fAccel->refreshSurfaceGpuOwner(this);
+    return result;
 }
 
 IOReturn RadeonNIUserClient::methodFenceWait(UInt32 fence, UInt32 timeoutMs,
@@ -3666,8 +3699,24 @@ IOReturn RadeonNIUserClient::methodSurfaceBuffer(UInt32 wid, UInt32 offset,
 	if (width && ((UInt64)offset + (UInt64)rowBytes * height >
 		      fAccel->apertureBytes() || rowBytes < width * 4))
 		return kIOReturnBadArgument;
-	return fAccel->setSurfaceBuffer(wid, offset, rowBytes, width, height, this)
-		? kIOReturnSuccess : kIOReturnNoResources;
+    IOLockLock(fAllocationLock);
+    bool owned = !width;
+    for (UInt32 i = 0; i < fCount; ++i) if (fOffsets[i] == offset) owned = true;
+    UInt32 oldOffset, oldStride, oldWidth, oldHeight;
+    bool changed = width && (!fAccel->getSurfaceBuffer(wid, &oldOffset, &oldStride, &oldWidth, &oldHeight) ||
+        offset != oldOffset || rowBytes != oldStride || width != oldWidth || height != oldHeight);
+    IOReturn result = kIOReturnBadArgument;
+    if (owned && (!width || fAccel->surfaceDestination(offset, rowBytes, width, height))) {
+        result = fAccel->setSurfaceBuffer(wid, offset, rowBytes, width, height, this, fTask)
+            ? kIOReturnSuccess : kIOReturnNoResources;
+        if (result == kIOReturnSuccess && changed) {
+            IOReturn initialized = fAccel->initializeSurfaceGpu(wid, fTask);
+            if (initialized != kIOReturnNotFound) result = initialized;
+            if (result == kIOReturnTimeout) fSurfaceGpuFailed = true;
+        }
+    }
+    IOLockUnlock(fAllocationLock);
+    return result;
 }
 
 IOReturn RadeonNIUserClient::methodSurfaceRegion(UInt32 wid,
@@ -3688,4 +3737,226 @@ IOReturn RadeonNIUserClient::methodSurfaceBacking(UInt32 wid,
 	if (!fAccel->getSurfaceBacking(wid, fTask, backing)) return kIOReturnNotFound;
 	*size = sizeof(*backing);
 	return kIOReturnSuccess;
+}
+
+void RadeonNIAccel::setSurfaceBackingOwner(UInt32 wid, RadeonNISurfaceClient *owner)
+{
+    IOLockLock(fLock);
+    int slot = surfaceSlot(wid, false);
+    if (slot >= 0) fShapes[slot].backingClient = owner;
+    IOLockUnlock(fLock);
+}
+
+void RadeonNIAccel::clearSurfaceBackingOwner(UInt32 wid, RadeonNISurfaceClient *owner)
+{
+    IOLockLock(fLock);
+    int slot = surfaceSlot(wid, false);
+    if (slot >= 0 && fShapes[slot].backingClient == owner) {
+        for (UInt32 i = 0; i < kSurfaceMirrors; ++i)
+            if (fSurfaceMirrors[i].surface == wid) fSurfaceMirrors[i].surface = 0;
+        fShapes[slot].backingClient = 0;
+        fShapes[slot].backingTask = 0;
+        bzero(&fShapes[slot].backing, sizeof(fShapes[slot].backing));
+    }
+    IOLockUnlock(fLock);
+}
+
+RadeonNISurfaceClient *RadeonNIAccel::retainSurfaceBacking(UInt32 wid, task_t task, bool administrator)
+{
+    RadeonNISurfaceClient *client = 0;
+    IOLockLock(fLock);
+    int slot = surfaceSlot(wid, false);
+    if (slot >= 0 && (administrator || fShapes[slot].backingTask == task ||
+        (task && fShapes[slot].producerTask == task))) {
+        client = fShapes[slot].backingClient;
+        if (client) client->retain();
+    }
+    IOLockUnlock(fLock);
+    return client;
+}
+
+IOReturn RadeonNIAccel::initializeSurfaceGpu(UInt32 wid, task_t task)
+{
+    RadeonNISurfaceClient *client = retainSurfaceBacking(wid, task, false);
+    if (!client) return kIOReturnNotFound;
+    IOReturn result = client->initializeGpu();
+    client->release();
+    return result;
+}
+
+IOReturn RadeonNIAccel::surfaceGpuInfo(UInt32 wid, task_t task, bool administrator,
+    struct rdn_user_surface_info *info)
+{
+    RadeonNISurfaceClient *client = retainSurfaceBacking(wid, task, administrator);
+    if (!client) return kIOReturnNotFound;
+    IOReturn result = client->gpuInfo(info);
+    client->release();
+    return result;
+}
+
+bool RadeonNIAccel::surfaceDestination(UInt32 offset, UInt32 stride, UInt32 width, UInt32 height)
+{
+    if (!width || !height || width > 16384 || height > 16384 ||
+        stride < width * 4 || (stride & 3)) return false;
+    UInt64 bytes = (UInt64)stride * (height - 1) + width * 4;
+    IOLockLock(fLock);
+    bool valid = bytes <= rdn_mem_allocation_size(&fMem, offset) &&
+        (UInt64)offset + bytes <= fAccel.aperture_size;
+    IOLockUnlock(fLock);
+    return valid;
+}
+
+IOReturn RadeonNIAccel::surfaceGpuCopy(UInt32 wid, task_t task, bool administrator,
+    UInt32 offset, UInt32 stride, UInt32 width, UInt32 height)
+{
+    RadeonNISurfaceClient *client = retainSurfaceBacking(wid, task, administrator);
+    if (!client) return kIOReturnNotFound;
+    IOReturn result = client->gpuCopy(offset, stride, width, height);
+    client->release();
+    IOLockLock(fLock);
+    if (result == kIOReturnSuccess) {
+        ++fSurfaceGpuCopies;
+        fSurfaceGpuBytes += (UInt64)width * height * 4;
+        if (!(fSurfaceGpuCopies & (fSurfaceGpuCopies - 1)) || !(fSurfaceGpuCopies & 255)) {
+            setProperty("RadeonNISurfaceGPUCopies", fSurfaceGpuCopies, 64);
+            setProperty("RadeonNISurfaceGPUBytes", fSurfaceGpuBytes, 64);
+        }
+    }
+    IOLockUnlock(fLock);
+    return result;
+}
+
+IOReturn RadeonNIAccel::surfaceGpuTransfer(UInt64 source, UInt32 sourceStride,
+    UInt64 destination, UInt32 destinationStride, UInt32 width, UInt32 height, UInt32 surface, bool locked)
+{
+    if (!width || !height || height > 16384) return kIOReturnBadArgument;
+    UInt32 capacity = (height * 6 + 12) * 4;
+    uint32_t words = 0, seq = 0;
+    UInt32 *commands = (UInt32 *)IOMalloc(capacity);
+    if (!commands) return kIOReturnNoMemory;
+    if (!locked) IOLockLock(fLock);
+    if (fRetiring || fSurfaceGpuStalled) {
+        if (!locked) IOLockUnlock(fLock); IOFree(commands, capacity); return kIOReturnNotReady;
+    }
+    int mirror = -1;
+    if (surface) {
+        for (UInt32 i = 0; i < kSurfaceMirrors; ++i) {
+            if (fSurfaceMirrors[i].surface == surface &&
+                surfaceVramAddress(fSurfaceMirrors[i].offset) == destination) { mirror = i; break; }
+            if (!fSurfaceMirrors[i].surface && mirror < 0) mirror = i;
+        }
+        if (mirror < 0) {
+            if (!locked) IOLockUnlock(fLock);
+            IOFree(commands, capacity); return kIOReturnNoResources;
+        }
+    }
+    int slot = surface ? surfaceSlot(surface, false) : -1;
+    if (slot >= 0 && fShapes[slot].bufWidth == width && fShapes[slot].bufHeight == height) {
+        source = rdn_vram_addr(&fAccel, fShapes[slot].bufOffset);
+        sourceStride = fShapes[slot].bufRowBytes;
+    }
+    if (source == destination && sourceStride == destinationStride) {
+        int error = rdn_fence_wait(&fAccel, fAccel.fence_emitted, 500);
+        if (error) fSurfaceGpuStalled = true;
+        if (!locked) IOLockUnlock(fLock); IOFree(commands, capacity);
+        return error ? kIOReturnTimeout : kIOReturnSuccess;
+    }
+    int error = rdn_cp_dma_surface_build(source, sourceStride, destination,
+        destinationStride, width, height, commands, capacity, &words);
+    UInt64 offset = 0;
+    if (error || rdn_mem_alloc(&fMem, words * 4, 4096, &offset)) {
+        if (!locked) IOLockUnlock(fLock); IOFree(commands, capacity);
+        return error ? kIOReturnBadArgument : kIOReturnNoResources;
+    }
+    volatile UInt32 *ib = (volatile UInt32 *)((UInt8 *)fAccel.aperture + offset);
+    for (UInt32 i = 0; i < words; ++i) ib[i] = commands[i];
+    rdnStoreBarrier();
+    error = rdn_ib_submit(&fAccel, rdn_vram_addr(&fAccel, offset), words, &seq);
+    if (!error) error = rdn_fence_wait(&fAccel, seq, 500);
+    if (!error) {
+        rdn_mem_free(&fMem, offset);
+        if (mirror >= 0) {
+            SurfaceMirror *m = &fSurfaceMirrors[mirror];
+            m->surface = surface; m->offset = (UInt32)(destination - rdn_vram_addr(&fAccel, 0));
+            m->stride = destinationStride; m->width = width; m->height = height;
+        }
+    }
+    else {
+        fSurfaceGpuStalled = true;
+        setProperty("RadeonNISurfaceGPURebootRequired", kOSBooleanTrue);
+    }
+    if (!locked) IOLockUnlock(fLock);
+    IOFree(commands, capacity);
+    return error ? kIOReturnTimeout : kIOReturnSuccess;
+}
+
+IOReturn RadeonNIAccel::syncSurfaceGpu(UInt32 surface, UInt64 ram, UInt32 stride,
+    UInt32 width, UInt32 height, bool toCPU)
+{
+    IOLockLock(fLock);
+    IOReturn result = kIOReturnSuccess;
+    int slot = surfaceSlot(surface, false);
+    if (slot >= 0) {
+        SurfaceRecord *s = &fShapes[slot];
+        if (s->bufWidth == width && s->bufHeight == height) {
+            UInt64 bytes = (UInt64)s->bufRowBytes * (height - 1) + width * 4;
+            if (s->bufRowBytes < width * 4 || s->bufOffset + bytes > fAccel.aperture_size)
+                result = kIOReturnBadArgument;
+            else {
+                UInt64 gpu = surfaceVramAddress(s->bufOffset);
+                result = surfaceGpuTransfer(toCPU ? gpu : ram, toCPU ? s->bufRowBytes : stride,
+                    toCPU ? ram : gpu, toCPU ? stride : s->bufRowBytes, width, height, 0, true);
+            }
+        }
+    }
+    if (!toCPU) for (UInt32 i = 0; i < kSurfaceMirrors && result == kIOReturnSuccess; ++i) {
+        SurfaceMirror *m = &fSurfaceMirrors[i];
+        if (m->surface == surface && m->width == width && m->height == height)
+            result = surfaceGpuTransfer(ram, stride, surfaceVramAddress(m->offset),
+                m->stride, width, height, 0, true);
+    }
+    IOLockUnlock(fLock);
+    return result;
+}
+
+IOReturn RadeonNIAccel::refreshSurfaceGpuOwner(void *owner)
+{
+    IOLockLock(fLock);
+    IOReturn result = kIOReturnSuccess;
+    for (UInt32 i = 0; i < kSurfaceMirrors && result == kIOReturnSuccess; ++i) {
+        SurfaceMirror *m = &fSurfaceMirrors[i];
+        int slot = m->surface ? surfaceSlot(m->surface, false) : -1;
+        if (slot < 0) continue;
+        SurfaceRecord *s = &fShapes[slot];
+        if (s->owner == owner && s->bufWidth == m->width && s->bufHeight == m->height)
+            result = surfaceGpuTransfer(surfaceVramAddress(s->bufOffset), s->bufRowBytes,
+                surfaceVramAddress(m->offset), m->stride, m->width, m->height, 0, true);
+    }
+    IOLockUnlock(fLock);
+    return result;
+}
+
+IOReturn RadeonNIUserClient::methodSurfaceGpuInfo(UInt32 wid,
+    struct rdn_user_surface_info *info, IOByteCount *size)
+{
+    if (!info || !size || *size < sizeof(*info)) return kIOReturnBadArgument;
+    IOReturn result = fAccel->surfaceGpuInfo(wid, fTask, fSurfaceCompositor, info);
+    if (result == kIOReturnSuccess) *size = sizeof(*info);
+    return result;
+}
+
+IOReturn RadeonNIUserClient::methodSurfaceGpuCopy(UInt32 wid, UInt32 offset,
+    UInt32 stride, UInt32 width, UInt32 height)
+{
+    IOLockLock(fAllocationLock);
+    IOReturn result = kIOReturnBadArgument;
+    bool owned = false;
+    for (UInt32 i = 0; i < fCount; ++i) if (fOffsets[i] == offset) owned = true;
+    if (!fSurfaceGpuFailed && owned && fAccel->surfaceDestination(offset, stride, width, height)) {
+        result = fAccel->surfaceGpuCopy(wid, fTask, fSurfaceCompositor,
+            offset, stride, width, height);
+        if (result == kIOReturnTimeout) fSurfaceGpuFailed = true;
+    }
+    IOLockUnlock(fAllocationLock);
+    return result;
 }

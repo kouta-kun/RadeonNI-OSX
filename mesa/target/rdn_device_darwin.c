@@ -686,6 +686,29 @@ static bool dev_surface_region(struct rdn_device *dev, uint32_t id,
 	return true;
 }
 
+static bool dev_surface_gpu_info(struct rdn_device *dev, uint32_t id, struct rdn_surface *surface)
+{
+    struct darwin_device *d = (struct darwin_device *)dev;
+    struct rdn_user_surface_info info;
+    IOByteCount size = sizeof(info);
+    if (IOConnectMethodScalarIStructureO(d->conn, RDN_UC_SURFACE_GPU_INFO, 1,
+        &size, (int)id, &info) || size != sizeof(info) || info.id != id ||
+        !info.width || !info.height || info.width > 16384 || info.height > 16384 ||
+        info.row_bytes < info.width * 4) return false;
+    surface->id = info.id; surface->offset = 0; surface->row_bytes = info.row_bytes;
+    surface->width = info.width; surface->height = info.height;
+    return true;
+}
+
+static int dev_surface_gpu_copy(struct rdn_device *dev, uint32_t id, uint32_t offset,
+    uint32_t stride, uint32_t width, uint32_t height)
+{
+    struct darwin_device *d = (struct darwin_device *)dev;
+    kern_return_t result = IOConnectMethodScalarIScalarO(d->conn, RDN_UC_SURFACE_GPU_COPY,
+        5, 0, (int)id, (int)offset, (int)stride, (int)width, (int)height);
+    return result == KERN_SUCCESS ? 0 : result == kIOReturnTimeout ? 2 : 1;
+}
+
 static bool dev_surface_backing(struct rdn_device *dev, uint32_t id,
                                 void **address, uint32_t *stride,
                                 uint32_t *width, uint32_t *height)
@@ -923,6 +946,8 @@ struct rdn_device *rdn_device_open(void)
 	}
 	d->base.surface_region = dev_surface_region;
 	d->base.surface_backing = dev_surface_backing;
+    d->base.surface_gpu_info = dev_surface_gpu_info;
+    d->base.surface_gpu_copy = dev_surface_gpu_copy;
 	d->base.screen_refresh = dev_screen_refresh;
 	d->base.surface_buffer = dev_surface_buffer;
 	d->base.surface_list = dev_surface_list;

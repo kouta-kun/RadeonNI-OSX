@@ -5,8 +5,8 @@ hand-patched kext worked on a 10.5 Mac; the sections below that predate it
 (paper checks, 2026-10-11) say "never run" and are kept as the record of
 what was compared. Since 2026-10-11 there is also a **Leopard guest** (Sorbet
 Leopard R15 = 10.5.9, Xcode 3.1.4) in which the kext is built natively and
-the GL bundle can be inspected (next section). Acceleration on 10.5 is
-still not working: see "GL bundle on 10.5".
+the GL bundle can be inspected (next section). The early GL bundle result is recorded under "GL bundle on 10.5".
+The native G5 backing-surface path below supersedes that result.
 
 Build and package: `scripts/leopard.sh build|check|package`. The kext is
 built in the Tiger guest with `make LEOPARD=1` (its own `build-leopard/`),
@@ -14,6 +14,39 @@ which adds `kext/RadeonNI/leopard.s`. `g5/install.sh` accepts 10.5 only in
 a package with the file `LEOPARD` and without `--accel`; `--check`
 (`kextload -t -n`, writes nothing) and `--try` (load from /tmp, not
 installed) are for a first run.
+
+## Native G5 backing surfaces (2026-10-22)
+
+Packed AppKit backings are pinned in GART and copied to compositor-owned
+VRAM with CP_DMA. The compositor receives metadata and completed GPU
+storage, never another task's CPU pointer. Imported buffers retain their
+Mesa external-BO references across resize and producer closure.
+
+CPU write unlocks refresh retained imports; GPU producer submissions refresh
+imports from the producer's VRAM buffer. A registered GPU producer is also
+allowed to query its backing metadata. Its first VRAM buffer is initialized
+by GPU DMA before partial rendering, and the viewport binding adopts a
+backing registered after the initial drawable attachment. This preserves
+Preferences toolbars as well as CPU-drawn content.
+
+Backing synchronization holds the accelerator allocation lock through DMA
+completion. Unknown completion retains the command buffer, source GART
+binding and destination allocation until reboot. Leopard builds require
+`com.apple.kpi.bsd` for compositor authorization. Shared browser/GPU process
+mode is not required.
+
+Native checks cover cross-process retained updates, resize, producer closure,
+alpha, explicit CPU reads, unflushed GL rendering and windowless surfaces.
+The strided-copy model covers 3,010 guarded and invalid-input cases, including
+a native big-endian run. `tools/guest/backinggputest.c` imports once per size;
+its later frames must update without another import. Activity Monitor live
+updates and resize, and Preferences pane changes, were checked on .98. The
+native NV12 delivery regression passed 4,535,634 exact bytes; Aurora UVD GPU
+playback also passed its smoke check. These runtime checks used the fix on
+`cf5cab4`, before reconciliation with upstream `a879559`. The reconciled tree
+preserves upstream's SurfaceGate default and excludes the new authorization
+calls from Tiger builds. It passes host checks and native Leopard builds;
+it has not replaced the running .98 driver.
 
 ## The Leopard guest (2026-10-11)
 

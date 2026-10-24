@@ -8466,3 +8466,23 @@ normal-launch.json verifies browser 1707 and separate GPU 1718, left running
 with the existing profile and argv containing only the normal app and
 https://www.youtube.com/. This is verified normal startup, not a claim about
 the decoder of a subsequently selected video. No staging or commit was done.
+
+### 2026-10-23: GPU backing surfaces reconciled with upstream
+
+Reconciled the packed backing-surface DMA path with upstream `a879559`,
+which already contains the earlier Aurora/UVD contribution. Preserve the
+upstream SurfaceGate behavior when BackingSurfaces is off; admitting a
+backing now also requires a ready GPU path. WindowServer authorization is
+compiled only for Leopard, preserving Tiger's kernel dependencies.
+
+Validation: 12 surface tests plus cleanup, store-backing and video-pack tests;
+3,010 strided-copy, 298 DMA/GART and 580 fill model checks. The 3,010-case
+model also passed natively on the big-endian G5. Native Leopard and
+non-Leopard-mode kext builds pass; the latter has no references to the new
+Leopard authorization functions. Both GL bundle architectures build, with
+no unresolved OSMesa/rdn symbols. This is not a Tiger runtime-load test.
+
+The earlier .98 runtime checks cover retained cross-process updates,
+producer close, resize, alpha, Preferences pane switches, Activity Monitor
+redraw and Aurora GPU-delivered UVD playback. They used the compositor fix
+on `cf5cab4`; the newly reconciled tree has not replaced the running driver.

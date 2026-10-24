@@ -37,6 +37,7 @@ int rdn_mem_alloc_in_range(struct rdn_mem *mem, uint64_t size, uint64_t align,
 			  uint64_t minimum, uint64_t maximum, uint64_t *offset);
 /* Free the range that starts at `offset`; unknown offsets are ignored. */
 void rdn_mem_free(struct rdn_mem *mem, uint64_t offset);
+uint64_t rdn_mem_allocation_size(struct rdn_mem *mem, uint64_t offset);
 /* Bytes not handed out. */
 uint64_t rdn_mem_available(struct rdn_mem *mem);
 /* Bytes not handed out inside [lo, hi), and (if `largest` is not NULL) the largest free piece there. */

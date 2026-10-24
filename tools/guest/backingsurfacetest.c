@@ -83,7 +83,7 @@ int main(void)
     failures += rgba[0]!=0 || rgba[1]!=255 || rgba[2]!=0 || rgba[3]!=128;
     glClearColor(1,0,0,0.25);glClear(GL_COLOR_BUFFER_BIT);glFinish();
     printf("direct backing after finish: %u,%u,%u,%u\n",cpu[0],cpu[1],cpu[2],cpu[3]);
-    failures += cpu[0]!=64 || cpu[1]!=255 || cpu[2]!=0 || cpu[3]!=0;
+    failures += cpu[0]!=128 || cpu[1]!=0 || cpu[2]!=255 || cpu[3]!=0;
     size=sizeof(info);
     CHECK(IOConnectMethodScalarIStructureO(surface,kIOAccelSurfaceReadLockOptions,1,&size,0,&info));
     printf("GPU -> CPU: %u,%u,%u,%u stride %u\n",cpu[0],cpu[1],cpu[2],cpu[3],(unsigned)info.rowBytes);
@@ -168,6 +168,9 @@ int main(void)
     int was_window_server=*window_server;
     *window_server=1;glViewport(0,0,32,18);*window_server=was_window_server;
     glClearColor(0,0,1,1);glClear(GL_COLOR_BUFFER_BIT);glFinish();
+    size=sizeof(info);
+    CHECK(IOConnectMethodScalarIStructureO(surface,kIOAccelSurfaceReadLockOptions,1,&size,0,&info));
+    CHECK(IOConnectMethodScalarIScalarO(surface,kIOAccelSurfaceReadUnlockOptions,1,0,0));
     printf("unpadded backing: first row %u,%u,%u,%u; padding alpha %u\n",
            cpu[0],cpu[1],cpu[2],cpu[3],cpu[18*stride]);
     failures += cpu[0]!=255 || cpu[1]!=0 || cpu[2]!=0 || cpu[3]!=255 ||

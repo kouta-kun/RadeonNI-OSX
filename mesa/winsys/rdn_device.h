@@ -204,6 +204,9 @@ struct rdn_device {
    bool (*surface_backing)(struct rdn_device *dev, uint32_t id,
                            void **address, uint32_t *stride, uint32_t *width, uint32_t *height);
 
+   bool (*surface_gpu_info)(struct rdn_device *dev, uint32_t id, struct rdn_surface *surface);
+   int (*surface_gpu_copy)(struct rdn_device *dev, uint32_t id, uint32_t offset,
+                           uint32_t stride, uint32_t width, uint32_t height);
    void (*destroy)(struct rdn_device *dev);
 };
 

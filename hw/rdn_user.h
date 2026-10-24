@@ -205,6 +205,10 @@ enum {
 	RDN_UC_UVD_FIXTURE_RUN,
 	/* Admin-only immutable CPU snapshot: generation, chunk index ->4096 bytes. */
 	RDN_UC_UVD_FIXTURE_READ,
+	/* Metadata only; owner or administrator (WindowServer). */
+	RDN_UC_SURFACE_GPU_INFO,
+	/* Scalars: ID, owned destination offset/stride, width, height. */
+	RDN_UC_SURFACE_GPU_COPY,
 	RDN_UC_METHOD_COUNT
 };
 

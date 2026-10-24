@@ -28,7 +28,7 @@ class SurfaceRegistryTest(unittest.TestCase):
     def test_kernel_growth_and_allocation_failure(self):
         source = (ROOT / 'kext/RadeonNI/RadeonNIAccel.cpp').read_text()
         header = (ROOT / 'kext/RadeonNI/RadeonNIAccel.h').read_text()
-        record = header[header.index('\tstruct SurfaceRecord {'):header.index('\n\tUInt32 fReadLocked;')]
+        record = header[header.index('\tstruct SurfaceMirror {'):header.index('\n\tUInt32 fReadLocked;')]
         harness = r'''
 #include <cassert>
 #include <cstdlib>
@@ -44,19 +44,29 @@ static void *IOMalloc(size_t bytes) { return fail_alloc ? NULL : malloc(bytes); 
 static void IOFree(void *p,size_t) { free(p); }
 static void IOLockLock(int *p) { assert(!*p); *p=1; }
 static void IOLockUnlock(int *p) { assert(*p); *p=0; }
+class RadeonNISurfaceClient {
+public: unsigned references=1;
+ void retain(){++references;} void release(){assert(references>1);--references;}
+};
 class RadeonNIAccel {
 public:
  int lock=0; int *fLock=&lock;
  void querySurface(UInt32,rdn_user_surface_info *);
- bool setSurfaceBuffer(UInt32,UInt32,UInt32,UInt32,UInt32,void *);
+ bool setSurfaceBuffer(UInt32,UInt32,UInt32,UInt32,UInt32,void *,task_t=0);
  bool setSurfaceRegion(UInt32,const IOAccelDeviceRegion *,UInt32);
  bool setSurfaceBacking(UInt32,task_t,const rdn_user_backing *);
  void forgetSurface(UInt32);
+ void setSurfaceBackingOwner(UInt32,RadeonNISurfaceClient*);
+ void clearSurfaceBackingOwner(UInt32,RadeonNISurfaceClient*);
+ RadeonNISurfaceClient *retainSurfaceBacking(UInt32,task_t,bool);
 '''
         harness += record + '\n};\n'
         for signature in ('int RadeonNIAccel::surfaceSlot(', 'void RadeonNIAccel::querySurface(',
                           'bool RadeonNIAccel::setSurfaceBuffer(', 'bool RadeonNIAccel::setSurfaceRegion(',
-                          'bool RadeonNIAccel::setSurfaceBacking(', 'void RadeonNIAccel::forgetSurface('):
+                          'bool RadeonNIAccel::setSurfaceBacking(', 'void RadeonNIAccel::forgetSurface(',
+                          'void RadeonNIAccel::setSurfaceBackingOwner(',
+                          'void RadeonNIAccel::clearSurfaceBackingOwner(',
+                          'RadeonNISurfaceClient *RadeonNIAccel::retainSurfaceBacking('):
             harness += function(source, signature) + '\n'
         harness += r'''
 int main() {
@@ -91,6 +101,17 @@ int main() {
  assert(a.setSurfaceRegion(300,&r,1));
  assert(a.setSurfaceBacking(300,NULL,&b));
  a.querySurface(300,&info); assert(info.id==300);
+ RadeonNISurfaceClient producer,other;
+ assert(a.setSurfaceBacking(300,(task_t)0x100,&b));a.setSurfaceBackingOwner(300,&producer);
+ assert(!a.retainSurfaceBacking(300,(task_t)0x200,false));
+ auto lease=a.retainSurfaceBacking(300,(task_t)0x100,false);assert(lease==&producer&&producer.references==2);lease->release();
+ lease=a.retainSurfaceBacking(300,(task_t)0x200,true);assert(lease==&producer);lease->release();
+ assert(a.setSurfaceBuffer(300,0x10000,64,16,16,&a,(task_t)0x200));
+ lease=a.retainSurfaceBacking(300,(task_t)0x200,false);assert(lease==&producer);lease->release();
+ assert(!a.retainSurfaceBacking(300,(task_t)0x300,false));
+ a.forgetSurface(300);a.querySurface(300,&info);assert(info.id==300);
+ a.clearSurfaceBackingOwner(300,&other);assert(a.retainSurfaceBacking(300,(task_t)0x100,false)==&producer);producer.release();
+ a.clearSurfaceBackingOwner(300,&producer);assert(!a.retainSurfaceBacking(300,(task_t)0x100,true));
  a.forgetSurface(300); a.querySurface(300,&info); assert(!info.id);
  free(a.fShapes);
 }
@@ -133,24 +154,24 @@ static void rdn_target_vram_free(uint32_t off) { assert(off); freed++; }
 int main(void) {
  struct context c={0};
  for(unsigned i=1;i<=128;i++) {
-   c.surface=i; surface_store(&c,16,16); assert(c.stored && c.store_new);
+   c.surface=i; surface_store(&c,16,16,1); assert(c.stored && c.store_new);
  }
  assert(allocated==128 && !freed);
  query_fail=true; present[1]=false;
- c.surface=129; surface_store(&c,16,16); assert(c.stored && !freed);
+ c.surface=129; surface_store(&c,16,16,1); assert(c.stored && !freed);
  query_fail=false;
- c.surface=129; surface_store(&c,16,16); assert(c.stored && !c.store_new && freed==1);
+ c.surface=129; surface_store(&c,16,16,1); assert(c.stored && !c.store_new && freed==1);
  publish_fail=true;
- surface_store(&c,16,16); assert(!c.stored && freed==1);
- surface_store(&c,32,16); assert(!c.stored && freed==1);
+ surface_store(&c,16,16,1); assert(!c.stored && freed==1);
+ surface_store(&c,32,16,1); assert(!c.stored && freed==1);
  publish_fail=false;
- surface_store(&c,16,16); assert(c.stored && !c.store_new && allocated==129);
- surface_store(&c,32,16); assert(c.stored && c.store_new && freed==2 && allocated==130);
+ surface_store(&c,16,16,1); assert(c.stored && !c.store_new && allocated==129);
+ surface_store(&c,32,16,1); assert(c.stored && c.store_new && freed==2 && allocated==130);
  publish_fail=true;
- c.surface=130; surface_store(&c,16,16); assert(!c.stored && freed==3 && allocated==131);
+ c.surface=130; surface_store(&c,16,16,1); assert(!c.stored && freed==3 && allocated==131);
  publish_fail=false; alloc_fail=true;
- surface_store(&c,16,16); assert(!c.stored && freed==3);
- alloc_fail=false; surface_store(&c,16,16); assert(c.stored);
+ surface_store(&c,16,16,1); assert(!c.stored && freed==3);
+ alloc_fail=false; surface_store(&c,16,16,1); assert(c.stored);
  while(surface_stores) {
    struct surface_store *next=surface_stores->next; free(surface_stores); surface_stores=next;
  }

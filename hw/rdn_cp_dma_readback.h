@@ -47,6 +47,10 @@ int rdn_cp_dma_readback_build_list(const struct rdn_cp_dma_copy *copies,
 int rdn_cp_dma_readback_build(const struct rdn_cp_dma_span *source,
     const struct rdn_cp_dma_span *destination, uint32_t bytes,
     void *output, size_t capacity, uint32_t *word_count);
+/* Trusted strided pixel spans; padding is not copied. */
+int rdn_cp_dma_surface_build(uint64_t source, uint32_t source_stride,
+    uint64_t destination, uint32_t destination_stride, uint32_t width,
+    uint32_t height, void *output, size_t capacity, uint32_t *word_count);
 #ifdef __cplusplus
 }
 #endif

@@ -195,3 +195,11 @@ uint64_t rdn_mem_largest(struct rdn_mem *mem)
 	rdn_mem_available_range(mem, 0, UINT64_MAX, &largest);
 	return largest;
 }
+
+uint64_t rdn_mem_allocation_size(struct rdn_mem *mem, uint64_t offset)
+{
+    struct rdn_mem_block *b;
+    for (b = mem->head; b; b = b->next)
+        if (b->start == offset && b->used) return b->size;
+    return 0;
+}

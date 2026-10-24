@@ -43,7 +43,7 @@ struct IOExternalMethod {}; struct OSSerialize {}; struct IOService {};
 static int trueValue; static void *kOSBooleanTrue=&trueValue;
 struct Calls {
  int waits=0,maps=0,releases=0,prepares=0,completes=0,copies=0,descriptors=0;
- int fail=0,lastFlags=0,locks=0,terminates=0,forgot=0,barriers=0;
+ int fail=0,lastFlags=0,locks=0,terminates=0,forgot=0,barriers=0,garts=0,retained=0;
  bool fence=false; std::vector<std::string> events;
 } calls;
 struct IOLock { bool held=false; };
@@ -89,6 +89,7 @@ static void tracked_copy(const void *src,void *dst,size_t n) {
  assert(calls.fence);++calls.copies;calls.events.push_back("copy");memmove(dst,src,n);
 }
 #define bcopy tracked_copy
+static uint64_t rdn_gart_addr(UInt32 page){return 0x40000000ull+uint64_t(page)*4096;}
 class RadeonNIAccel {
 public:
  bool gate=true,gl=false,backingEnabled=true,hasBuffer=true,hasAperture=true;
@@ -96,6 +97,27 @@ public:
  IOReturn waitResult=0,flushResult=0;
  IOMemoryDescriptor aperture{gpu,sizeof(gpu),false,false,true};
  rdn_user_backing backing{};
+ IOReturn gartBind(task_t,UInt64 address,UInt32,void*,UInt32 *offset){++calls.garts;*offset=address==0x10000?0:4096;return 0;}
+ IOReturn gartUnbind(UInt32,void*){--calls.garts;return 0;}
+ void retainClientMemory(const UInt32*,UInt32,void*){++calls.retained;calls.garts=0;}
+ void setSurfaceBackingOwner(UInt32,void*){}
+ void clearSurfaceBackingOwner(UInt32,void*){}
+ UInt32 apertureBytes(){return sizeof(gpu);}
+ IOReturn syncSurfaceGpu(UInt32,UInt64 ram,UInt32 rs,UInt32 w,UInt32 h,bool toCPU){
+  if(!hasBuffer||width!=w||height!=h)return 0;
+  if(stride<w*4||offset+(UInt64)stride*(h-1)+w*4>apertureBytes())return kIOReturnBadArgument;
+  UInt64 v=surfaceVramAddress(offset);return surfaceGpuTransfer(toCPU?v:ram,toCPU?stride:rs,toCPU?ram:v,toCPU?rs:stride,w,h);
+ }
+ UInt64 surfaceVramAddress(UInt32 offset){return 0x200000000ull+offset;}
+ IOReturn surfaceGpuTransfer(UInt64 source,UInt32 ss,UInt64 destination,UInt32 ds,UInt32 w,UInt32 h,UInt32 surface=0){
+  IOReturn r=waitForCPU();if(r)return r;if(calls.fail==6)return kIOReturnNoMemory;
+  if(surface&&hasBuffer&&width==w&&height==h){source=surfaceVramAddress(offset);ss=stride;}
+  auto pointer=[&](UInt64 a){return a>=0x200000000ull?gpu+(a-0x200000000ull):a>=0x40001000ull?replacement+(a-0x40001000ull):ram+(a-0x40000000ull);};
+  for(UInt32 y=0;y<h;++y)tracked_copy(pointer(source)+y*ss,pointer(destination)+y*ds,w*4);
+  ++calls.barriers;return 0;
+ }
+ bool gpuEnabled=true;
+ bool surfaceGpuReady(){return gpuEnabled;}
  bool surfaceGate(){return gate;}
  bool isGLSurface(UInt32){return gl;}
  void *getProperty(const char*){return backingEnabled?kOSBooleanTrue:nullptr;}
@@ -140,6 +162,13 @@ int main(int argc,char **argv) {
   assert(f.client.setIDMode(2,mode)==0);assert(f.client.fBackingMode);
   Fixture g;g.accel.backingEnabled=false;assert(g.client.setIDMode(2,mode)==kIOReturnUnsupported);
   Fixture h;assert(h.client.setIDMode(3,mode+1)==kIOReturnUnsupported);
+  Fixture screen;screen.accel.backingEnabled=false;
+  assert(screen.client.setIDMode(1,mode)==kIOReturnUnsupported);
+  Fixture unavailable;unavailable.accel.gpuEnabled=false;
+  assert(unavailable.client.setIDMode(1,mode)==kIOReturnUnsupported);
+  assert(unavailable.client.setIDMode(2,mode)==kIOReturnUnsupported);
+  Fixture gl;gl.accel.gl=true;gl.accel.gpuEnabled=false;
+  assert(gl.client.setIDMode(2,mode)==0&&!gl.client.fBackingMode);
  } else if(which=="sync") {
   Fixture f;assert(f.client.setIDMode(2,mode)==0);assert(f.bind()==0);
   for(unsigned y=0;y<3;y++)for(unsigned x=0;x<32;x++)assert(gpu[128+y*32+x]==(x<16?0xa5:0xee));
@@ -199,9 +228,19 @@ int main(int argc,char **argv) {
   assert(f.client.control(99,0,&result)==kIOReturnUnsupported);
   assert(f.client.control(4,0,&result)==0&&result==1);
   f.accel.waitResult=kIOReturnTimeout;assert(f.client.flush(1,0)==kIOReturnTimeout);
-  assert(f.client.control(1,0,&result)==kIOReturnTimeout);
+  assert(f.client.control(1,0,&result)==kIOReturnNotReady);
   f.client.clientClose();assert(!f.client.fBackingMemory&&!f.client.fBackingMap&&!calls.descriptors&&!f.accel.locked);
   assert(calls.completes==1&&calls.forgot==1);
+ } else if(which=="gpu_copy") {
+  Fixture f;assert(f.client.setIDMode(2,mode)==0);assert(f.bind()==0);
+  rdn_user_surface_info info{};assert(f.client.gpuInfo(&info)==0&&info.width==4&&info.height==3&&info.offset==0);
+  memset(gpu+512,0xa0,96);assert(f.client.gpuCopy(512,32,4,3)==0);
+  for(unsigned y=0;y<3;++y)for(unsigned x=0;x<32;++x)assert(gpu[512+y*32+x]==(x<16?0xa5:0xa0));
+  f.accel.hasBuffer=false;memset(ram,0x34,72);assert(f.client.gpuCopy(512,32,4,3)==0);
+  for(unsigned y=0;y<3;++y)for(unsigned x=0;x<16;++x)assert(gpu[512+y*32+x]==0x34);
+  assert(f.client.gpuCopy(512,32,5,3)==kIOReturnNotReady);
+  f.accel.waitResult=kIOReturnTimeout;assert(f.client.gpuCopy(512,32,4,3)==kIOReturnTimeout);
+  assert(f.client.gpuInfo(&info)==kIOReturnNotReady);f.client.clientClose();assert(calls.retained==1);
  } else if(which=="resize") {
   Fixture f;assert(f.client.setIDMode(2,mode)==0);assert(f.bind()==0);int copies=calls.copies,waits=calls.waits;
   f.accel.width=5;assert(f.client.flush(1,0)==0&&calls.copies==copies&&calls.waits==waits);
@@ -228,7 +267,7 @@ class SurfaceBackingTest(unittest.TestCase):
         header = '\n'.join(x for x in header.splitlines() if not x.startswith('#'))
         header = header.replace('private:', 'public:').replace('virtual ', '')
         methods = ['initWithTask', 'lockForRead', 'unlockRead', 'clientClose', 'free', 'releaseBacking',
-                   'configureBacking', 'syncBacking', 'lockBacking', 'readLockOptions', 'readUnlockOptions',
+                   'configureBacking', 'syncBacking', 'gpuInfo', 'gpuCopy', 'lockBacking', 'readLockOptions', 'readUnlockOptions',
                    'setShapeBacking', 'setShapeBackingAndLength', 'setIDMode', 'setShape', 'flush',
                    'readLock', 'readUnlock', 'writeLockOptions', 'writeUnlockOptions', 'control']
         body = '\n'.join(function(source, name) for name in methods)
@@ -258,6 +297,7 @@ class SurfaceBackingTest(unittest.TestCase):
     def test_readonly_aperture_bounds_and_fence_handoff(self): self.check('read_bounds')
     def test_control_error_and_close_release(self): self.check('control_close')
     def test_resize_defers_copy_until_matching_store(self): self.check('resize')
+    def test_gpu_copy_padding_metadata_and_timeout_quarantine(self): self.check('gpu_copy')
 
 
 if __name__ == '__main__':

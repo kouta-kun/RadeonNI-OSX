@@ -411,7 +411,7 @@ OSMesaMakeCurrentStore( OSMesaContext ctx, GLuint handle, GLsizei stride,
                         GLuint offset, GLsizei width, GLsizei height,
                         GLuint flags );
 
-/* Publish completed store rendering to a caller-owned CPU backing. */
+/* Publish store rendering to a CPU backing; NULL/0 keeps rendering GPU-only. */
 GLAPI GLboolean GLAPIENTRY
 OSMesaStoreBacking( OSMesaContext ctx, void *backing, GLsizei stride );
 
